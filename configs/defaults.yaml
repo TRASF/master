@@ -1,0 +1,38 @@
+audio:
+  sample_rate: 8000
+  duration: 0.3
+  overlap: 0.5
+  channel: 1
+
+dataset:
+  root: "dataset"
+  MSB:
+    - root: "dataset/MSB"
+    - indoor: "dataset/MSB/Indoor"
+    - outdoor: "dataset/MSB/Outdoor"
+    - environmental:
+        - cat_noise: "dataset/MSB/Environmental/cat_noise"
+        - humbug: "dataset/MSB/Environmental/humbug_noises"
+        - inmp: "dataset/MSB/Environmental/inmp_noises"
+        - miru: "dataset/MSB/Environmental/miru_noises"
+        - noises: "dataset/MSB/Environmental/noises"
+        - nomos: "dataset/MSB/Environmental/Nomos"
+  PHILIP:
+    - lab: "dataset/PHILIP/Lab"
+    - nomos: "dataset/PHILIP/No.Mos"
+
+class_dict:
+  Ae.Aegypti_F: 0
+  Ae.Aegypti_M: 1
+  Ae.Albopictus_F: 2
+  Ae.Albopictus_M: 3
+  An.Dirus_F: 4
+  An.Dirus_M: 5
+  An.Minimus_F: 6
+  An.Minimus_M: 7
+  Cx.Quin_F: 8
+  Cx.Quin_M: 9
+  No.Mos: 10
+
+batch_size: 256
+learning_rate: 0.003

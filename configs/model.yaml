@@ -1,0 +1,21 @@
+model:
+  mosssongplus:
+    conv:
+      - filters: 32
+        kernel_size: 100
+        strides: 4
+        activation: relu
+      - filters: 32
+        kernel_size: 64
+        strides: 4
+        activation: relu
+      - filters: 32
+        kernel_size: 64
+        strides: 3
+        activation: relu
+
+    dense:
+      - units: 256
+        activation: relu
+      - units: 128
+        activation: relu
