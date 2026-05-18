@@ -1,0 +1,106 @@
+audio:
+  sample_rate: 8000
+  duration: 0.3
+  overlap: 0.8
+  channel: 1
+
+dataset:
+  root: "dataset"
+  split_ratios:
+    train: 0.8
+    val: 0.1
+    test: 0.1
+
+  MSB:
+    - root: "dataset/MSB"
+    - indoor: "dataset/MSB/Indoor"
+    - outdoor: "dataset/MSB/Outdoor"
+    - environmental:
+        - cat_noise: "dataset/MSB/Environmental/cat_noise"
+        - humbug: "dataset/MSB/Environmental/humbug_noises"
+        - inmp: "dataset/MSB/Environmental/inmp_noises"
+        - miru: "dataset/MSB/Environmental/miru_noises"
+        - noises: "dataset/MSB/Environmental/noises"
+        - nomos: "dataset/MSB/Environmental/Nomos"
+
+  Philip:
+    - lab: "dataset/Philip/Lab"
+    - nomos: "dataset/Philip/No.Mos"
+  cleaned_root: "./MSB_Cleaned_Indoor_300ms"
+
+class_dict:
+  Ae.Aegypti_F: 0
+  Ae.Aegypti_M: 1
+  Ae.Albopictus_F: 2
+  Ae.Albopictus_M: 3
+  An.Dirus_F: 4
+  An.Dirus_M: 5
+  An.Minimus_F: 6
+  An.Minimus_M: 7
+  Cx.Quin_F: 8
+  Cx.Quin_M: 9
+  No.Mos: 10
+
+seed: 42
+
+training:
+  focus: "indoor" 
+  batch_size: 256
+  epochs: 1000
+  use_class_weights: true
+  optimizer:
+    # name: "Adam"
+    # learning_rate: 0.001
+    name: "AdamW"
+    learning_rate: 0.0005
+    weight_decay: 0.001
+    amsgrad: true
+    use_ema: false
+
+  loss:
+    name: "SparseCategoricalCrossentropy"
+    from_logits: true
+
+  callbacks:
+    early_stopping:
+      enabled: true
+      monitor: "val_loss"
+      patience: 25
+      restore_best_weights: true
+    checkpoint:
+      enabled: true
+      monitor: "val_accuracy"
+      save_best_only: true
+    tensorboard:
+      enabled: true
+      log_dir: "logs"
+    csv_logger:
+      enabled: true
+    reduce_lr:
+      enabled: true
+      monitor: "val_loss"
+      factor: 0.5
+      patience: 15
+      min_lr: 0.000001
+
+  augmentation:
+    enabled: true
+    apply_prob: 0.7
+    time_shift:
+      p: 0.5
+      max_shift_pct: 0.2
+    pitch_shift:
+      p: 0.5
+      range_pct: [-0.1, 0.1]
+    global_gain:
+      p: 0.7
+      range: [0.5, 2.5]
+    noise:
+      p: 0.7
+      snr_range: [-10, 20]
+      noise_dirs:
+        - "dataset/MSB/Environmental/Nomos"
+        - "dataset/MSB/Environmental/noises"
+        - "dataset/MSB/Environmental/cat_noise"
+        - "dataset/MSB/Environmental/inmp_noises/Train"
+        - "dataset/MSB/Environmental/humbug_noises/Train"
