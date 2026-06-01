@@ -1,21 +1,28 @@
 model:
-  mosssongplus:
-    conv:
-      - filters: 32
-        kernel_size: 100
-        strides: 4
-        activation: relu
-      - filters: 32
-        kernel_size: 64
-        strides: 4
-        activation: relu
-      - filters: 32
-        kernel_size: 64
-        strides: 3
-        activation: relu
+    mossongplus:
+        conv:
+            - filters: 100
+              kernel_size: 32
+              strides: 4
+              activation: relu
+            - filters: 64
+              kernel_size: 32
+              strides: 4
+              activation: relu
+            - filters: 64
+              kernel_size: 32
+              strides: 3
+              activation: relu
+        maxpool:
+            - pool_size: 3
+              strides: 3
+        flatten:
+            - True
+        dropout:
+            - rate: 0.5
+        dense:
+            - units: 256
+              activation: relu
+            - units: 128
+              activation: relu
 
-    dense:
-      - units: 256
-        activation: relu
-      - units: 128
-        activation: relu
