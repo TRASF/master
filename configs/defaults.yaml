@@ -1,48 +1,41 @@
 labels:
-  Ae_aegypti_Female: 0
-  Ae_aegypti_Male: 1
-  Ae_albopictus_Female: 2
-  Ae_albopictus_Male: 3
-  An_dirus_Female: 4
-  An_dirus_Male: 5
-  An_minimus_Female: 6
-  An_minimus_Male: 7
-  Cx_quin_Female: 8
-  Cx_quin_Male: 9
-  No.Mos: 10
-
-# Performance markers from training log provided by the user:
-#   - Best observed val_macro_f1: 0.1404 at epoch 4
-#   - Epoch 1 val_loss: 3.8728, val_acc: 0.3624, val_f1: 0.0704
-#   - Epoch 4 val_loss: 4.4583, val_acc: 0.4776, val_f1: 0.1404
-#   - Epoch 25 val_loss: 4.8121, val_acc: 0.4123, val_f1: 0.1001
-#   - Training shows high train accuracy with lower and unstable validation F1
-#   - Saved best weights to models/supervised_mossongplus/best_model.weights.h5
+    Ae_aegypti_Female: 0
+    Ae_aegypti_Male: 1
+    Ae_albopictus_Female: 2
+    Ae_albopictus_Male: 3
+    An_dirus_Female: 4
+    An_dirus_Male: 5
+    An_minimus_Female: 6
+    An_minimus_Male: 7
+    Cx_quin_Female: 8
+    Cx_quin_Male: 9
+    No.Mos: 10
 
 train:
     batch_size: 256
     shuffle: True
     epochs: 1000
+    step_ratio: 0.7
 
 optimizer:
-    name: AdamW
-    learning_rate: 0.0003
-    weight_decay: 2.8
-    amsgrad: True
+    name: Adam
+    learning_rate: 0.001
+    # weight_decay: 2.8
+    # amsgrad: True
 
 model:
     output_activation: null
 
 loss:
-    name: CategoricalCrossentropy   # CategoricalFocalLoss : CategoricalCrossentropy
+    name: CategoricalCrossentropy # CategoricalFocalLoss : CategoricalCrossentropy
     reduction: none
     # label_smoothing: 0.001
     from_logits: True
 callbacks:
     early_stopping:
-        monitor: val_loss
+        monitor: [val_loss, val_macro_f1, val_accuracy]
         patience: 50
-        mode: min
+        mode: [min, max, max]
         restore_best_weights: True
 
     model_checkpoint:
@@ -52,59 +45,57 @@ callbacks:
         mode: [min, max, max]
 
     reduce_lr_on_plateau:
-        monitor: val_loss
+        monitor: [val_loss, val_macro_f1, val_accuracy]
         factor: 0.2
         patience: 25
         min_lr: 1e-7
-        mode: min
+        mode: [min, max, max]
 
 augment:
     noise_banks:
-    #   - 'dataset/MSB/Environmental/cat_noise'
-      - 'dataset/MSB/Environmental/humbug_noises'
-      - 'dataset/MSB/Environmental/inmp_noises'
-      - 'dataset/MSB/Environmental/miru_noises'
-      - 'dataset/MSB/Environmental/noises'
-      - 'dataset/MSB/Environmental/Nomos'
+        #   - 'dataset/MSB/Environmental/cat_noise'
+        - "dataset/MSB/Environmental/humbug_noises"
+        - "dataset/MSB/Environmental/inmp_noises"
+        - "dataset/MSB/Environmental/miru_noises"
+        - "dataset/MSB/Environmental/noises"
+        - "dataset/MSB/Environmental/Nomos"
 
     noise_overlay:
         snr_db: [-10, 22]
-        p: 0.9
+        p: 0
         envelope_gain: [0.7, 1.0]
         post_gain_db: [-6.0, 3.0]
         snr_distribution:
-          - p: 0.5
-            snr_db: [2, 10]
-          - p: 0.3
-            snr_db: [10, 22]
-          - p: 0.15
-            snr_db: [-5, -2]
-          - p: 0.05
-            snr_db: [-10, -5]
+            - p: 0.5
+              snr_db: [2, 10]
+            - p: 0.3
+              snr_db: [10, 22]
+            - p: 0.15
+              snr_db: [-5, -2]
+            - p: 0.05
+              snr_db: [-10, -5]
     pitch_shift:
-        semitones: [-0.5, 0.5]
+        semitones: [-0.01, 0.5]
         p: 0
     time_shift:
         rate: [-0.1, 0.1]
         p: 0
     random_gain:
-        gain_db: [-12, 12]
+        gain_db: [-6, 6]
         p: 0
     gaussian_noise:
         snr_db: [-10, 22]
         p: 0
 
-
 audio:
     sample_rate: 8000
     duration: 0.3
 
-
 dataset:
-    indoor: 'dataset/MSB/Indoor'
-    outdoor: 'dataset/MSB/Outdoor'
-    mosLab: 'dataset/Philip'
-    val_dir: 'dataset/MSB/Outdoor'
+    indoor: "dataset/MSB/Indoor"
+    outdoor: "dataset/MSB/Outdoor"
+    mosLab: "dataset/Philip"
+    val_dir: "dataset/MSB/Outdoor"
     split_ratios:
         train: 0.8
         val: 0.1

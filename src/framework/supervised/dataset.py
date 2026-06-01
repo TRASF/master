@@ -6,8 +6,8 @@ import os
 from pathlib import Path
 
 class SupervisedDataset:
-    def __init__(self, dataset_dir: str, val_dir: str = None, test_dir: str = None, 
-                 sample_rate: int = 8000, segment_length: int = 2400, 
+    def __init__(self, dataset_dir: str, val_dir: str = None, test_dir: str = None,
+                 sample_rate: int = 8000, segment_length: int = 2400,
                  classes: list = None, noise_dirs: list = None, augment_cfg: dict = None):
         self.dataset_dir = dataset_dir
         self.val_dir = val_dir
@@ -50,7 +50,7 @@ class SupervisedDataset:
             lambda x, y: self.augmentor.create_segments(x, y, step_ratio=step_ratio, training=augment),
             num_parallel_calls=tf.data.AUTOTUNE,
             deterministic=False
-        ) 
+        )
 
         if shuffle:
             dataset = dataset.shuffle(buffer_size=10000, reshuffle_each_iteration=True)
@@ -59,10 +59,10 @@ class SupervisedDataset:
         if augment and self.noise_dirs:
             # Pass our load method to the augmentor's noise builder
             noise_ds = self.augmentor.build_noise_dataset(
-                self.noise_dirs, 
+                self.noise_dirs,
                 load_fn=lambda p: self._tf_load_full_audio(p)
             )
-            
+
             if noise_ds:
                 dataset = tf.data.Dataset.zip((dataset, noise_ds))
                 dataset = dataset.map(
@@ -86,17 +86,17 @@ class SupervisedDataset:
         # 5. Encoding & Batching
         if one_hot:
             dataset = dataset.map(
-                lambda x, y: (x, tf.one_hot(y, self.data_loader.num_classes)), 
+                lambda x, y: (x, tf.one_hot(y, self.data_loader.num_classes)),
                 num_parallel_calls=tf.data.AUTOTUNE
             )
 
         dataset = dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
         return dataset
-    
+
     def build(self, split: list = [0.8, 0.1, 0.1], batch_size: int = 32, shuffle: bool = True, one_hot: bool = True, step_ratio: float = 0.5):
         # 1. Gather Training Files
         train_paths, train_labels = self.data_loader.gather_files()
-        
+
         # 2. Determine Evaluation Sets
         if self.val_dir:
             # Case: Dedicated Evaluation Source
@@ -112,11 +112,11 @@ class SupervisedDataset:
                 indices = np.arange(len(eval_paths))
                 np.random.shuffle(indices)
                 eval_paths, eval_labels = eval_paths[indices], eval_labels[indices]
-                
+
                 # Split evaluation directory (e.g., 50/50 if not specified, otherwise proportional to val/test split)
                 val_ratio = split[1] / (split[1] + split[2]) if (split[1] + split[2]) > 0 else 0.5
                 val_end = int(val_ratio * len(eval_paths))
-                
+
                 val_paths, val_labels = eval_paths[:val_end], eval_labels[:val_end]
                 test_paths, test_labels = eval_paths[val_end:], eval_labels[val_end:]
                 print(f"Loaded Eval from {self.val_dir}: Train={len(train_paths)}, Val={len(val_paths)}, Test={len(test_paths)}")
@@ -139,13 +139,13 @@ class SupervisedDataset:
         print(f"Balanced class weights: {np.round(self.class_weights, 3).tolist()}")
 
         # 3. Create Pipelines
-        train_ds = self._create_pipeline(train_paths, train_labels, 
+        train_ds = self._create_pipeline(train_paths, train_labels,
                                        augment=True, batch_size=batch_size, shuffle=shuffle, one_hot=one_hot, step_ratio=step_ratio)
-        
-        val_ds = self._create_pipeline(val_paths, val_labels, 
-                                     augment=False, batch_size=batch_size, shuffle=False, one_hot=one_hot, step_ratio=1.0) 
-        
-        test_ds = self._create_pipeline(test_paths, test_labels, 
+
+        val_ds = self._create_pipeline(val_paths, val_labels,
+                                     augment=False, batch_size=batch_size, shuffle=False, one_hot=one_hot, step_ratio=1.0)
+
+        test_ds = self._create_pipeline(test_paths, test_labels,
                                       augment=False, batch_size=batch_size, shuffle=False, one_hot=one_hot, step_ratio=1.0)
 
         return train_ds, val_ds, test_ds

@@ -1,5 +1,7 @@
 import tensorflow as tf
 
+import tensorflow as tf
+
 class MosSongPlusModel:
     def __init__(self, model_config):
         self.model_config = model_config
@@ -8,13 +10,26 @@ class MosSongPlusModel:
             raise ValueError("Invalid model configuration. Ensure 'mossongplus' exists under 'model' in your YAML.")
 
     def build(self, input_shape, output_units, output_activation=None):
-
         inputs = tf.keras.layers.Input(shape=input_shape)
         x = inputs
 
         # 1. Convolutional Layers
         for conv_cfg in self.config.get("conv", []):
-            x = tf.keras.layers.Conv1D(**conv_cfg)(x)
+            # Create a copy so we don't destructively modify the original config
+            cfg_copy = conv_cfg.copy()
+
+            # Pop the activation so it isn't applied inside the Conv1D layer
+            activation_func = cfg_copy.pop("activation", None)
+
+            # Linear Convolution
+            x = tf.keras.layers.Conv1D(**cfg_copy)(x)
+
+            # Batch Normalization inserted here
+            x = tf.keras.layers.BatchNormalization()(x)
+
+            # Non-linear Activation applied after BN
+            if activation_func:
+                x = tf.keras.layers.Activation(activation_func)(x)
 
         # 2. Max Pooling Layers
         for pool_cfg in self.config.get("maxpool", []):
@@ -22,8 +37,7 @@ class MosSongPlusModel:
 
         # 3. Flatten
         flatten_cfg = self.config.get("flatten")
-        # Handle YAML list [True]
-        should_flatten = flatten_cfg[0] if isinstance(flatten_cfg, list) and flatten_cfg else flatten_cfg
+        should_flatten = flatten_cfg if isinstance(flatten_cfg, list) and flatten_cfg else flatten_cfg
         if should_flatten:
             x = tf.keras.layers.Flatten()(x)
 
@@ -35,9 +49,20 @@ class MosSongPlusModel:
 
         # 5. Dense Layers
         for dense_cfg in self.config.get("dense", []):
-            x = tf.keras.layers.Dense(**dense_cfg)(x)
+            cfg_copy = dense_cfg.copy()
+            activation_func = cfg_copy.pop("activation", None)
 
-        # 6. Final Output Layer (e.g., for classification)
+            # Linear Dense
+            x = tf.keras.layers.Dense(**cfg_copy)(x)
+
+            # Batch Normalization inserted here
+            # x = tf.keras.layers.BatchNormalization()(x)
+
+            # Non-linear Activation applied after BN
+            if activation_func:
+                x = tf.keras.layers.Activation(activation_func)(x)
+
+        # 6. Final Output Layer
         if output_units > 0:
             x = tf.keras.layers.Dense(units=output_units, activation=output_activation)(x)
 

@@ -1,4 +1,5 @@
 import tensorflow as tf
+from src.framework.helper.augment import AudioAugmentor
 
 class Train:
     def __init__(self, model, optimizer, loss_fn, train_ds):
@@ -13,6 +14,7 @@ class Train:
 
     @tf.function
     def train_step(self, x, y):
+
         with tf.GradientTape() as tape:
             predictions = self.model(x, training=True)
             loss = self.loss_fn(y, predictions)
@@ -28,7 +30,7 @@ class Train:
 
         return loss
 
-    
+
     def train_epoch(self):
         """
         Iterates through the training dataset and returns aggregated metrics.
@@ -45,5 +47,3 @@ class Train:
             "loss": float(self.train_loss_metric.result()),
             "accuracy": float(self.train_acc_metric.result())
         }
-    
-    

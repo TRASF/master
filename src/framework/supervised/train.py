@@ -33,7 +33,7 @@ def train_supervised(defaults_path="configs/defaults.yaml", model_cfg_path="conf
     # 1. Load Configurations
     defaults = load_config(defaults_path)
     model_cfg = load_config(model_cfg_path)
-    
+
     # Extract sub-configs for cleaner access
     audio_cfg = defaults.get("audio", {})
     train_cfg = defaults.get("train", {})
@@ -43,19 +43,19 @@ def train_supervised(defaults_path="configs/defaults.yaml", model_cfg_path="conf
     output_activation = model_defaults.get("output_activation", None)
     configured_class_weights = defaults.get("class_weights")
     classes = list(defaults["labels"].keys())
-    
+
     # Pre-calculate derived values
     sample_rate = audio_cfg.get("sample_rate", 8000)
     duration = audio_cfg.get("duration", 0.3)
     segment_length = int(duration * sample_rate)
-    
+
     # 2. Setup Dataset
     print("Setting up datasets...")
     dataset_dir = dataset_cfg.get("indoor", "dataset/MSB/Indoor")
     val_dir = dataset_cfg.get("val_dir") # Dedicated val directory
     test_dir = dataset_cfg.get("test_dir") # Dedicated test directory
     noise_dirs = augment_cfg.get("noise_banks", [])
-    
+
     ds_builder = SupervisedDataset(
         dataset_dir=dataset_dir,
         val_dir=val_dir,
@@ -66,7 +66,7 @@ def train_supervised(defaults_path="configs/defaults.yaml", model_cfg_path="conf
         noise_dirs=noise_dirs,
         augment_cfg=augment_cfg
     )
-    
+
     batch_size = train_cfg.get("batch_size", 32)
     step_ratio = train_cfg.get("step_ratio", 0.5)
     split_ratios = dataset_cfg.get("split_ratios", {"train": 0.8, "val": 0.1, "test": 0.1})
@@ -78,7 +78,7 @@ def train_supervised(defaults_path="configs/defaults.yaml", model_cfg_path="conf
         shuffle=train_cfg.get("shuffle", True),
         step_ratio=step_ratio
     )
-    
+
     # Add Channel Dimension for Conv1D
     train_ds = train_ds.map(lambda x, y: (tf.expand_dims(x, -1), y), num_parallel_calls=tf.data.AUTOTUNE)
     val_ds = val_ds.map(lambda x, y: (tf.expand_dims(x, -1), y), num_parallel_calls=tf.data.AUTOTUNE)
@@ -89,8 +89,8 @@ def train_supervised(defaults_path="configs/defaults.yaml", model_cfg_path="conf
     num_classes = len(defaults["labels"])
     model_builder = MosSongPlusModel(model_cfg)
     model = model_builder.build(
-        input_shape=(segment_length, 1), 
-        output_units=num_classes, 
+        input_shape=(segment_length, 1),
+        output_units=num_classes,
         output_activation=output_activation
     )
     model.summary()
@@ -115,14 +115,14 @@ def train_supervised(defaults_path="configs/defaults.yaml", model_cfg_path="conf
     # 8. Training Loop
     epochs = defaults["train"]["epochs"]
     print(f"\nStarting training for {epochs} epochs...")
-    
+
     for epoch in range(epochs):
         # --- Train ---
         train_metrics = trainer.train_epoch()
-        
+
         # --- Eval ---
         val_metrics = evaluator.evaluate_epoch(val_ds)
-        
+
         # Print metrics
         print(f"Epoch {epoch+1}/{epochs} - "
               f"loss: {train_metrics['loss']:.4f} - acc: {train_metrics['accuracy']:.4f} - "
@@ -145,16 +145,16 @@ def train_supervised(defaults_path="configs/defaults.yaml", model_cfg_path="conf
                     f"{m}={callback_values[m]:.4f}" for m in cb.monitors
                 )
                 print(f"  --> Saved best weights to {save_path} ({monitor_info})")
-        
+
         # Reduce LR
         if 'reduce_lr_on_plateau' in callbacks:
             cb = callbacks['reduce_lr_on_plateau']
-            cb.on_epoch_end(callback_values[cb.monitor])
-            
+            cb.on_epoch_end(callback_values)
+
         # Early Stopping
         if 'early_stopping' in callbacks:
             cb = callbacks['early_stopping']
-            if cb.check(callback_values[cb.monitor]):
+            if cb.check(callback_values):
                 print(f"\nEarly stopping triggered after {epoch+1} epochs.")
                 break
 

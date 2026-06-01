@@ -4,15 +4,15 @@ model:
             - filters: 100
               kernel_size: 32
               strides: 4
-              activation: relu
+              activation: elu
             - filters: 64
               kernel_size: 32
               strides: 4
-              activation: relu
+              activation: elu
             - filters: 64
               kernel_size: 32
               strides: 3
-              activation: relu
+              activation: elu
         maxpool:
             - pool_size: 3
               strides: 3
@@ -22,7 +22,6 @@ model:
             - rate: 0.5
         dense:
             - units: 256
-              activation: relu
+              activation: elu
             - units: 128
-              activation: relu
-
+              activation: elu

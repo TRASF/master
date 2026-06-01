@@ -6,7 +6,7 @@ class AudioAugmentor:
     def __init__(self, segment_length: int = 2400, config: dict = None):
         self.segment_length = segment_length
         self.cfg = config or {}
-        
+
         # Initialize augmentation parameters from config
         self.noise_cfg = self.cfg.get('noise_overlay', {'p': 0.0, 'snr_db': [10, 20]})
         self.noise_envelope_cfg = self.noise_cfg.get('envelope_gain', [0.7, 1.0])
@@ -24,11 +24,11 @@ class AudioAugmentor:
         """
         num_masks = self.mask_cfg.get('num_masks', 1)
         max_mask_size = self.mask_cfg.get('max_mask_size', 400)
-        
+
         for _ in range(num_masks):
             mask_size = tf.random.uniform([], minval=10, maxval=max_mask_size, dtype=tf.int32)
             start_idx = tf.random.uniform([], minval=0, maxval=self.segment_length - mask_size, dtype=tf.int32)
-            
+
             mask = tf.concat([
                 tf.ones([start_idx]),
                 tf.zeros([mask_size]),
@@ -137,20 +137,20 @@ class AudioAugmentor:
         # Factor: 2^(semitones/12)
         factor = tf.pow(2.0, semitones / 12.0)
         new_len = tf.cast(tf.cast(self.segment_length, tf.float32) / factor, tf.int32)
-        
+
         # Reshape for tf.image.resize: (batch, height, width, channels) -> (1, 1, len, 1)
         audio_4d = tf.reshape(audio, [1, 1, self.segment_length, 1])
         # Resize width
         resized = tf.image.resize(audio_4d, [1, new_len], method='bilinear')
         resized = tf.reshape(resized, [-1])
-        
+
         # Crop or Pad back to segment_length
         res_len = tf.shape(resized)[0]
         def pad_it():
             return tf.pad(resized, [[0, self.segment_length - res_len]])
         def crop_it():
             return resized[:self.segment_length]
-            
+
         final = tf.cond(res_len < self.segment_length, pad_it, crop_it)
         final.set_shape([self.segment_length])
         return final
@@ -182,15 +182,15 @@ class AudioAugmentor:
             # 1. Pitch Shift
             if tf.random.uniform([]) < float(self.pitch_cfg['p']):
                 audio = self.pitch_shift(audio, self.pitch_cfg['semitones'])
-            
+
             # 2. Time Shift
             if tf.random.uniform([]) < float(self.time_cfg['p']):
                 audio = self.time_shift(audio, self.time_cfg['rate'])
-            
+
             # 3. Random Gain
             if tf.random.uniform([]) < float(self.gain_cfg['p']):
                 audio = self.random_gain(audio, self.gain_cfg['gain_db'])
-                
+
             # 4. Gaussian Noise
             if tf.random.uniform([]) < float(self.gauss_cfg['p']):
                 audio = self.add_gaussian_noise(audio, self.gauss_cfg['snr_db'])
@@ -202,10 +202,10 @@ class AudioAugmentor:
             # 6. Time Masking
             if tf.random.uniform([]) < float(self.mask_cfg['p']):
                 audio = self.apply_time_masking(audio)
-                
+
         # Final DC Removal
         audio = audio - tf.reduce_mean(audio)
         audio = tf.clip_by_value(audio, -1.0, 1.0)
         audio.set_shape([self.segment_length])
-        
+
         return audio, label
