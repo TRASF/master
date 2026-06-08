@@ -1,213 +1,181 @@
 import os
 import tensorflow as tf
 
-class EarlyStopping:
-    def __init__(self, patience=10, monitor='val_loss', mode='min'):
-        self.patience = patience
-        
-        # Ensure monitors is a list
-        if isinstance(monitor, (list, tuple)):
-            self.monitors = list(monitor)
+
+class MetricMonitor:
+    def __init__(self, monitor="val_loss", mode="min", min_delta=0.0):
+        self.monitor = monitor
+        self.mode = mode
+        self.min_delta = min_delta
+
+        if mode == "min":
+            self.best = float("inf")
+        elif mode == "max":
+            self.best = float("-inf")
         else:
-            self.monitors = [monitor]
-            
-        # Ensure modes is a list of same length
-        if isinstance(mode, (list, tuple)):
-            self.modes = list(mode)
-        else:
-            self.modes = [mode] * len(self.monitors)
+            raise ValueError("mode must be 'min' or 'max'")
 
-        if len(self.modes) != len(self.monitors):
-            raise ValueError(f"EarlyStopping mode length ({len(self.modes)}) must match monitor length ({len(self.monitors)}). "
-                             f"Monitors: {self.monitors}, Modes: {self.modes}")
+    def get_value(self, logs):
+        if isinstance(logs, dict):
+            if self.monitor not in logs:
+                raise KeyError(f"Metric '{self.monitor}' not found in logs. Available: {list(logs.keys())}")
+            return float(logs[self.monitor])
 
-        self.wait = 0
-        self.best = {}
-        for monitor_name, mode_name in zip(self.monitors, self.modes):
-            self.best[monitor_name] = float('inf') if mode_name == 'min' else float('-inf')
-        
-        self.stopped_epoch = 0
+        return float(logs)
 
-    def _is_improved(self, current_val, best_val, mode):
-        if mode == 'min':
-            return current_val < best_val
-        return current_val > best_val
+    def is_improved(self, current):
+        if self.mode == "min":
+            return current < self.best - self.min_delta
+        return current > self.best + self.min_delta
 
-    def check(self, current_val):
-        # Convert single value to dict if needed
-        if not isinstance(current_val, dict):
-            if len(self.monitors) != 1:
-                raise ValueError("Current value must be a dict when monitoring multiple metrics")
-            current_val = {self.monitors[0]: current_val}
-
-        improved_any = False
-        for monitor_name, mode_name in zip(self.monitors, self.modes):
-            if monitor_name not in current_val:
-                # If a monitored metric is missing, we skip it but don't fail yet
-                continue
-            
-            current_metric = current_val[monitor_name]
-            if self._is_improved(current_metric, self.best[monitor_name], mode_name):
-                self.best[monitor_name] = current_metric
-                improved_any = True
-
-        if improved_any:
-            self.wait = 0
-            return False
-        else:
-            self.wait += 1
-            if self.wait >= self.patience:
-                return True
-            return False
-
-class ModelCheckpoint:
-    def __init__(self, filepath, monitor='val_loss', mode='min', save_best_only=True):
-        self.filepath = filepath
-        self.save_best_only = save_best_only
-
-        if isinstance(monitor, (list, tuple)):
-            self.monitors = list(monitor)
-        else:
-            self.monitors = [monitor]
-
-        if isinstance(mode, (list, tuple)):
-            self.modes = list(mode)
-        else:
-            self.modes = [mode] * len(self.monitors)
-
-        if len(self.modes) != len(self.monitors):
-            raise ValueError(f"ModelCheckpoint mode length ({len(self.modes)}) must match monitor length ({len(self.monitors)})")
-
-        self.best = {}
-        for monitor_name, mode_name in zip(self.monitors, self.modes):
-            self.best[monitor_name] = float('inf') if mode_name == 'min' else float('-inf')
-
-    def _is_improved(self, current_val, best_val, mode):
-        if mode == 'min':
-            return current_val < best_val
-        return current_val > best_val
-
-    def save(self, model, current_val):
-        if not self.save_best_only:
-            model.save_weights(self.filepath)
-            return True
-
-        if not isinstance(current_val, dict):
-            if len(self.monitors) != 1:
-                raise ValueError("Current value must be a dict when monitoring multiple metrics")
-            current_val = {self.monitors[0]: current_val}
-
-        improved_any = False
-        for monitor_name, mode_name in zip(self.monitors, self.modes):
-            if monitor_name not in current_val:
-                continue
-            
-            current_metric = current_val[monitor_name]
-            if self._is_improved(current_metric, self.best[monitor_name], mode_name):
-                self.best[monitor_name] = current_metric
-                improved_any = True
-
-        if improved_any:
-            os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
-            model.save_weights(self.filepath)
+    def update(self, current):
+        if self.is_improved(current):
+            self.best = current
             return True
         return False
 
+
+class EarlyStopping:
+    def __init__(self, patience=10, monitor="val_loss", mode="min", min_delta=0.0,
+                 restore_best_weights=False, model=None, checkpoint_path=None):
+        self.monitor = MetricMonitor(monitor, mode, min_delta)
+        self.patience = patience
+        self.wait = 0
+        self.stopped_epoch = 0
+        self.restore_best_weights = restore_best_weights
+        self.model = model
+        self.checkpoint_path = checkpoint_path
+
+    def check(self, logs, epoch=None):
+        current = self.monitor.get_value(logs)
+
+        if self.monitor.update(current):
+            self.wait = 0
+            return False
+
+        self.wait += 1
+
+        if self.wait >= self.patience:
+            self.stopped_epoch = epoch if epoch is not None else 0
+
+            if self.restore_best_weights and self.model is not None and self.checkpoint_path is not None:
+                if os.path.exists(self.checkpoint_path):
+                    self.model.load_weights(self.checkpoint_path)
+                    print(f"Restored best weights from {self.checkpoint_path} before stopping.")
+
+            return True
+
+        return False
+
+
+class ModelCheckpoint:
+    def __init__(self, filepath, monitor="val_loss", mode="min", save_best_only=True, min_delta=0.0):
+        self.filepath = filepath
+        self.save_best_only = save_best_only
+        self.monitor = MetricMonitor(monitor, mode, min_delta)
+
+    def save(self, model, logs):
+        if not self.save_best_only:
+            self._save_weights(model)
+            return True
+
+        current = self.monitor.get_value(logs)
+
+        if self.monitor.update(current):
+            self._save_weights(model)
+            return True
+
+        return False
+
+    def _save_weights(self, model):
+        dirname = os.path.dirname(self.filepath)
+        if dirname:
+            os.makedirs(dirname, exist_ok=True)
+
+        model.save_weights(self.filepath)
+
+
 class ReduceLROnPlateau:
-    def __init__(self, optimizer, factor=0.5, patience=5, monitor='val_loss', mode='min', min_lr=1e-6):
+    def __init__(self, optimizer, model=None, factor=0.5, patience=5, monitor="val_loss",
+                 mode="min", min_lr=1e-6, min_delta=0.0, restore_best_weights=False, checkpoint_path=None):
         self.optimizer = optimizer
+        self.model = model
         self.factor = factor
         self.patience = patience
-        
-        if isinstance(monitor, (list, tuple)):
-            self.monitors = list(monitor)
-        else:
-            self.monitors = [monitor]
-
-        if isinstance(mode, (list, tuple)):
-            self.modes = list(mode)
-        else:
-            self.modes = [mode] * len(self.monitors)
-
-        if len(self.modes) != len(self.monitors):
-            raise ValueError(f"ReduceLROnPlateau mode length ({len(self.modes)}) must match monitor length ({len(self.monitors)})")
-
         self.min_lr = min_lr
         self.wait = 0
-        self.best = {}
-        for monitor_name, mode_name in zip(self.monitors, self.modes):
-            self.best[monitor_name] = float('inf') if mode_name == 'min' else float('-inf')
+        self.monitor = MetricMonitor(monitor, mode, min_delta)
+        self.restore_best_weights = restore_best_weights
+        self.checkpoint_path = checkpoint_path
 
-    def _is_improved(self, current_val, best_val, mode):
-        if mode == 'min':
-            return current_val < best_val
-        return current_val > best_val
+    def on_epoch_end(self, logs):
+        current = self.monitor.get_value(logs)
 
-    def on_epoch_end(self, current_val):
-        if not isinstance(current_val, dict):
-            if len(self.monitors) != 1:
-                raise ValueError("Current value must be a dict when monitoring multiple metrics")
-            current_val = {self.monitors[0]: current_val}
-
-        improved_any = False
-        for monitor_name, mode_name in zip(self.monitors, self.modes):
-            if monitor_name not in current_val:
-                continue
-            
-            current_metric = current_val[monitor_name]
-            if self._is_improved(current_metric, self.best[monitor_name], mode_name):
-                self.best[monitor_name] = current_metric
-                improved_any = True
-
-        if improved_any:
+        if self.monitor.update(current):
             self.wait = 0
-        else:
-            self.wait += 1
-            if self.wait >= self.patience:
-                old_lr = float(self.optimizer.learning_rate)
-                new_lr = max(old_lr * self.factor, self.min_lr)
-                if old_lr > new_lr:
-                    self.optimizer.learning_rate.assign(new_lr)
-                    print(f"\nLearning rate reduced to {new_lr:.8f}")
-                self.wait = 0
+            return
+
+        self.wait += 1
+
+        if self.wait >= self.patience:
+            old_lr = float(tf.keras.backend.get_value(self.optimizer.learning_rate))
+            new_lr = max(old_lr * self.factor, self.min_lr)
+
+            if new_lr < old_lr:
+                self.optimizer.learning_rate.assign(new_lr)
+                print(f"\nLearning rate reduced from {old_lr:.8f} to {new_lr:.8f}")
+
+                if self.restore_best_weights and self.model is not None and self.checkpoint_path is not None:
+                    if os.path.exists(self.checkpoint_path):
+                        self.model.load_weights(self.checkpoint_path)
+                        print(f"Restored best weights from {self.checkpoint_path}")
+                    else:
+                        print(f"Warning: Best weights file not found at {self.checkpoint_path}")
+
+            self.wait = 0
+
 
 class CallbackFactory:
     @staticmethod
-    def get_callbacks(config: dict, optimizer, model_save_path):
-        cb_config = config.get('callbacks', {})
-        
+    def get_callbacks(config: dict, optimizer, model, model_save_path):
+        cb_config = config.get("callbacks", {})
         callbacks = {}
-        
-        if 'early_stopping' in cb_config:
-            cfg = cb_config['early_stopping']
-            # Support both singular and plural keys
-            monitor = cfg.get('monitor') or cfg.get('monitors') or 'val_loss'
-            callbacks['early_stopping'] = EarlyStopping(
-                patience=cfg.get('patience', 10),
-                monitor=monitor,
-                mode=cfg.get('mode', 'min')
+
+        if "early_stopping" in cb_config:
+            cfg = cb_config["early_stopping"]
+            callbacks["early_stopping"] = EarlyStopping(
+                patience=cfg.get("patience", 10),
+                monitor=cfg.get("monitor", "val_loss"),
+                mode=cfg.get("mode", "min"),
+                min_delta=float(cfg.get("min_delta", 0.0)),
+                restore_best_weights=cfg.get("restore_best_weights", False),
+                model=model,
+                checkpoint_path=model_save_path
             )
-            
-        if 'model_checkpoint' in cb_config:
-            cfg = cb_config['model_checkpoint']
-            monitor = cfg.get('monitor') or cfg.get('monitors') or 'val_loss'
-            callbacks['model_checkpoint'] = ModelCheckpoint(
+
+        if "model_checkpoint" in cb_config:
+            cfg = cb_config["model_checkpoint"]
+            callbacks["model_checkpoint"] = ModelCheckpoint(
                 filepath=model_save_path,
-                monitor=monitor,
-                mode=cfg.get('mode', 'min'),
-                save_best_only=cfg.get('save_best_only', True)
+                monitor=cfg.get("monitor", "val_loss"),
+                mode=cfg.get("mode", "min"),
+                save_best_only=cfg.get("save_best_only", True),
+                min_delta=float(cfg.get("min_delta", 0.0)),
             )
-            
-        if 'reduce_lr_on_plateau' in cb_config:
-            cfg = cb_config['reduce_lr_on_plateau']
-            monitor = cfg.get('monitor') or cfg.get('monitors') or 'val_loss'
-            callbacks['reduce_lr_on_plateau'] = ReduceLROnPlateau(
+
+        if "reduce_lr_on_plateau" in cb_config:
+            cfg = cb_config["reduce_lr_on_plateau"]
+            callbacks["reduce_lr_on_plateau"] = ReduceLROnPlateau(
                 optimizer=optimizer,
-                factor=cfg.get('factor', 0.5),
-                patience=cfg.get('patience', 5),
-                monitor=monitor,
-                mode=cfg.get('mode', 'min'),
-                min_lr=float(cfg.get('min_lr', 1e-6))
+                model=model,
+                factor=cfg.get("factor", 0.5),
+                patience=cfg.get("patience", 5),
+                monitor=cfg.get("monitor", "val_loss"),
+                mode=cfg.get("mode", "min"),
+                min_lr=float(cfg.get("min_lr", 1e-6)),
+                min_delta=float(cfg.get("min_delta", 0.0)),
+                restore_best_weights=cfg.get("restore_best_weights", False),
+                checkpoint_path=model_save_path
             )
-            
+
         return callbacks

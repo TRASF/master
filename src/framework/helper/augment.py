@@ -3,19 +3,58 @@ import tensorflow as tf
 import numpy as np
 
 class AudioAugmentor:
-    def __init__(self, segment_length: int = 2400, config: dict = None):
+    def __init__(self, segment_length: int = 2400, config: dict = None,
+                 seed: int = None, deterministic: bool = False,
+                 nomos_index: int = None):
         self.segment_length = segment_length
         self.cfg = config or {}
+        self.seed = seed
+        self.deterministic = deterministic
+        self.nomos_index = nomos_index
+        self.parallel_calls = 1 if deterministic else tf.data.AUTOTUNE
 
-        # Initialize augmentation parameters from config
-        self.noise_cfg = self.cfg.get('noise_overlay', {'p': 0.0, 'snr_db': [10, 20]})
+        # Initialize augmentation parameters with robust merging
+        self.noise_cfg = self._get_cfg('noise_overlay', {'p': 0.0, 'snr_db': [10, 20]})
         self.noise_envelope_cfg = self.noise_cfg.get('envelope_gain', [0.7, 1.0])
         self.noise_post_gain_cfg = self.noise_cfg.get('post_gain_db', [-6.0, 3.0])
-        self.pitch_cfg = self.cfg.get('pitch_shift', {'p': 0.0, 'semitones': [-0.5, 0.5]})
-        self.time_cfg = self.cfg.get('time_shift', {'p': 0.0, 'rate': [-0.1, 0.1]})
-        self.gain_cfg = self.cfg.get('random_gain', {'p': 0.0, 'gain_db': [-6, 6]})
-        self.gauss_cfg = self.cfg.get('gaussian_noise', {'p': 0.0, 'snr_db': [10, 20]})
-        self.mask_cfg = self.cfg.get('time_masking', {'p': 0.0, 'num_masks': 1, 'max_mask_size': 400})
+
+        self.pitch_cfg = self._get_cfg('pitch_shift', {'p': 0.0, 'semitones': [-0.5, 0.5]})
+        self.time_cfg = self._get_cfg('time_shift', {'p': 0.0, 'rate': [-0.1, 0.1]})
+        self.gain_cfg = self._get_cfg('random_gain', {'p': 0.0, 'gain_db': [-6, 6]})
+        self.gauss_cfg = self._get_cfg('gaussian_noise', {'p': 0.0, 'snr_db': [10, 20]})
+        self.mask_cfg = self._get_cfg('time_masking', {'p': 0.0, 'num_masks': 1, 'max_mask_size': 400})
+        self.pre_cfg = self._get_cfg('pre_emphasis', {'p': 0.0, 'coeff': 0.97})
+
+    def _get_cfg(self, key, defaults):
+        """
+        Merges user config with defaults to prevent KeyErrors for missing sub-keys.
+        """
+        user_val = self.cfg.get(key, {})
+        if user_val is None: return defaults
+        return {**defaults, **user_val}
+
+    @tf.function
+    def pre_emphasis(self, x, coeff=0.97):
+        """
+        Applies pre-emphasis filter: y[t] = x[t] - coeff * x[t-1]
+        """
+        x = tf.cast(x, tf.float32)
+        return tf.concat([x[:1], x[1:] - coeff * x[:-1]], axis=0)
+
+    @tf.function
+    def rms_normalize(self, audio, target_rms=0.1):
+        rms = tf.sqrt(tf.reduce_mean(tf.square(audio)) + 1e-8)
+        audio = audio * (target_rms / rms)
+        return audio
+
+    @tf.function
+    def delta_waveform(self, x):
+        """
+        Computes the delta (first-order difference) of the waveform.
+        """
+        x = tf.cast(x, tf.float32)
+        delta = tf.concat([[0.0], x[1:] - x[:-1]], axis=0)
+        return delta
 
     @tf.function
     def apply_time_masking(self, audio):
@@ -26,8 +65,22 @@ class AudioAugmentor:
         max_mask_size = self.mask_cfg.get('max_mask_size', 400)
 
         for _ in range(num_masks):
-            mask_size = tf.random.uniform([], minval=10, maxval=max_mask_size, dtype=tf.int32)
-            start_idx = tf.random.uniform([], minval=0, maxval=self.segment_length - mask_size, dtype=tf.int32)
+            max_mask_size = tf.minimum(tf.cast(max_mask_size, tf.int32), self.segment_length)
+            max_mask_size = tf.maximum(max_mask_size, 1)
+            min_mask_size = tf.minimum(tf.constant(10, dtype=tf.int32), max_mask_size)
+
+            mask_size = tf.random.uniform(
+                [],
+                minval=min_mask_size,
+                maxval=max_mask_size + 1,
+                dtype=tf.int32,
+            )
+            start_idx = tf.random.uniform(
+                [],
+                minval=0,
+                maxval=self.segment_length - mask_size + 1,
+                dtype=tf.int32,
+            )
 
             mask = tf.concat([
                 tf.ones([start_idx]),
@@ -51,13 +104,30 @@ class AudioAugmentor:
 
     @tf.function
     def create_segments(self, audio, label, step_ratio=0.5, training=True):
-        step = tf.cast(tf.cast(self.segment_length, tf.float32) * step_ratio, tf.int32)
+        audio = tf.cast(audio, tf.float32)
+        audio_len = tf.shape(audio)[0]
+
+        # During training, randomize step_ratio (overlap)
+        # overlap [0.0, 0.7] -> step_ratio [0.3, 1.0]
         if training:
-            offset = tf.random.uniform([], 0, step, dtype=tf.int32)
-            audio = tf.roll(audio, shift=-offset, axis=0)
+            dyn_step_ratio = tf.random.uniform([], minval=0.3, maxval=1.0)
+        else:
+            dyn_step_ratio = tf.cast(step_ratio, tf.float32)
+
+        step = tf.cast(tf.cast(self.segment_length, tf.float32) * dyn_step_ratio, tf.int32)
+        step = tf.maximum(step, 1)
+
+        if training:
+            # Slicing from offset is safer than tf.roll
+            max_offset = tf.minimum(step, tf.maximum(audio_len, 1))
+            offset = tf.random.uniform([], minval=0, maxval=max_offset, dtype=tf.int32)
+            audio = audio[offset:]
+
         frames = tf.signal.frame(audio, frame_length=self.segment_length, frame_step=step, pad_end=True)
         num_frames = tf.shape(frames)[0]
         labels = tf.repeat(tf.expand_dims(label, 0), num_frames, axis=0)
+
+        frames.set_shape([None, self.segment_length])
         return tf.data.Dataset.from_tensor_slices((frames, labels))
 
     def build_noise_dataset(self, noise_dirs, load_fn):
@@ -65,15 +135,33 @@ class AudioAugmentor:
         for n_dir in noise_dirs:
             path_obj = Path(n_dir)
             if path_obj.is_dir():
+                noise_paths.extend([str(p) for p in path_obj.rglob("*.npy")])
                 noise_paths.extend([str(p) for p in path_obj.rglob("*.wav")])
+        noise_paths = sorted(set(noise_paths))
         if not noise_paths:
             return None
         noise_ds = tf.data.Dataset.from_tensor_slices(noise_paths)
-        noise_ds = noise_ds.map(lambda p: load_fn(p), num_parallel_calls=tf.data.AUTOTUNE)
+        options = tf.data.Options()
+        options.experimental_deterministic = self.deterministic
+        noise_ds = noise_ds.with_options(options)
+        noise_ds = noise_ds.map(
+            lambda p: load_fn(p),
+            num_parallel_calls=self.parallel_calls,
+            deterministic=self.deterministic,
+        )
         noise_ds = noise_ds.cache()
-        noise_ds = noise_ds.shuffle(len(noise_paths)).repeat()
-        noise_ds = noise_ds.map(lambda x: self.random_segment(x), num_parallel_calls=tf.data.AUTOTUNE)
-        return noise_ds
+        noise_seed = self.seed if self.deterministic else None
+        noise_ds = noise_ds.shuffle(
+            len(noise_paths),
+            seed=noise_seed,
+            reshuffle_each_iteration=True,
+        ).repeat()
+        noise_ds = noise_ds.map(
+            lambda x: self.random_segment(x),
+            num_parallel_calls=self.parallel_calls,
+            deterministic=self.deterministic,
+        )
+        return noise_ds.with_options(options)
 
     @tf.function
     def sample_noise_snr(self, fallback_range):
@@ -134,17 +222,13 @@ class AudioAugmentor:
         Approximates pitch shift via resampling using tf.image.resize.
         """
         semitones = tf.random.uniform([], float(semitones_range[0]), float(semitones_range[1]))
-        # Factor: 2^(semitones/12)
         factor = tf.pow(2.0, semitones / 12.0)
         new_len = tf.cast(tf.cast(self.segment_length, tf.float32) / factor, tf.int32)
 
-        # Reshape for tf.image.resize: (batch, height, width, channels) -> (1, 1, len, 1)
         audio_4d = tf.reshape(audio, [1, 1, self.segment_length, 1])
-        # Resize width
         resized = tf.image.resize(audio_4d, [1, new_len], method='bilinear')
         resized = tf.reshape(resized, [-1])
 
-        # Crop or Pad back to segment_length
         res_len = tf.shape(resized)[0]
         def pad_it():
             return tf.pad(resized, [[0, self.segment_length - res_len]])
@@ -178,33 +262,40 @@ class AudioAugmentor:
 
     @tf.function
     def apply_post_processing(self, audio, label, noise=None, augment=True):
-        if augment:
-            # 1. Pitch Shift
+        # 1. Check if it's the background class (No.Mos)
+        is_nomos = False
+        if self.nomos_index is not None:
+            is_nomos = tf.equal(tf.cast(label, tf.int32), tf.cast(self.nomos_index, tf.int32))
+
+        # 2. Random Augmentations (ONLY for mosquitoes, NOT for No.Mos)
+        if augment and not is_nomos:
+            # Pitch Shift
             if tf.random.uniform([]) < float(self.pitch_cfg['p']):
                 audio = self.pitch_shift(audio, self.pitch_cfg['semitones'])
 
-            # 2. Time Shift
+            # Time Shift
             if tf.random.uniform([]) < float(self.time_cfg['p']):
                 audio = self.time_shift(audio, self.time_cfg['rate'])
 
-            # 3. Random Gain
+            # Random Gain
             if tf.random.uniform([]) < float(self.gain_cfg['p']):
                 audio = self.random_gain(audio, self.gain_cfg['gain_db'])
 
-            # 4. Gaussian Noise
+            # Gaussian Noise
             if tf.random.uniform([]) < float(self.gauss_cfg['p']):
                 audio = self.add_gaussian_noise(audio, self.gauss_cfg['snr_db'])
 
-            # 5. Noise Overlay (External Noise Bank)
+            # Noise Overlay (External Noise Bank)
             if noise is not None and tf.random.uniform([]) < float(self.noise_cfg['p']):
                 audio = self.add_noise(audio, noise, self.noise_cfg['snr_db'])
 
-            # 6. Time Masking
+            # Time Masking
             if tf.random.uniform([]) < float(self.mask_cfg['p']):
                 audio = self.apply_time_masking(audio)
 
-        # Final DC Removal
-        audio = audio - tf.reduce_mean(audio)
+        audio = self.pre_emphasis(audio)
+        audio = self.delta_waveform(audio)
+        audio = self.rms_normalize(audio)
         audio = tf.clip_by_value(audio, -1.0, 1.0)
         audio.set_shape([self.segment_length])
 

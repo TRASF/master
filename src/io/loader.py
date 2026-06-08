@@ -56,12 +56,7 @@ class FileLoader:
 
     def load(self) -> np.ndarray:
         data, sr = load_file(self.path)
-
         data = bit_shift(data)
         data = to_mono(data)
-        data = np.clip(data, -1.0, 1.0)
-
         data = resample_audio(data, sr, self.sample_rate)
-        data = np.clip(data, -1.0, 1.0)
-
         return data.astype(np.float32)

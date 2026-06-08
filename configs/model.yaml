@@ -1,27 +1,44 @@
 model:
     mossongplus:
         conv:
-            - filters: 100
-              kernel_size: 32
+            - filters: 32
+              kernel_size: 100
               strides: 4
-              activation: elu
-            - filters: 64
-              kernel_size: 32
+              activation: relu
+              padding: valid
+              batch_norm: true
+
+            - filters: 32
+              kernel_size: 64
               strides: 4
-              activation: elu
+              activation: relu
+              padding: valid
+              batch_norm: true
+
             - filters: 64
-              kernel_size: 32
+              kernel_size: 64
               strides: 3
-              activation: elu
+              activation: relu
+              padding: valid
+              batch_norm: true
+
         maxpool:
             - pool_size: 3
               strides: 3
-        flatten:
-            - True
+              padding: valid
+
+        flatten: true
+        # global_avg_pool: true
+        # global_max_pool: true
+
         dropout:
             - rate: 0.5
+
         dense:
             - units: 256
-              activation: elu
+              activation: relu
+
             - units: 128
-              activation: elu
+              activation: relu
+
+    flatten: true

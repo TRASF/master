@@ -1,69 +1,80 @@
 import tensorflow as tf
 
-import tensorflow as tf
 
 class MosSongPlusModel:
     def __init__(self, model_config):
         self.model_config = model_config
         self.config = model_config.get("model", {}).get("mossongplus")
-        if not self.config:
-            raise ValueError("Invalid model configuration. Ensure 'mossongplus' exists under 'model' in your YAML.")
 
-    def build(self, input_shape, output_units, output_activation=None):
+        if not self.config:
+            raise ValueError(
+                "Invalid model configuration. Ensure 'mossongplus' exists under 'model' in your YAML."
+            )
+
+    def build(self, input_shape, output_units, output_activation="softmax"):
         inputs = tf.keras.layers.Input(shape=input_shape)
         x = inputs
 
-        # 1. Convolutional Layers
         for conv_cfg in self.config.get("conv", []):
-            # Create a copy so we don't destructively modify the original config
-            cfg_copy = conv_cfg.copy()
+            cfg = conv_cfg.copy()
+            activation = cfg.pop("activation", None)
+            use_batch_norm = cfg.pop("batch_norm", False)
 
-            # Pop the activation so it isn't applied inside the Conv1D layer
-            activation_func = cfg_copy.pop("activation", None)
+            if cfg.get("padding") == "linear":
+                cfg["padding"] = "valid"
 
-            # Linear Convolution
-            x = tf.keras.layers.Conv1D(**cfg_copy)(x)
+            if not use_batch_norm and activation:
+                # OPTIMIZATION: Embed activation directly if no BN is present
+                cfg["activation"] = activation
+                x = tf.keras.layers.Conv1D(**cfg)(x)
+            else:
+                # Standard sequence: Conv (Linear) -> BN -> Activation
+                x = tf.keras.layers.Conv1D(**cfg)(x)
+                if use_batch_norm:
+                    bn_cfg = use_batch_norm if isinstance(use_batch_norm, dict) else {}
+                    x = tf.keras.layers.BatchNormalization(**bn_cfg)(x)
+                if activation:
+                    x = tf.keras.layers.Activation(activation)(x)
 
-            # Batch Normalization inserted here
-            x = tf.keras.layers.BatchNormalization()(x)
-
-            # Non-linear Activation applied after BN
-            if activation_func:
-                x = tf.keras.layers.Activation(activation_func)(x)
-
-        # 2. Max Pooling Layers
         for pool_cfg in self.config.get("maxpool", []):
             x = tf.keras.layers.MaxPooling1D(**pool_cfg)(x)
 
-        # 3. Flatten
-        flatten_cfg = self.config.get("flatten")
-        should_flatten = flatten_cfg if isinstance(flatten_cfg, list) and flatten_cfg else flatten_cfg
-        if should_flatten:
+        if self.config.get("global_avg_pool", False):
+            x = tf.keras.layers.GlobalAveragePooling1D()(x)
+
+        if self.config.get("global_max_pool", False):
+            x = tf.keras.layers.GlobalMaxPooling1D()(x)
+
+        if self.config.get("flatten", False):
             x = tf.keras.layers.Flatten()(x)
 
-        # 4. Dropout
-        dropout_cfgs = self.config.get("dropout", [])
-        for d_cfg in dropout_cfgs:
-            rate = d_cfg.get("rate", 0.5) if isinstance(d_cfg, dict) else d_cfg
-            x = tf.keras.layers.Dropout(rate=rate)(x)
+        for d_cfg in self.config.get("dropout", []):
+            rate = d_cfg.get("rate", 0.5) if isinstance(d_cfg, dict) else float(d_cfg)
+            x = tf.keras.layers.Dropout(rate)(x)
 
-        # 5. Dense Layers
+
         for dense_cfg in self.config.get("dense", []):
-            cfg_copy = dense_cfg.copy()
-            activation_func = cfg_copy.pop("activation", None)
+            cfg = dense_cfg.copy()
+            activation = cfg.pop("activation", None)
+            use_batch_norm = cfg.pop("batch_norm", False)
+            if not use_batch_norm and activation:
+                # OPTIMIZATION: Embed activation directly if no BN is present
+                cfg["activation"] = activation
+                x = tf.keras.layers.Dense(**cfg)(x)
+            else:
+                # Standard sequence: Dense (Linear) -> BN -> Activation
+                x = tf.keras.layers.Dense(**cfg)(x)
+                if use_batch_norm:
+                    bn_cfg = use_batch_norm if isinstance(use_batch_norm, dict) else {}
+                    x = tf.keras.layers.BatchNormalization(**bn_cfg)(x)
+                if activation:
+                    x = tf.keras.layers.Activation(activation)(x)
 
-            # Linear Dense
-            x = tf.keras.layers.Dense(**cfg_copy)(x)
 
-            # Batch Normalization inserted here
-            # x = tf.keras.layers.BatchNormalization()(x)
+        # 6. Output Layer
+        x = tf.keras.layers.Dense(
+            units=output_units,
+            activation=output_activation,
+        )(x)
 
-            # Non-linear Activation applied after BN
-            if activation_func:
-                x = tf.keras.layers.Activation(activation_func)(x)
-
-        # 6. Final Output Layer
-        if output_units > 0:
-            x = tf.keras.layers.Dense(units=output_units, activation=output_activation)(x)
-
-        return tf.keras.Model(inputs=inputs, outputs=x, name="MosSongPlus")
+        return tf.keras.Model(inputs=inputs, outputs=x, name="MosquitoSongPlus")
