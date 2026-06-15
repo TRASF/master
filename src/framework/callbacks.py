@@ -143,39 +143,42 @@ class CallbackFactory:
 
         if "early_stopping" in cb_config:
             cfg = cb_config["early_stopping"]
-            callbacks["early_stopping"] = EarlyStopping(
-                patience=cfg.get("patience", 10),
-                monitor=cfg.get("monitor", "val_loss"),
-                mode=cfg.get("mode", "min"),
-                min_delta=float(cfg.get("min_delta", 0.0)),
-                restore_best_weights=cfg.get("restore_best_weights", False),
-                model=model,
-                checkpoint_path=model_save_path
-            )
+            if cfg is not None:
+                callbacks["early_stopping"] = EarlyStopping(
+                    patience=cfg.get("patience", 10),
+                    monitor=cfg.get("monitor", "val_loss"),
+                    mode=cfg.get("mode", "min"),
+                    min_delta=float(cfg.get("min_delta", 0.0)),
+                    restore_best_weights=cfg.get("restore_best_weights", False),
+                    model=model,
+                    checkpoint_path=model_save_path
+                )
 
         if "model_checkpoint" in cb_config:
             cfg = cb_config["model_checkpoint"]
-            callbacks["model_checkpoint"] = ModelCheckpoint(
-                filepath=model_save_path,
-                monitor=cfg.get("monitor", "val_loss"),
-                mode=cfg.get("mode", "min"),
-                save_best_only=cfg.get("save_best_only", True),
-                min_delta=float(cfg.get("min_delta", 0.0)),
-            )
+            if cfg is not None:
+                callbacks["model_checkpoint"] = ModelCheckpoint(
+                    filepath=model_save_path,
+                    monitor=cfg.get("monitor", "val_loss"),
+                    mode=cfg.get("mode", "min"),
+                    save_best_only=cfg.get("save_best_only", True),
+                    min_delta=float(cfg.get("min_delta", 0.0)),
+                )
 
         if "reduce_lr_on_plateau" in cb_config:
             cfg = cb_config["reduce_lr_on_plateau"]
-            callbacks["reduce_lr_on_plateau"] = ReduceLROnPlateau(
-                optimizer=optimizer,
-                model=model,
-                factor=cfg.get("factor", 0.5),
-                patience=cfg.get("patience", 5),
-                monitor=cfg.get("monitor", "val_loss"),
-                mode=cfg.get("mode", "min"),
-                min_lr=float(cfg.get("min_lr", 1e-6)),
-                min_delta=float(cfg.get("min_delta", 0.0)),
-                restore_best_weights=cfg.get("restore_best_weights", False),
-                checkpoint_path=model_save_path
-            )
+            if cfg is not None:
+                callbacks["reduce_lr_on_plateau"] = ReduceLROnPlateau(
+                    optimizer=optimizer,
+                    model=model,
+                    factor=cfg.get("factor", 0.5),
+                    patience=cfg.get("patience", 5),
+                    monitor=cfg.get("monitor", "val_loss"),
+                    mode=cfg.get("mode", "min"),
+                    min_lr=float(cfg.get("min_lr", 1e-6)),
+                    min_delta=float(cfg.get("min_delta", 0.0)),
+                    restore_best_weights=cfg.get("restore_best_weights", False),
+                    checkpoint_path=model_save_path
+                )
 
         return callbacks

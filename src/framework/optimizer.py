@@ -7,7 +7,7 @@ class OptimizerFactory:
         """
         Retrieves the optimizer based on the 'optimizer' section of the config.
         """
-        opt_config = config.get('optimizer', {'name': 'Adam', 'learning_rate': 0.001})
+        opt_config = config.get('optimizer')
         opt_params = opt_config.copy()
         
         # Extract the name to find the class, the rest are kwargs

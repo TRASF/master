@@ -11,7 +11,7 @@ class SupervisedDataset:
                  sample_rate: int = 8000, segment_length: int = 2400,
                  classes: list = None, noise_dirs: list = None, 
                  augment_cfg: dict = None, seed: int = 42,
-                 deterministic: bool = False):
+                 deterministic: bool = False, nomos_index: int = None):
         self.dataset_dir = dataset_dir
         self.val_dir = val_dir
         self.test_dir = test_dir
@@ -23,12 +23,13 @@ class SupervisedDataset:
         self.deterministic = deterministic
         self.parallel_calls = 1 if deterministic else tf.data.AUTOTUNE
         self.prefetch_buffer = 1 if deterministic else tf.data.AUTOTUNE
-        # Find the index of the No.Mos class to skip augmentation
-        nomos_index = None
-        if classes:
+        
+        # Use provided nomos_index or try to find it
+        self.nomos_index = nomos_index
+        if self.nomos_index is None and classes:
             for i, name in enumerate(classes):
                 if "No.Mos" in name or "Nomos" in name:
-                    nomos_index = i
+                    self.nomos_index = i
                     break
 
         self.augmentor = AudioAugmentor(
@@ -36,7 +37,7 @@ class SupervisedDataset:
             augment_cfg,
             seed=seed,
             deterministic=deterministic,
-            nomos_index=nomos_index
+            nomos_index=self.nomos_index
         )
         
         # Attributes to store splits for debugging and metrics
@@ -81,7 +82,7 @@ class SupervisedDataset:
         if shuffle:
             shuffle_seed = self.seed if self.deterministic else None
             dataset = dataset.shuffle(
-                buffer_size=len(file_paths),
+                buffer_size=(int(np.ceil(len(file_paths) / 4))),
                 seed=shuffle_seed,
                 reshuffle_each_iteration=True,
             )

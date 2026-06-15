@@ -13,25 +13,28 @@ class AudioAugmentor:
         self.nomos_index = nomos_index
         self.parallel_calls = 1 if deterministic else tf.data.AUTOTUNE
 
-        # Initialize augmentation parameters with robust merging
-        self.noise_cfg = self._get_cfg('noise_overlay', {'p': 0.0, 'snr_db': [10, 20]})
+        # Initialize augmentation parameters from normalized config
+        self.noise_cfg = self.cfg.get('noise_overlay', {})
         self.noise_envelope_cfg = self.noise_cfg.get('envelope_gain', [0.7, 1.0])
         self.noise_post_gain_cfg = self.noise_cfg.get('post_gain_db', [-6.0, 3.0])
 
-        self.pitch_cfg = self._get_cfg('pitch_shift', {'p': 0.0, 'semitones': [-0.5, 0.5]})
-        self.time_cfg = self._get_cfg('time_shift', {'p': 0.0, 'rate': [-0.1, 0.1]})
-        self.gain_cfg = self._get_cfg('random_gain', {'p': 0.0, 'gain_db': [-6, 6]})
-        self.gauss_cfg = self._get_cfg('gaussian_noise', {'p': 0.0, 'snr_db': [10, 20]})
-        self.mask_cfg = self._get_cfg('time_masking', {'p': 0.0, 'num_masks': 1, 'max_mask_size': 400})
-        self.pre_cfg = self._get_cfg('pre_emphasis', {'p': 0.0, 'coeff': 0.97})
-
-    def _get_cfg(self, key, defaults):
-        """
-        Merges user config with defaults to prevent KeyErrors for missing sub-keys.
-        """
-        user_val = self.cfg.get(key, {})
-        if user_val is None: return defaults
-        return {**defaults, **user_val}
+        self.pitch_cfg = self.cfg.get('pitch_shift', {})
+        self.time_cfg = self.cfg.get('time_shift', {})
+        self.gain_cfg = self.cfg.get('random_gain', {})
+        self.gauss_cfg = self.cfg.get('gaussian_noise', {})
+        self.mask_cfg = self.cfg.get('time_masking', {})
+        self.pre_cfg = self.cfg.get('pre_emphasis', {})
+        self.hpf_cfg = self.cfg.get('high_pass', {})
+        self.rms_cfg = self.cfg.get('rms_norm', {})
+        self.overlap_cfg = self.cfg.get('overlap', [0.0, 0.8])
+        # Pre-compute HPF coefficients if enabled
+        import scipy.signal
+        if self.hpf_cfg.get('fc', 0) > 0:
+            sr = 8000 # Default sample rate, should ideally be passed in
+            taps = scipy.signal.firwin(101, self.hpf_cfg['fc'], fs=sr, pass_zero=False)
+            self.hpf_taps = tf.constant(taps, dtype=tf.float32)
+        else:
+            self.hpf_taps = None
 
     @tf.function
     def pre_emphasis(self, x, coeff=0.97):
@@ -42,11 +45,13 @@ class AudioAugmentor:
         return tf.concat([x[:1], x[1:] - coeff * x[:-1]], axis=0)
 
     @tf.function
-    def rms_normalize(self, audio, target_rms=0.1):
+    def rms_normalize(self, audio, target_rms=0., min_gain=0.1, max_gain=10.0):
         rms = tf.sqrt(tf.reduce_mean(tf.square(audio)) + 1e-8)
-        audio = audio * (target_rms / rms)
+        gain = target_rms / rms
+        gain = tf.clip_by_value(gain, min_gain, max_gain)
+        audio = audio * gain
+        audio.set_shape([self.segment_length])
         return audio
-
     @tf.function
     def delta_waveform(self, x):
         """
@@ -107,27 +112,39 @@ class AudioAugmentor:
         audio = tf.cast(audio, tf.float32)
         audio_len = tf.shape(audio)[0]
 
-        # During training, randomize step_ratio (overlap)
-        # overlap [0.0, 0.7] -> step_ratio [0.3, 1.0]
         if training:
-            dyn_step_ratio = tf.random.uniform([], minval=0.3, maxval=1.0)
+            # Random overlap between the ranges provided in overlap_cfg
+            if isinstance(self.overlap_cfg, dict):
+                overlap_range = self.overlap_cfg.get('train', [0.0, 0.8])
+            elif isinstance(self.overlap_cfg, list) and len(self.overlap_cfg) == 2:
+                overlap_range = self.overlap_cfg
+            else:
+                overlap_range = [0.0, 0.8]
+            
+            random_overlap = tf.random.uniform([], float(overlap_range[0]), float(overlap_range[1]))
+            # Convert overlap ratio to step ratio
+            current_step_ratio = 1.0 - random_overlap
         else:
-            dyn_step_ratio = tf.cast(step_ratio, tf.float32)
+            # During evaluation, use the step_ratio passed from dataset.py
+            current_step_ratio = tf.cast(step_ratio, tf.float32)
 
-        step = tf.cast(tf.cast(self.segment_length, tf.float32) * dyn_step_ratio, tf.int32)
+        step = tf.cast(tf.cast(self.segment_length, tf.float32) * current_step_ratio, tf.int32)
         step = tf.maximum(step, 1)
 
         if training:
-            # Slicing from offset is safer than tf.roll
+            # Slicing from offset is safer than tf.roll and gives a random start point
             max_offset = tf.minimum(step, tf.maximum(audio_len, 1))
             offset = tf.random.uniform([], minval=0, maxval=max_offset, dtype=tf.int32)
             audio = audio[offset:]
 
+        # Create overlapping frames
         frames = tf.signal.frame(audio, frame_length=self.segment_length, frame_step=step, pad_end=True)
         num_frames = tf.shape(frames)[0]
         labels = tf.repeat(tf.expand_dims(label, 0), num_frames, axis=0)
 
         frames.set_shape([None, self.segment_length])
+        
+        # Return as Dataset (Required for .interleave in dataset.py)
         return tf.data.Dataset.from_tensor_slices((frames, labels))
 
     def build_noise_dataset(self, noise_dirs, load_fn):
@@ -261,14 +278,20 @@ class AudioAugmentor:
         return audio + noise
 
     @tf.function
-    def apply_post_processing(self, audio, label, noise=None, augment=True):
-        # 1. Check if it's the background class (No.Mos)
-        is_nomos = False
-        if self.nomos_index is not None:
-            is_nomos = tf.equal(tf.cast(label, tf.int32), tf.cast(self.nomos_index, tf.int32))
+    def apply_hpf(self, audio):
+        if self.hpf_taps is None:
+            return audio
+        # Conv1d expects [batch, in_channels, in_width] or similar
+        # audio is [length]
+        audio_padded = tf.reshape(audio, [1, self.segment_length, 1])
+        taps = tf.reshape(self.hpf_taps, [101, 1, 1])
+        filtered = tf.nn.conv1d(audio_padded, taps, stride=1, padding='SAME')
+        return tf.reshape(filtered, [self.segment_length])
 
-        # 2. Random Augmentations (ONLY for mosquitoes, NOT for No.Mos)
-        if augment and not is_nomos:
+    @tf.function
+    def apply_post_processing(self, audio, label, noise=None, augment=True):
+
+        if augment:
             # Pitch Shift
             if tf.random.uniform([]) < float(self.pitch_cfg['p']):
                 audio = self.pitch_shift(audio, self.pitch_cfg['semitones'])
@@ -293,9 +316,8 @@ class AudioAugmentor:
             if tf.random.uniform([]) < float(self.mask_cfg['p']):
                 audio = self.apply_time_masking(audio)
 
-        audio = self.pre_emphasis(audio)
-        audio = self.delta_waveform(audio)
-        audio = self.rms_normalize(audio)
+
+
         audio = tf.clip_by_value(audio, -1.0, 1.0)
         audio.set_shape([self.segment_length])
 

@@ -1,44 +1,48 @@
 model:
     mossongplus:
-        conv:
-            - filters: 32
+        layers:
+            # 1. Three Convolutions (ReLU)
+            - type: "conv1d"
+              filters: 32
               kernel_size: 100
               strides: 4
-              activation: relu
-              padding: valid
-              batch_norm: true
+              activation: "relu"
+              padding: "valid"
 
-            - filters: 32
+            - type: "conv1d"
+              filters: 32
               kernel_size: 64
               strides: 4
-              activation: relu
-              padding: valid
-              batch_norm: true
+              activation: "relu"
+              padding: "valid"
 
-            - filters: 64
+            - type: "conv1d"
+              filters: 64
               kernel_size: 64
               strides: 3
-              activation: relu
-              padding: valid
-              batch_norm: true
+              activation: "relu"
+              padding: "valid"
 
-        maxpool:
-            - pool_size: 3
+            # 2. Maxpool (3, 3)
+            - type: "maxpool1d"
+              pool_size: 3
               strides: 3
-              padding: valid
+              padding: "valid"
 
-        flatten: true
-        # global_avg_pool: true
-        # global_max_pool: true
+            # 3. Flatten
+            - type: "flatten"
 
-        dropout:
-            - rate: 0.5
+            # 4. Dropout (0.5)
+            - type: "dropout"
+              rate: 0.5
 
-        dense:
-            - units: 256
-              activation: relu
+            # 5. Dense (128)
+            - type: "dense"
+              units: 128
+              activation: "relu"
 
-            - units: 128
-              activation: relu
+            # 6. Dense (256)
+            - type: "dense"
+              units: 256
+              activation: "relu"
 
-    flatten: true

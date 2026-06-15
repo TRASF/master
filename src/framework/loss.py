@@ -7,7 +7,7 @@ class LossFactory:
         Retrieves the loss function based on the configuration.
         """
         config = config or {}
-        loss_config = config.get("loss", {"name": "CategoricalCrossentropy"})
+        loss_config = config.get("loss")
 
         loss_name = loss_config.get("name")
         loss_params = {k: v for k, v in loss_config.items() if k != "name"}
