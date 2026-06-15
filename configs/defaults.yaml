@@ -123,11 +123,4 @@ class_weights:
         10: 0.4 # No.Mos
         # null
 
-mfcc:
-    aggregation_method: mean
-    excluded_features: []
-    features_num: 13
-    frame_length: 256
-    hop_length: 128
-    n_fft: 512
-    n_mels: 26
+

@@ -290,6 +290,23 @@ class AudioAugmentor:
 
     @tf.function
     def apply_post_processing(self, audio, label, noise=None, augment=True):
+        # Pre-emphasis
+        pre_p = float(self.pre_cfg.get('p', 0.0))
+        if pre_p > 0.0:
+            if not augment or (tf.random.uniform([]) < pre_p):
+                audio = self.pre_emphasis(audio, coeff=float(self.pre_cfg.get('coeff', 0.97)))
+
+        # High-pass filter
+        hpf_p = float(self.hpf_cfg.get('p', 0.0))
+        if self.hpf_taps is not None and hpf_p > 0.0:
+            if not augment or (tf.random.uniform([]) < hpf_p):
+                audio = self.apply_hpf(audio)
+
+        # RMS Normalization
+        rms_p = float(self.rms_cfg.get('p', 0.0))
+        if rms_p > 0.0:
+            if not augment or (tf.random.uniform([]) < rms_p):
+                audio = self.rms_normalize(audio, target_rms=float(self.rms_cfg.get('target_rms', 0.05)))
 
         if augment:
             # Pitch Shift
@@ -315,8 +332,6 @@ class AudioAugmentor:
             # Time Masking
             if tf.random.uniform([]) < float(self.mask_cfg['p']):
                 audio = self.apply_time_masking(audio)
-
-
 
         audio = tf.clip_by_value(audio, -1.0, 1.0)
         audio.set_shape([self.segment_length])

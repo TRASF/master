@@ -9,7 +9,7 @@ from sklearn.model_selection import train_test_split
 class SupervisedDataset:
     def __init__(self, dataset_dir: str, val_dir: str = None, test_dir: str = None,
                  sample_rate: int = 8000, segment_length: int = 2400,
-                 classes: list = None, noise_dirs: list = None, 
+                 classes: list = None, noise_dirs: list = None,
                  augment_cfg: dict = None, seed: int = 42,
                  deterministic: bool = False, nomos_index: int = None):
         self.dataset_dir = dataset_dir
@@ -23,7 +23,7 @@ class SupervisedDataset:
         self.deterministic = deterministic
         self.parallel_calls = 1 if deterministic else tf.data.AUTOTUNE
         self.prefetch_buffer = 1 if deterministic else tf.data.AUTOTUNE
-        
+
         # Use provided nomos_index or try to find it
         self.nomos_index = nomos_index
         if self.nomos_index is None and classes:
@@ -39,7 +39,7 @@ class SupervisedDataset:
             deterministic=deterministic,
             nomos_index=self.nomos_index
         )
-        
+
         # Attributes to store splits for debugging and metrics
         self.train_paths = None
         self.train_labels = None
@@ -78,7 +78,7 @@ class SupervisedDataset:
         # 1. Base Dataset (File Paths)
         dataset = tf.data.Dataset.from_tensor_slices((file_paths, labels))
         dataset = self._with_deterministic_options(dataset)
-        
+
         if shuffle:
             shuffle_seed = self.seed if self.deterministic else None
             dataset = dataset.shuffle(
@@ -141,6 +141,14 @@ class SupervisedDataset:
                 deterministic=self.deterministic,
             )
 
+        if shuffle:
+            shuffle_seed = self.seed if self.deterministic else None
+            dataset = dataset.shuffle(
+                buffer_size=10000,
+                seed=shuffle_seed,
+                reshuffle_each_iteration=True,
+            )
+
         # 5. Encoding & Batching (Adding channel dimension here)
         if one_hot:
             dataset = dataset.map(
@@ -174,7 +182,7 @@ class SupervisedDataset:
             else:
                 eval_paths, eval_labels = self.data_loader.gather_files(self.val_dir)
                 self._require_files(eval_paths, "evaluation", self.val_dir)
-                
+
                 val_test_sum = split[1] + split[2]
                 val_ratio = split[1] / val_test_sum if val_test_sum > 0 else 0.5
 
@@ -193,7 +201,7 @@ class SupervisedDataset:
                 stratify=train_labels,
                 random_state=self.seed
             )
-            
+
             val_ratio = split[1] / val_test_size if val_test_size > 0 else 0.5
             val_paths, test_paths, val_labels, test_labels = train_test_split(
                 eval_paths, eval_labels,
@@ -209,26 +217,26 @@ class SupervisedDataset:
         self.val_labels = val_labels
         self.test_paths = test_paths
         self.test_labels = test_labels
-        
+
         self.class_weights = self._compute_balanced_class_weights(train_labels)
 
         train_ds = self._create_pipeline(
             train_paths, train_labels,
-            augment=True, batch_size=batch_size, 
-            shuffle=shuffle, one_hot=one_hot, 
+            augment=True, batch_size=batch_size,
+            shuffle=shuffle, one_hot=one_hot,
             step_ratio=step_ratio
         )
 
         val_ds = self._create_pipeline(
             val_paths, val_labels,
-            augment=False, batch_size=batch_size, 
+            augment=False, batch_size=batch_size,
             shuffle=False, one_hot=one_hot,
             step_ratio=step_ratio
         )
 
         test_ds = self._create_pipeline(
             test_paths, test_labels,
-            augment=False, batch_size=batch_size, 
+            augment=False, batch_size=batch_size,
             shuffle=False, one_hot=one_hot,
             step_ratio=step_ratio
         )

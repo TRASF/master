@@ -59,18 +59,22 @@ class ModelEvaluator:
         per_class_prec = precision_score(y_true, y_pred, average=None, labels=range(len(self.classes)), zero_division=0)
         per_class_rec = recall_score(y_true, y_pred, average=None, labels=range(len(self.classes)), zero_division=0)
         
-        # 2. Identify indices for Female and Male classes
-        female_indices = [i for i, name in enumerate(self.classes) if 'Female' in name]
-        male_indices = [i for i, name in enumerate(self.classes) if 'Male' in name]
+        # 2. Identify indices for Female and Male classes (filtered by present classes in y_true)
+        present_classes = np.unique(y_true)
+        female_indices = [i for i, name in enumerate(self.classes) if 'Female' in name and i in present_classes]
+        male_indices = [i for i, name in enumerate(self.classes) if 'Male' in name and i in present_classes]
 
         def get_group_metric(scores, indices):
             if not indices: return 0.0
             return float(np.mean([scores[i] for i in indices]))
 
+        # Calculate macro_f1 only over classes actually present in y_true
+        macro_f1 = float(np.mean(per_class_f1[present_classes])) if len(present_classes) > 0 else 0.0
+
         return {
             "loss": float(self.val_loss_metric.result()),
             "accuracy": float(self.val_acc_metric.result()),
-            "macro_f1": float(np.mean(per_class_f1)),
+            "macro_f1": macro_f1,
             "female_f1": get_group_metric(per_class_f1, female_indices),
             "female_prec": get_group_metric(per_class_prec, female_indices),
             "female_rec": get_group_metric(per_class_rec, female_indices),
@@ -91,7 +95,7 @@ class ModelEvaluator:
         filename: str = "file_level_results.yaml",
     ) -> Dict:
         """
-        File-level evaluation: frame each recording, average segment logits per file,
+        File-level evaluation: frame each recording, average segment predictions per file,
         then compute one prediction per original recording.
         """
         y_true = []
@@ -123,24 +127,38 @@ class ModelEvaluator:
             if not preds:
                 continue
 
-            file_logits = tf.reduce_mean(tf.concat(preds, axis=0), axis=0, keepdims=True)
+            preds_concat = tf.concat(preds, axis=0)
+            file_logits = tf.reduce_mean(preds_concat, axis=0, keepdims=True)
             file_label = tf.one_hot([label], num_classes)
             loss = self.loss_fn(file_label, file_logits)
             if len(loss.shape) > 0:
                 loss = tf.reduce_mean(loss)
 
             losses.append(float(loss.numpy()))
+
+            # Predict based on average probabilities (soft voting)
+            if self.loss_fn.from_logits:
+                preds_prob = tf.nn.softmax(preds_concat, axis=-1)
+            else:
+                preds_prob = preds_concat
+            file_probs = tf.reduce_mean(preds_prob, axis=0, keepdims=True)
+
             y_true.append(label)
-            y_pred.append(int(tf.argmax(file_logits, axis=-1).numpy()[0]))
+            y_pred.append(int(tf.argmax(file_probs, axis=-1).numpy()[0]))
 
         y_true = np.array(y_true)
         y_pred = np.array(y_pred)
         labels_arg = list(range(num_classes))
 
+        # Calculate macro_f1 only over classes actually present in y_true
+        present_classes = np.unique(y_true)
+        per_class_f1 = f1_score(y_true, y_pred, labels=labels_arg, average=None, zero_division=0)
+        macro_f1 = float(np.mean(per_class_f1[present_classes])) if len(present_classes) > 0 else 0.0
+
         metrics = {
             "loss": float(np.mean(losses)) if losses else 0.0,
             "accuracy": float(np.mean(y_true == y_pred)) if len(y_true) else 0.0,
-            "macro_f1": float(f1_score(y_true, y_pred, labels=labels_arg, average='macro', zero_division=0)),
+            "macro_f1": macro_f1,
             "weighted_f1": float(f1_score(y_true, y_pred, labels=labels_arg, average='weighted', zero_division=0)),
         }
         report = classification_report(
@@ -177,16 +195,27 @@ class ModelEvaluator:
         
         y_true, y_pred = self._collect_predictions(dataset)
 
+        present_classes = np.unique(y_true)
+        per_class_f1 = f1_score(y_true, y_pred, average=None, labels=range(len(self.classes)), zero_division=0)
+        macro_f1 = float(np.mean(per_class_f1[present_classes])) if len(present_classes) > 0 else 0.0
+
         # 1. Get average loss/acc
         metrics = {
             "loss": float(self.val_loss_metric.result()),
             "accuracy": float(self.val_acc_metric.result()),
-            "macro_f1": float(f1_score(y_true, y_pred, average='macro', zero_division=0)),
+            "macro_f1": macro_f1,
             "weighted_f1": float(f1_score(y_true, y_pred, average='weighted', zero_division=0))
         }
 
         # 2. Get detailed Sklearn metrics
-        report = classification_report(y_true, y_pred, target_names=self.classes, output_dict=True, zero_division=0)
+        report = classification_report(
+            y_true,
+            y_pred,
+            labels=range(len(self.classes)),
+            target_names=self.classes,
+            output_dict=True,
+            zero_division=0,
+        )
         cm = confusion_matrix(y_true, y_pred)
 
         results = {
