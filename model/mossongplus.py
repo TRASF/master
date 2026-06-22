@@ -33,7 +33,7 @@ class MosSongPlusModel:
         # Output Layer
         x = tf.keras.layers.Dense(
             units=output_units,
-            activation=output_activation,
+            activation=output_activation
         )(x)
 
         return tf.keras.Model(inputs=inputs, outputs=x, name="MosquitoSongPlus")

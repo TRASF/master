@@ -36,13 +36,20 @@ model:
             - type: "dropout"
               rate: 0.5
 
-            # 5. Dense (128)
-            - type: "dense"
-              units: 128
-              activation: "relu"
-
-            # 6. Dense (256)
+            # 5. Dense (256)
             - type: "dense"
               units: 256
               activation: "relu"
+              bias_initializer: "random_normal"
+              kernel_initializer: "he_normal"
+              kernel_regularizer: "l1"
+              activity_regularizer: "l1"
 
+            # 6. Dense (128)
+            - type: "dense"
+              units: 128
+              activation: "relu"
+              bias_initializer: "random_normal"
+              kernel_initializer: "he_normal"
+              kernel_regularizer: "l1"
+              activity_regularizer: "l1"
