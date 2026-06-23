@@ -53,8 +53,7 @@ def train_supervised(defaults_path="configs/defaults.yaml",
     train_ds, val_ds, test_ds = ds_builder.build(
         split=cfg["dataset"]["split_list"],
         batch_size=cfg["train"]["batch_size"],
-        shuffle=cfg["train"]["shuffle"],
-        step_ratio=cfg["train"]["step_ratio"]
+        shuffle=cfg["train"]["shuffle"]
     )
 
     # 3. Build Model

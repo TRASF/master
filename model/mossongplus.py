@@ -1,4 +1,4 @@
-import tensorflow as tf
+import tensorflow.keras as keras
 
 
 class MosSongPlusModel:
@@ -12,7 +12,7 @@ class MosSongPlusModel:
             )
 
     def build(self, input_shape, output_units, output_activation="softmax"):
-        inputs = tf.keras.layers.Input(shape=input_shape)
+        inputs = keras.layers.Input(shape=input_shape)
         x = inputs
 
         # Support for sequential layer list
@@ -22,21 +22,21 @@ class MosSongPlusModel:
             x = self._build_legacy(x)
 
         if self.config.get("global_avg_pool", False):
-            x = tf.keras.layers.GlobalAveragePooling1D()(x)
+            x = keras.layers.GlobalAveragePooling1D()(x)
 
         if self.config.get("global_max_pool", False):
-            x = tf.keras.layers.GlobalMaxPooling1D()(x)
+            x = keras.layers.GlobalMaxPooling1D()(x)
 
         if self.config.get("flatten", False):
-            x = tf.keras.layers.Flatten()(x)
+            x = keras.layers.Flatten()(x)
 
         # Output Layer
-        x = tf.keras.layers.Dense(
+        x = keras.layers.Dense(
             units=output_units,
             activation=output_activation
         )(x)
 
-        return tf.keras.Model(inputs=inputs, outputs=x, name="MosquitoSongPlus")
+        return keras.Model(inputs=inputs, outputs=x, name="MosquitoSongPlus")
 
     def _add_standard_layer(self, x, layer_class, layer_def):
         activation = layer_def.get("activation")
@@ -56,9 +56,9 @@ class MosSongPlusModel:
             # Flow: Layer -> BatchNormalization -> Activation
             x = layer_class(**keras_kwargs)(x)
             bn_cfg = use_batch_norm if isinstance(use_batch_norm, dict) else {}
-            x = tf.keras.layers.BatchNormalization(**bn_cfg)(x)
+            x = keras.layers.BatchNormalization(**bn_cfg)(x)
             if activation:
-                x = tf.keras.layers.Activation(activation)(x)
+                x = keras.layers.Activation(activation)(x)
         else:
             # Flow: Layer with inline activation
             x = layer_class(activation=activation, **keras_kwargs)(x)
@@ -70,27 +70,27 @@ class MosSongPlusModel:
             layer_type = layer_def.get("type")
 
             if layer_type == "conv1d":
-                x = self._add_standard_layer(x, tf.keras.layers.Conv1D, layer_def)
+                x = self._add_standard_layer(x, keras.layers.Conv1D, layer_def)
 
             elif layer_type == "dense":
-                x = self._add_standard_layer(x, tf.keras.layers.Dense, layer_def)
+                x = self._add_standard_layer(x, keras.layers.Dense, layer_def)
 
             elif layer_type == "maxpool1d":
                 cfg = {k: v for k, v in layer_def.items() if k != "type"}
-                x = tf.keras.layers.MaxPooling1D(**cfg)(x)
+                x = keras.layers.MaxPooling1D(**cfg)(x)
 
             elif layer_type == "flatten":
-                x = tf.keras.layers.Flatten()(x)
+                x = keras.layers.Flatten()(x)
 
             elif layer_type == "global_avg_pool":
-                x = tf.keras.layers.GlobalAveragePooling1D()(x)
+                x = keras.layers.GlobalAveragePooling1D()(x)
 
             elif layer_type == "global_max_pool":
-                x = tf.keras.layers.GlobalMaxPooling1D()(x)
+                x = keras.layers.GlobalMaxPooling1D()(x)
 
             elif layer_type == "dropout":
                 rate = layer_def.get("rate", 0.5)
-                x = tf.keras.layers.Dropout(rate)(x)
+                x = keras.layers.Dropout(rate)(x)
 
             else:
                  raise ValueError(f"Unsupported layer type: {layer_type}")
@@ -98,16 +98,16 @@ class MosSongPlusModel:
 
     def _build_legacy(self, x):
         for conv_cfg in self.config.get("conv", []):
-            x = self._add_standard_layer(x, tf.keras.layers.Conv1D, conv_cfg)
+            x = self._add_standard_layer(x, keras.layers.Conv1D, conv_cfg)
 
         for pool_cfg in self.config.get("maxpool", []):
-            x = tf.keras.layers.MaxPooling1D(**pool_cfg)(x)
+            x = keras.layers.MaxPooling1D(**pool_cfg)(x)
 
         for d_cfg in self.config.get("dropout", []):
             rate = d_cfg.get("rate", 0.5) if isinstance(d_cfg, dict) else float(d_cfg)
-            x = tf.keras.layers.Dropout(rate)(x)
+            x = keras.layers.Dropout(rate)(x)
 
         for dense_cfg in self.config.get("dense", []):
-            x = self._add_standard_layer(x, tf.keras.layers.Dense, dense_cfg)
+            x = self._add_standard_layer(x, keras.layers.Dense, dense_cfg)
 
         return x

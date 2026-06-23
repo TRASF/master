@@ -15,7 +15,6 @@ train:
     batch_size: 256
     shuffle: True
     epochs: 1000
-    step_ratio: 0.3
     seed: 43
 
 reproducibility:
@@ -23,6 +22,7 @@ reproducibility:
     seed: 42
     deterministic_ops: true
     deterministic_data: true
+
 optimizer:
     name: Adam
     learning_rate: 0.001
@@ -38,7 +38,7 @@ loss:
 callbacks:
     early_stopping:
         monitor: val_macro_f1
-        patience: 30
+        patience: 100
         mode: max
         restore_best_weights: True
 
@@ -51,8 +51,8 @@ callbacks:
     reduce_lr_on_plateau:
         monitor: val_macro_f1
         factor: 0.5
-        patience: 25
-        min_lr: 1e-7
+        patience: 50
+        min_lr: 1e-6
         mode: max
         restore_best_weights: True
 
@@ -108,15 +108,15 @@ class_weights:
     enabled: true
 
     values:
-        # 0: 1.0 # Ae_aegypti_Female
-        # 1: 3.0 # Ae_aegypti_Male
-        # 2: 1.0 # Ae_albopictus_Female
-        # 3: 1.8 # Ae_albopictus_Male
-        # 4: 1.0 # An_dirus_Female
-        # 5: 2.0 # An_dirus_Male
-        # 6: 1.0 # An_minimus_Female
-        # 7: 2.2 # An_minimus_Male
-        # 8: 1.0 # Cx_quin_Female
-        # 9: 1.6 # Cx_quin_Male
-        # 10: 0.4 # No.Mos
-        null
+        0: 10.2000 # Ae_aegypti_Female
+        1: 0.1488 # Ae_aegypti_Male
+        2: 13.4342 # Ae_albopictus_Female
+        3: 10.9070 # Ae_albopictus_Male
+        4: 7.6968 # An_dirus_Female
+        5: 13.5791 # An_dirus_Male
+        6: 6.2150 # An_minimus_Female
+        7: 22.3676 # An_minimus_Male
+        8: 11.0714 # Cx_quin_Female
+        9: 9.0019 # Cx_quin_Male
+        10: 0.2936 # No.Mos
+        # null

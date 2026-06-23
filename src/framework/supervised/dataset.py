@@ -49,8 +49,41 @@ class SupervisedDataset:
         self.test_labels = None
         self.class_weights = None
 
-    def _compute_balanced_class_weights(self, labels):
-        counts = np.bincount(labels, minlength=self.data_loader.num_classes).astype(np.float32)
+    def _compute_balanced_class_weights(self, file_paths, labels):
+        import wave
+        # Retrieve average overlap/step size
+        raw_config = self.augmentor.cfg.get('config', {})
+        overlap_cfg = raw_config.get('segment_overlap') or raw_config.get('overlap') or {}
+        if isinstance(overlap_cfg, dict):
+            overlap_range = overlap_cfg.get('train', [0.0, 0.8])
+        elif isinstance(overlap_cfg, (list, tuple)) and len(overlap_cfg) == 2:
+            overlap_range = overlap_cfg
+        else:
+            overlap_range = [0.0, 0.8]
+            
+        avg_overlap = np.mean(overlap_range)
+        avg_step = int(self.segment_length * (1.0 - avg_overlap))
+        avg_step = max(avg_step, 1)
+
+        counts = np.zeros(self.data_loader.num_classes, dtype=np.float32)
+        for path, label in zip(file_paths, labels):
+            num_samples = 0
+            try:
+                if path.endswith('.npy'):
+                    num_samples = np.load(path, mmap_mode='r').shape[0]
+                elif path.endswith('.wav') or path.endswith('.WAV'):
+                    with wave.open(str(path), 'rb') as f:
+                        num_samples = f.getnframes()
+            except Exception:
+                pass
+                
+            if num_samples == 0:
+                num_samples = self.segment_length
+                
+            # Expected number of segments
+            num_segments = int(np.ceil(num_samples / avg_step))
+            counts[label] += num_segments
+
         nonzero = counts > 0
         weights = np.ones_like(counts, dtype=np.float32)
         weights[nonzero] = np.sum(counts[nonzero]) / (np.sum(nonzero) * counts[nonzero])
@@ -74,7 +107,7 @@ class SupervisedDataset:
         options.experimental_deterministic = self.deterministic
         return dataset.with_options(options)
 
-    def _create_pipeline(self, file_paths, labels, augment, batch_size, shuffle, one_hot, step_ratio=0.5):
+    def _create_pipeline(self, file_paths, labels, augment, batch_size, shuffle, one_hot):
         # 1. Base Dataset (File Paths)
         dataset = tf.data.Dataset.from_tensor_slices((file_paths, labels))
         dataset = self._with_deterministic_options(dataset)
@@ -106,7 +139,7 @@ class SupervisedDataset:
         else:
             # Val/Test: Deterministic exhaustive slicing with specified overlap
             dataset = dataset.interleave(
-                lambda x, y: self.augmentor.create_segments(x, y, step_ratio=step_ratio, training=False),
+                lambda x, y: self.augmentor.create_segments(x, y, training=False),
                 num_parallel_calls=self.parallel_calls,
                 deterministic=self.deterministic
             )
@@ -168,7 +201,7 @@ class SupervisedDataset:
             )
 
     def build(self, split=[0.8, 0.1, 0.1], batch_size=32,
-            shuffle=True, one_hot=True, step_ratio=0.5):
+            shuffle=True, one_hot=True):
 
         train_paths, train_labels = self.data_loader.gather_files()
         self._require_files(train_paths, "training", self.dataset_dir)
@@ -218,27 +251,24 @@ class SupervisedDataset:
         self.test_paths = test_paths
         self.test_labels = test_labels
 
-        self.class_weights = self._compute_balanced_class_weights(train_labels)
+        self.class_weights = self._compute_balanced_class_weights(train_paths, train_labels)
 
         train_ds = self._create_pipeline(
             train_paths, train_labels,
             augment=True, batch_size=batch_size,
-            shuffle=shuffle, one_hot=one_hot,
-            step_ratio=step_ratio
+            shuffle=shuffle, one_hot=one_hot
         )
 
         val_ds = self._create_pipeline(
             val_paths, val_labels,
             augment=False, batch_size=batch_size,
-            shuffle=False, one_hot=one_hot,
-            step_ratio=step_ratio
+            shuffle=False, one_hot=one_hot
         )
 
         test_ds = self._create_pipeline(
             test_paths, test_labels,
             augment=False, batch_size=batch_size,
-            shuffle=False, one_hot=one_hot,
-            step_ratio=step_ratio
+            shuffle=False, one_hot=one_hot
         )
 
         return train_ds, val_ds, test_ds

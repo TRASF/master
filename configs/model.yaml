@@ -8,6 +8,7 @@ model:
               strides: 4
               activation: "relu"
               padding: "valid"
+              dilation_rate: 1
 
             - type: "conv1d"
               filters: 32
@@ -15,6 +16,7 @@ model:
               strides: 4
               activation: "relu"
               padding: "valid"
+              dilation_rate: 1
 
             - type: "conv1d"
               filters: 64
@@ -22,6 +24,7 @@ model:
               strides: 3
               activation: "relu"
               padding: "valid"
+              dilation_rate: 1
 
             # 2. Maxpool (3, 3)
             - type: "maxpool1d"
@@ -39,17 +42,17 @@ model:
             # 5. Dense (256)
             - type: "dense"
               units: 256
-              activation: "relu"
-              bias_initializer: "random_normal"
-              kernel_initializer: "he_normal"
-              kernel_regularizer: "l1"
-              activity_regularizer: "l1"
+              activation: "hard_swish"
+              # bias_initializer: "random_normal"
+              # kernel_initializer: "he_normal"
+              # kernel_regularizer: "l1"
+              # activity_regularizer: "l1"
 
             # 6. Dense (128)
             - type: "dense"
               units: 128
-              activation: "relu"
-              bias_initializer: "random_normal"
-              kernel_initializer: "he_normal"
-              kernel_regularizer: "l1"
-              activity_regularizer: "l1"
+              activation: "hard_swish"
+              # bias_initializer: "random_normal"
+              # kernel_initializer: "he_normal"
+              # kernel_regularizer: "l1"
+              # activity_regularizer: "l1"

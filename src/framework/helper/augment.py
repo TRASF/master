@@ -26,7 +26,8 @@ class AudioAugmentor:
         self.pre_cfg = self.cfg.get('pre_emphasis', {})
         self.hpf_cfg = self.cfg.get('high_pass', {})
         self.rms_cfg = self.cfg.get('rms_norm', {})
-        self.overlap_cfg = self.cfg.get('overlap', [0.0, 0.8])
+        raw_config = self.cfg.get('config', {})
+        self.overlap_cfg = raw_config.get('segment_overlap') or raw_config.get('overlap') or self.cfg.get('overlap', [0.0, 0.8])
         # Pre-compute HPF coefficients if enabled
         import scipy.signal
         if self.hpf_cfg.get('fc', 0) > 0:
@@ -108,7 +109,7 @@ class AudioAugmentor:
         return segment
 
     @tf.function
-    def create_segments(self, audio, label, step_ratio=0.5, training=True):
+    def create_segments(self, audio, label, training=True):
         audio = tf.cast(audio, tf.float32)
         audio_len = tf.shape(audio)[0]
 
@@ -125,8 +126,12 @@ class AudioAugmentor:
             # Convert overlap ratio to step ratio
             current_step_ratio = 1.0 - random_overlap
         else:
-            # During evaluation, use the step_ratio passed from dataset.py
-            current_step_ratio = tf.cast(step_ratio, tf.float32)
+            # Evaluation/Validation/Test: Use val overlap
+            if isinstance(self.overlap_cfg, dict):
+                val_overlap = self.overlap_cfg.get('val', 0.5)
+            else:
+                val_overlap = 0.5
+            current_step_ratio = 1.0 - float(val_overlap)
 
         step = tf.cast(tf.cast(self.segment_length, tf.float32) * current_step_ratio, tf.int32)
         step = tf.maximum(step, 1)
