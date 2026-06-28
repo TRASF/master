@@ -121,7 +121,7 @@ class AudioAugmentor:
                 overlap_range = self.overlap_cfg
             else:
                 overlap_range = [0.0, 0.8]
-            
+
             random_overlap = tf.random.uniform([], float(overlap_range[0]), float(overlap_range[1]))
             # Convert overlap ratio to step ratio
             current_step_ratio = 1.0 - random_overlap
@@ -147,8 +147,25 @@ class AudioAugmentor:
         num_frames = tf.shape(frames)[0]
         labels = tf.repeat(tf.expand_dims(label, 0), num_frames, axis=0)
 
+        if training:
+            raw_config = self.cfg.get('config', {})
+            max_segments = raw_config.get('max_segments_per_file', 100)
+
+            if self.nomos_index is not None:
+                is_nomos = tf.equal(label, self.nomos_index)
+                current_max = tf.cond(is_nomos, lambda: max_segments // 5, lambda: max_segments)
+            else:
+                current_max = max_segments
+
+            indices = tf.range(num_frames)
+            shuffled_indices = tf.random.shuffle(indices)
+            sliced_indices = shuffled_indices[:current_max]
+
+            frames = tf.gather(frames, sliced_indices)
+            labels = tf.gather(labels, sliced_indices)
+
         frames.set_shape([None, self.segment_length])
-        
+
         # Return as Dataset (Required for .interleave in dataset.py)
         return tf.data.Dataset.from_tensor_slices((frames, labels))
 
@@ -265,7 +282,22 @@ class AudioAugmentor:
     def time_shift(self, audio, rate_range):
         rate = tf.random.uniform([], float(rate_range[0]), float(rate_range[1]))
         shift = tf.cast(tf.cast(self.segment_length, tf.float32) * rate, tf.int32)
-        return tf.roll(audio, shift=shift, axis=0)
+
+        def shift_right():
+            s = tf.minimum(shift, self.segment_length - 1)
+            pad = tf.zeros([s], dtype=audio.dtype)
+            return tf.concat([pad, audio[:-s]], axis=0)
+
+        def shift_left():
+            s = tf.minimum(-shift, self.segment_length - 1)
+            pad = tf.zeros([s], dtype=audio.dtype)
+            return tf.concat([audio[s:], pad], axis=0)
+
+        return tf.case(
+            [(shift > 0, shift_right), (shift < 0, shift_left)],
+            default=lambda: audio,
+            exclusive=True
+        )
 
     @tf.function
     def random_gain(self, audio, gain_db_range):
@@ -295,50 +327,64 @@ class AudioAugmentor:
 
     @tf.function
     def apply_post_processing(self, audio, label, noise=None, augment=True):
-        # Pre-emphasis
-        pre_p = float(self.pre_cfg.get('p', 0.0))
-        if pre_p > 0.0:
-            if not augment or (tf.random.uniform([]) < pre_p):
-                audio = self.pre_emphasis(audio, coeff=float(self.pre_cfg.get('coeff', 0.97)))
-
+        # ----------------------------------------------------
+        # Phase 1: Signal Conditioning (Structure)
+        # ----------------------------------------------------
         # High-pass filter
         hpf_p = float(self.hpf_cfg.get('p', 0.0))
         if self.hpf_taps is not None and hpf_p > 0.0:
             if not augment or (tf.random.uniform([]) < hpf_p):
                 audio = self.apply_hpf(audio)
 
-        # RMS Normalization
-        rms_p = float(self.rms_cfg.get('p', 0.0))
-        if rms_p > 0.0:
-            if not augment or (tf.random.uniform([]) < rms_p):
-                audio = self.rms_normalize(audio, target_rms=float(self.rms_cfg.get('target_rms', 0.05)))
+        # Pre-emphasis
+        pre_p = float(self.pre_cfg.get('p', 0.0))
+        if pre_p > 0.0:
+            if not augment or (tf.random.uniform([]) < pre_p):
+                audio = self.pre_emphasis(audio, coeff=float(self.pre_cfg.get('coeff', 0.97)))
 
+        # ----------------------------------------------------
+        # Phase 2 & 3: Augmentations (Timing & Energy)
+        # ----------------------------------------------------
         if augment:
             # Pitch Shift
-            if tf.random.uniform([]) < float(self.pitch_cfg['p']):
+            if tf.random.uniform([]) < float(self.pitch_cfg.get('p', 0.0)):
                 audio = self.pitch_shift(audio, self.pitch_cfg['semitones'])
 
             # Time Shift
-            if tf.random.uniform([]) < float(self.time_cfg['p']):
+            if tf.random.uniform([]) < float(self.time_cfg.get('p', 0.0)):
                 audio = self.time_shift(audio, self.time_cfg['rate'])
 
+            # Time Masking
+            if tf.random.uniform([]) < float(self.mask_cfg.get('p', 0.0)):
+                audio = self.apply_time_masking(audio)
+
             # Random Gain
-            if tf.random.uniform([]) < float(self.gain_cfg['p']):
+            if tf.random.uniform([]) < float(self.gain_cfg.get('p', 0.0)):
                 audio = self.random_gain(audio, self.gain_cfg['gain_db'])
 
             # Gaussian Noise
-            if tf.random.uniform([]) < float(self.gauss_cfg['p']):
+            if tf.random.uniform([]) < float(self.gauss_cfg.get('p', 0.0)):
                 audio = self.add_gaussian_noise(audio, self.gauss_cfg['snr_db'])
 
             # Noise Overlay (External Noise Bank)
-            if noise is not None and tf.random.uniform([]) < float(self.noise_cfg['p']):
+            if noise is not None and tf.random.uniform([]) < float(self.noise_cfg.get('p', 0.0)):
                 audio = self.add_noise(audio, noise, self.noise_cfg['snr_db'])
 
-            # Time Masking
-            if tf.random.uniform([]) < float(self.mask_cfg['p']):
-                audio = self.apply_time_masking(audio)
+        # ----------------------------------------------------
+        # Phase 4: Final Standardization (The Capstone)
+        # ----------------------------------------------------
 
+        # 1. First, normalize the energy so the model sees consistent volume
+        audio = self.rms_normalize(
+            audio,
+            target_rms=float(self.rms_cfg.get('target_rms', 0.5)),
+            min_gain=float(self.rms_cfg.get('min_gain', 0.1)),
+            max_gain=float(self.rms_cfg.get('max_gain', 10.0))
+        )
+
+        # 2. Finally, clip to prevent extreme outliers from crashing the model
         audio = tf.clip_by_value(audio, -1.0, 1.0)
+
         audio.set_shape([self.segment_length])
 
         return audio, label

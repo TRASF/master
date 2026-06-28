@@ -17,13 +17,11 @@ def extract_audio_settings(defaults):
     sample_rate = int(audio_cfg.get('sample_rate', 8000))
     duration = float(audio_cfg.get('duration', 0.3))
     segment_length = int(duration * sample_rate)
-    overlap = audio_cfg.get('overlap', [0.0, 0.8])
 
     return {
         'sample_rate': sample_rate,
         'duration': duration,
         'segment_length': segment_length,
-        'overlap': overlap,
     }
 
 
@@ -40,6 +38,8 @@ def extract_train_settings(defaults):
         'val_overlap': val_overlap,
         'step_ratio': step_ratio,
         'seed': int(train_cfg.get('seed', 42)),
+        'warmup_epochs': int(train_cfg.get('warmup_epochs', 15)),
+        'warmup_augment_p': float(train_cfg.get('warmup_augment_p', 1.0)),
     }
 
 
@@ -205,11 +205,29 @@ def normalize_config(defaults):
         'optimizer': extract_optimizer_settings(defaults),
         'loss': extract_loss_settings(defaults),
         'callbacks': extract_callback_settings(defaults),
+        'wandb': defaults.get('wandb', {}),
     }
     
-    # Add derived/helper values at the top level
-    normalized['classes'] = list(normalized['labels'].keys())
-    normalized['num_classes'] = len(normalized['labels'])
+    # Resolve classes list and number of classes supporting merged categories
+    labels_dict = normalized['labels']
+    if labels_dict:
+        num_classes = max(labels_dict.values()) + 1
+        classes_list = [""] * num_classes
+        for folder_name, class_idx in labels_dict.items():
+            if classes_list[class_idx] == "":
+                classes_list[class_idx] = folder_name
+            else:
+                # Rename to a general class group name if multiple folder names match
+                if "Female" in folder_name:
+                    classes_list[class_idx] = "Female"
+                elif "Male" in folder_name:
+                    classes_list[class_idx] = "Male"
+        normalized['classes'] = classes_list
+        normalized['num_classes'] = num_classes
+    else:
+        normalized['classes'] = []
+        normalized['num_classes'] = 0
+
     normalized['segment_length'] = normalized['audio']['segment_length']
     
     # Find No.Mos index
@@ -220,3 +238,79 @@ def normalize_config(defaults):
             break
     
     return normalized
+
+
+def generate_experiment_name(cfg, mode="Pretrain"):
+    """
+    Generate a structured, dynamic experiment name based on configuration parameters.
+    Format: [Mode]_[Dataset]_[Loss]_[CW]_[Aug]_[Optimizer_LR]_[BZ]
+    """
+    import os
+    # 1. Dataset Name resolution
+    indoor_path = cfg.get("dataset", {}).get("indoor", "")
+    if "indoor" in indoor_path.lower():
+        ds_str = "ds-indoor"
+    elif "outdoor" in indoor_path.lower():
+        # Fallback in case they configured outdoor in place of indoor
+        ds_str = "ds-outdoor"
+    elif indoor_path:
+        # Basename of the folder
+        ds_str = f"ds-{os.path.basename(os.path.normpath(indoor_path))}"
+    else:
+        ds_str = "ds-unknown"
+
+    # 2. Loss function
+    loss_name = cfg.get("loss", {}).get("name", "CE")
+    if "focal" in loss_name.lower():
+        loss_str = "loss-Focal"
+    elif "crossentropy" in loss_name.lower():
+        loss_str = "loss-CE"
+    else:
+        loss_str = f"loss-{loss_name}"
+
+    # 3. Class Weights status
+    cw_enabled = cfg.get("class_weights", {}).get("enabled", False)
+    cw_str = "cw" if cw_enabled else "nocw"
+
+    # 4. Augmentation profile
+    augment_cfg = cfg.get("augment", {})
+    active_augs = []
+    # Check if any augmentation dictionary has p > 0
+    for key, val in augment_cfg.items():
+        if isinstance(val, dict) and val.get("p", 0.0) > 0.0:
+            # Shorten the name, e.g. noise_overlay -> overlay
+            short_name = key.replace("noise_", "").replace("random_", "")
+            active_augs.append(short_name)
+    
+    if active_augs:
+        aug_str = "aug-" + "-".join(sorted(active_augs))
+    else:
+        aug_str = "noaug"
+
+    # 5. Optimizer & LR
+    opt_name = cfg.get("optimizer", {}).get("name", "Adam")
+    lr = cfg.get("optimizer", {}).get("learning_rate", 0.001)
+    opt_str = f"{opt_name}-lr{lr}"
+
+    # 6. Batch Size
+    bz = cfg.get("train", {}).get("batch_size", 32)
+    bz_str = f"bz{bz}"
+
+    return f"{mode}_{ds_str}_{loss_str}_{cw_str}_{aug_str}_{opt_str}_{bz_str}"
+
+
+def resolve_experiment_paths(cfg, experiment_name):
+    """
+    Resolve and return save directories and weight paths for the given experiment name.
+    Automatically creates the directories if they don't exist.
+    """
+    import os
+    base_dir = os.path.join("models", "experiments", experiment_name)
+    results_dir = os.path.join(base_dir, "results")
+    save_path = os.path.join(base_dir, "best_model.weights.h5")
+    
+    return {
+        "save_dir": base_dir,
+        "results_dir": results_dir,
+        "save_path": save_path
+    }

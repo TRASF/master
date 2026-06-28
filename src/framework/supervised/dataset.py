@@ -11,13 +11,14 @@ class SupervisedDataset:
                  sample_rate: int = 8000, segment_length: int = 2400,
                  classes: list = None, noise_dirs: list = None,
                  augment_cfg: dict = None, seed: int = 42,
-                 deterministic: bool = False, nomos_index: int = None):
+                 deterministic: bool = False, nomos_index: int = None,
+                 labels_dict: dict = None):
         self.dataset_dir = dataset_dir
         self.val_dir = val_dir
         self.test_dir = test_dir
         self.sample_rate = sample_rate
         self.segment_length = segment_length
-        self.data_loader = DataLoader(dataset_dir, sample_rate, classes)
+        self.data_loader = DataLoader(dataset_dir, sample_rate, classes, labels_dict=labels_dict)
         self.noise_dirs = noise_dirs
         self.seed = seed
         self.deterministic = deterministic
@@ -65,6 +66,8 @@ class SupervisedDataset:
         avg_step = int(self.segment_length * (1.0 - avg_overlap))
         avg_step = max(avg_step, 1)
 
+        max_segments = raw_config.get('max_segments_per_file', 100)
+
         counts = np.zeros(self.data_loader.num_classes, dtype=np.float32)
         for path, label in zip(file_paths, labels):
             num_samples = 0
@@ -82,6 +85,13 @@ class SupervisedDataset:
                 
             # Expected number of segments
             num_segments = int(np.ceil(num_samples / avg_step))
+            
+            # Apply segment capping
+            current_max = max_segments
+            if self.nomos_index is not None and label == self.nomos_index:
+                current_max = max_segments // 5
+                
+            num_segments = min(num_segments, current_max)
             counts[label] += num_segments
 
         nonzero = counts > 0
@@ -200,6 +210,32 @@ class SupervisedDataset:
                 "Check dataset.dataset_dir/val_dir/test_dir and supported extensions."
             )
 
+    def _split_paths(self, paths, labels, test_size, split_name):
+        try:
+            return train_test_split(
+                paths, labels,
+                test_size=test_size,
+                stratify=labels,
+                random_state=self.seed
+            )
+        except ValueError:
+            classes, counts = np.unique(labels, return_counts=True)
+            sparse_classes = classes[counts < 2]
+            if len(sparse_classes) == 0:
+                raise
+
+            print(
+                f"Warning: cannot stratify {split_name} split because classes "
+                f"{sparse_classes.tolist()} have fewer than 2 files. "
+                "Falling back to a seeded non-stratified split."
+            )
+            return train_test_split(
+                paths, labels,
+                test_size=test_size,
+                stratify=None,
+                random_state=self.seed
+            )
+
     def build(self, split=[0.8, 0.1, 0.1], batch_size=32,
             shuffle=True, one_hot=True):
 
@@ -219,28 +255,25 @@ class SupervisedDataset:
                 val_test_sum = split[1] + split[2]
                 val_ratio = split[1] / val_test_sum if val_test_sum > 0 else 0.5
 
-                val_paths, test_paths, val_labels, test_labels = train_test_split(
+                val_paths, test_paths, val_labels, test_labels = self._split_paths(
                     eval_paths, eval_labels,
                     test_size=1.0 - val_ratio,
-                    stratify=eval_labels,
-                    random_state=self.seed
+                    split_name="validation/test"
                 )
         else:
             # Three-way stratified split
             val_test_size = split[1] + split[2]
-            train_paths, eval_paths, train_labels, eval_labels = train_test_split(
+            train_paths, eval_paths, train_labels, eval_labels = self._split_paths(
                 train_paths, train_labels,
                 test_size=val_test_size,
-                stratify=train_labels,
-                random_state=self.seed
+                split_name="training/evaluation"
             )
 
             val_ratio = split[1] / val_test_size if val_test_size > 0 else 0.5
-            val_paths, test_paths, val_labels, test_labels = train_test_split(
+            val_paths, test_paths, val_labels, test_labels = self._split_paths(
                 eval_paths, eval_labels,
                 test_size=1.0 - val_ratio,
-                stratify=eval_labels,
-                random_state=self.seed
+                split_name="validation/test"
             )
 
         # Store split attributes

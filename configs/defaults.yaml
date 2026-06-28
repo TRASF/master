@@ -11,11 +11,21 @@ labels:
     Cx_quin_Male: 9
     No.Mos: 10
 
+wandb:
+    enabled: true
+    project: "MosSongPlus"
+    log_weights_freq: 1
+    aggregate_plot_freq: 1
+    prediction_table_max_rows: 5000
+    log_prediction_audio: true
+
 train:
     batch_size: 256
     shuffle: True
     epochs: 1000
     seed: 43
+    warmup_epochs: 15
+    warmup_augment_p: 0.0
 
 reproducibility:
     enabled: true
@@ -56,10 +66,19 @@ callbacks:
         mode: max
         restore_best_weights: True
 
+    # cosine_annealing:
+    #     t_max: 1000
+    #     eta_min: 1e-5
+
 augment:
+    max_segments_per_file: 100
     segment_overlap:
         train: [0.0, 0.8]
         val: 0.5
+
+    high_pass:
+        p: 0.0
+        fc: 150
 
     noise_banks:
         - "dataset/MSB/Environmental/humbug_noises"
@@ -70,7 +89,7 @@ augment:
 
     noise_overlay:
         p: 0.0
-        snr_db: [10, 25]
+        snr_db: [15, 30]
         envelope_gain: [0.7, 1.0]
         post_gain_db: [-3.0, 3.0]
 
@@ -88,7 +107,12 @@ augment:
 
     gaussian_noise:
         p: 0.0
-        snr_db: [20, 40]
+        snr_db: [20, 50]
+
+    rms_norm:
+        target_rms: 0.05
+        max_gain: 15.0
+        min_gain: 0.05
 
 audio:
     sample_rate: 8000
@@ -107,16 +131,4 @@ dataset:
 class_weights:
     enabled: true
 
-    values:
-        0: 10.2000 # Ae_aegypti_Female
-        1: 0.1488 # Ae_aegypti_Male
-        2: 13.4342 # Ae_albopictus_Female
-        3: 10.9070 # Ae_albopictus_Male
-        4: 7.6968 # An_dirus_Female
-        5: 13.5791 # An_dirus_Male
-        6: 6.2150 # An_minimus_Female
-        7: 22.3676 # An_minimus_Male
-        8: 11.0714 # Cx_quin_Female
-        9: 9.0019 # Cx_quin_Male
-        10: 0.2936 # No.Mos
-        # null
+    values: null

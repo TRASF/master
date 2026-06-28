@@ -11,6 +11,7 @@ class DataLoader:
         sample_rate: int = 8000,
         classes: list = None,
         file_ext=(".npy", ".wav"),
+        labels_dict: dict = None,
     ):
         self.dataset_dir = Path(dataset_dir)
         self.sample_rate = sample_rate
@@ -20,14 +21,19 @@ class DataLoader:
             self.file_exts = tuple(file_ext)
 
         if os.path.isdir(self.dataset_dir):
-            self.classes = classes if classes is not None else sorted(
-                [d.name for d in self.dataset_dir.iterdir() if d.is_dir()]
-            )
+            if labels_dict:
+                self.classes = list(labels_dict.keys())
+                self.class_to_idx = labels_dict
+                self.num_classes = max(labels_dict.values()) + 1
+            else:
+                self.classes = classes if classes is not None else sorted(
+                    [d.name for d in self.dataset_dir.iterdir() if d.is_dir()]
+                )
 
-            self.class_to_idx = {
-                cls_name: idx for idx, cls_name in enumerate(self.classes)
-            }
-            self.num_classes = len(self.classes)
+                self.class_to_idx = {
+                    cls_name: idx for idx, cls_name in enumerate(self.classes)
+                }
+                self.num_classes = len(self.classes)
         else:
             self.classes = []
             self.class_to_idx = {}

@@ -7,6 +7,7 @@ class Train:
         self.optimizer = optimizer
         self.loss_fn = loss_fn
         self.train_ds = train_ds
+        self.is_contrastive = "contrastive" in getattr(loss_fn, "name", "").lower()
 
         if class_weights is not None:
             if isinstance(class_weights, dict):
@@ -75,7 +76,9 @@ class Train:
         )
 
         self.train_loss_metric.update_state(loss)
-        self.train_acc_metric.update_state(y, predictions)
+        
+        if not self.is_contrastive:
+            self.train_acc_metric.update_state(y, predictions)
 
         return loss
 
@@ -88,5 +91,5 @@ class Train:
 
         return {
             "loss": float(self.train_loss_metric.result()),
-            "accuracy": float(self.train_acc_metric.result()),
+            "accuracy": float(self.train_acc_metric.result()) if not self.is_contrastive else 0.0,
         }
