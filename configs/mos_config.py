@@ -90,7 +90,7 @@ def extract_augment_settings(defaults):
         'pre_emphasis': merge_cfg('pre_emphasis', {'p': 0.0, 'coeff': 0.97}),
         'high_pass': merge_cfg('high_pass', {'p': 0.0, 'fc': 150}),
         'rms_norm': merge_cfg('rms_norm', {'p': 0.0, 'target_rms': 0.05}),
-        'mixup': merge_cfg('mixup', {'p': 0.0, 'alpha': 0.2, 'class_mappings': {}}),
+        'mixup': merge_cfg('mixup', {'p': 0.0, 'alpha': 0.2, 'class_mappings': {}, 'outside_prob_scale': 0.2}),
         'train_overlap': augment_cfg.get('train_overlap', [0.0, 0.8]),
         'config': augment_cfg,  # Keep original for any custom needs
     }

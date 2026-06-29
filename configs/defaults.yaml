@@ -118,6 +118,7 @@ augment:
     # mixup:
     #     p: 0.5
     #     alpha: 0.6
+    #     outside_prob_scale: 0.4
     #     class_mappings: {}
     # 1: [3, 5, 7, 9] # Male classes only mix with other Male classes
     # 3: [1, 5, 7, 9]

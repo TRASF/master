@@ -247,14 +247,18 @@ class SupervisedDataset:
             
         allowed_tensor = tf.constant(allowed, dtype=tf.bool)
 
-        # Check if pair is allowed
+        # Check if pair is in the mappings list
         pair_indices = tf.stack([label1, label2], axis=1)
-        can_mix = tf.gather_nd(allowed_tensor, pair_indices)
+        is_mapped_pair = tf.gather_nd(allowed_tensor, pair_indices)
 
-        do_mix = tf.logical_and(
-            can_mix,
-            tf.random.uniform([batch_size]) < p
-        )
+        outside_prob_scale = float(mixup_cfg.get('outside_prob_scale', 0.2))
+        if mappings:
+            prob_scale = tf.where(is_mapped_pair, tf.ones([batch_size]), tf.fill([batch_size], outside_prob_scale))
+        else:
+            prob_scale = tf.ones([batch_size])
+
+        mix_prob = p * prob_scale
+        do_mix = tf.random.uniform([batch_size]) < mix_prob
 
         # Sample Beta distribution using Gamma
         gamma1 = tf.random.gamma([batch_size], alpha)

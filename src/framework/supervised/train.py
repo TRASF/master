@@ -294,6 +294,15 @@ def train_supervised(defaults_path="configs/defaults.yaml",
                     elif len(parts) == 3 and parts[0] in cfg and parts[1] in cfg[parts[0]]:
                         cfg[parts[0]][parts[1]][parts[2]] = v
 
+            # Re-apply reproducibility seeds in case they were overridden by sweep
+            if cfg["reproducibility"]["enabled"]:
+                apply_reproducibility_environment(cfg["reproducibility"])
+                seed = cfg["reproducibility"]["seed"]
+                random.seed(seed)
+                np.random.seed(seed)
+                tf.random.set_seed(seed)
+                print(f"Sweep override: Re-applied reproducibility seed: {seed}")
+
             # Re-generate name after any W&B sweep overrides
             base_exp_name = generate_experiment_name(cfg, mode="Pretrain")
             hpf_p = cfg.get("augment", {}).get("high_pass", {}).get("p", 0.0)

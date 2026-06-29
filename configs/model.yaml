@@ -9,7 +9,7 @@ model:
               activation: "relu"
               padding: "valid"
               dilation_rate: 1
-              batch_norm: false
+              batch_norm: true
 
             - type: "conv1d"
               filters: 32
@@ -18,7 +18,7 @@ model:
               activation: "relu"
               padding: "valid"
               dilation_rate: 1
-              batch_norm: false
+              batch_norm: true
 
             - type: "conv1d"
               filters: 64
@@ -27,7 +27,7 @@ model:
               activation: "relu"
               padding: "valid"
               dilation_rate: 1
-              batch_norm: false
+              batch_norm: true
 
             # 2. Maxpool (3, 3)
             - type: "maxpool1d"
