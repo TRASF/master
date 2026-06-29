@@ -20,3 +20,12 @@ dataset/
 Thumbs.db
 
 models/
+wandb
+artifacts
+models
+scratch
+dependencies.lock
+
+sweep*
+*.old
+quantization_output
