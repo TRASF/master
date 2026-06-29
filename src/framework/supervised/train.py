@@ -1,4 +1,8 @@
 import os
+import sys
+# Add project root to sys.path so we can import configs/ from anywhere
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
+
 import random
 import numpy as np
 from configs.mos_config import load_config, normalize_config, apply_reproducibility_environment, resolve_class_weights, generate_experiment_name, resolve_experiment_paths
@@ -315,7 +319,7 @@ def train_supervised(defaults_path="configs/defaults.yaml",
     # 2. Setup Dataset
     print("Setting up datasets...")
     ds_builder = SupervisedDataset(
-        dataset_dir=cfg["dataset"]["indoor"],
+        dataset_dir=cfg["dataset"].get("train_dir") or cfg["dataset"]["indoor"],
         val_dir=cfg["dataset"]["val_dir"],
         test_dir=cfg["dataset"]["test_dir"],
         sample_rate=cfg["audio"]["sample_rate"],
@@ -334,6 +338,27 @@ def train_supervised(defaults_path="configs/defaults.yaml",
         batch_size=cfg["train"]["batch_size"],
         shuffle=cfg["train"]["shuffle"]
     )
+
+    # Dynamic Batch Normalization layer overrides from W&B Sweep
+    if "model" in cfg:
+        model_overrides = cfg["model"]
+        layers = model_cfg.get("model", {}).get("mossongplus", {}).get("layers", [])
+        conv_idx = 1
+        dense_idx = 1
+        for layer in layers:
+            l_type = layer.get("type")
+            if l_type == "conv1d":
+                opt_key = f"bn_conv{conv_idx}"
+                if opt_key in model_overrides:
+                    layer["batch_norm"] = bool(model_overrides[opt_key])
+                    print(f"[Dynamic BN Config] Overrode {l_type} layer {conv_idx} batch_norm to {layer['batch_norm']}")
+                conv_idx += 1
+            elif l_type == "dense":
+                opt_key = f"bn_dense{dense_idx}"
+                if opt_key in model_overrides:
+                    layer["batch_norm"] = bool(model_overrides[opt_key])
+                    print(f"[Dynamic BN Config] Overrode {l_type} layer {dense_idx} batch_norm to {layer['batch_norm']}")
+                dense_idx += 1
 
     # 3. Build Model
     print("Building model...")

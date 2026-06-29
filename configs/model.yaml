@@ -9,6 +9,7 @@ model:
               activation: "relu"
               padding: "valid"
               dilation_rate: 1
+              batch_norm: false
 
             - type: "conv1d"
               filters: 32
@@ -17,6 +18,7 @@ model:
               activation: "relu"
               padding: "valid"
               dilation_rate: 1
+              batch_norm: false
 
             - type: "conv1d"
               filters: 64
@@ -25,6 +27,7 @@ model:
               activation: "relu"
               padding: "valid"
               dilation_rate: 1
+              batch_norm: false
 
             # 2. Maxpool (3, 3)
             - type: "maxpool1d"
@@ -43,6 +46,7 @@ model:
             - type: "dense"
               units: 256
               activation: "hard_swish"
+              batch_norm: false
               # bias_initializer: "random_normal"
               # kernel_initializer: "he_normal"
               # kernel_regularizer: "l1"
@@ -52,6 +56,7 @@ model:
             - type: "dense"
               units: 128
               activation: "hard_swish"
+              batch_norm: false
               # bias_initializer: "random_normal"
               # kernel_initializer: "he_normal"
               # kernel_regularizer: "l1"

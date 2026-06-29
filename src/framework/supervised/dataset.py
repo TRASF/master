@@ -200,8 +200,77 @@ class SupervisedDataset:
                 deterministic=self.deterministic,
             )
 
-        dataset = dataset.batch(batch_size).prefetch(self.prefetch_buffer)
+        dataset = dataset.batch(batch_size)
+        
+        mixup_cfg = self.augmentor.cfg.get('mixup', {})
+        if augment and mixup_cfg.get('p', 0.0) > 0.0:
+            dataset = dataset.map(
+                lambda x, y: self._apply_targeted_mixup(x, y, mixup_cfg),
+                num_parallel_calls=self.parallel_calls,
+                deterministic=self.deterministic
+            )
+
+        dataset = dataset.prefetch(self.prefetch_buffer)
         return self._with_deterministic_options(dataset)
+
+    @tf.function
+    def _apply_targeted_mixup(self, x, y, mixup_cfg):
+        p = float(mixup_cfg.get('p', 1.0))
+        alpha = float(mixup_cfg.get('alpha', 0.2))
+
+        batch_size = tf.shape(x)[0]
+
+        # Shuffle the batch to get pairs
+        indices = tf.random.shuffle(tf.range(batch_size))
+        x2 = tf.gather(x, indices)
+        y2 = tf.gather(y, indices)
+
+        # Get hard labels for mapping check
+        label1 = tf.argmax(y, axis=1, output_type=tf.int32)
+        label2 = tf.argmax(y2, axis=1, output_type=tf.int32)
+
+        # Define allowed matrix (run once)
+        num_classes = self.data_loader.num_classes
+        allowed = np.zeros((num_classes, num_classes), dtype=bool)
+        
+        # tf.function does not accept Python dict iterating natively if it changes, 
+        # but mixup_cfg is a static dict from config so it works as a closure.
+        mappings = mixup_cfg.get('class_mappings', {})
+        if mappings:
+            for src_class_str, allowed_list in mappings.items():
+                src_class = int(src_class_str)
+                for dst_class in allowed_list:
+                    allowed[src_class, int(dst_class)] = True
+                    allowed[int(dst_class), src_class] = True
+        else:
+            allowed = np.ones((num_classes, num_classes), dtype=bool)
+            
+        allowed_tensor = tf.constant(allowed, dtype=tf.bool)
+
+        # Check if pair is allowed
+        pair_indices = tf.stack([label1, label2], axis=1)
+        can_mix = tf.gather_nd(allowed_tensor, pair_indices)
+
+        do_mix = tf.logical_and(
+            can_mix,
+            tf.random.uniform([batch_size]) < p
+        )
+
+        # Sample Beta distribution using Gamma
+        gamma1 = tf.random.gamma([batch_size], alpha)
+        gamma2 = tf.random.gamma([batch_size], alpha)
+        lam = gamma1 / (gamma1 + gamma2 + 1e-8)
+
+        # If not doing mixup, lam=1.0 (keep original)
+        lam = tf.where(do_mix, lam, tf.ones_like(lam))
+
+        lam_x = tf.reshape(lam, [-1, 1, 1])
+        lam_y = tf.reshape(lam, [-1])
+
+        x_mixed = lam_x * x + (1.0 - lam_x) * x2
+        y_mixed = tf.expand_dims(lam_y, -1) * y + tf.expand_dims(1.0 - lam_y, -1) * y2
+
+        return x_mixed, y_mixed
 
     def _require_files(self, paths, split_name, directory):
         if len(paths) == 0:

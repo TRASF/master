@@ -52,6 +52,7 @@ def extract_dataset_settings(defaults):
         'indoor': dataset_cfg.get('indoor', 'dataset/MSB/Indoor'),
         'outdoor': dataset_cfg.get('outdoor', 'dataset/MSB/Outdoor'),
         'moslab': dataset_cfg.get('mosLab', 'dataset/Philip'),
+        'train_dir': dataset_cfg.get('train_dir'),
         'val_dir': dataset_cfg.get('val_dir'),
         'test_dir': dataset_cfg.get('test_dir'),
         'split_ratios': split_ratios,
@@ -89,6 +90,7 @@ def extract_augment_settings(defaults):
         'pre_emphasis': merge_cfg('pre_emphasis', {'p': 0.0, 'coeff': 0.97}),
         'high_pass': merge_cfg('high_pass', {'p': 0.0, 'fc': 150}),
         'rms_norm': merge_cfg('rms_norm', {'p': 0.0, 'target_rms': 0.05}),
+        'mixup': merge_cfg('mixup', {'p': 0.0, 'alpha': 0.2, 'class_mappings': {}}),
         'train_overlap': augment_cfg.get('train_overlap', [0.0, 0.8]),
         'config': augment_cfg,  # Keep original for any custom needs
     }
@@ -247,15 +249,15 @@ def generate_experiment_name(cfg, mode="Pretrain"):
     """
     import os
     # 1. Dataset Name resolution
-    indoor_path = cfg.get("dataset", {}).get("indoor", "")
-    if "indoor" in indoor_path.lower():
+    train_path = cfg.get("dataset", {}).get("train_dir") or cfg.get("dataset", {}).get("indoor", "")
+    if "indoor" in train_path.lower():
         ds_str = "ds-indoor"
-    elif "outdoor" in indoor_path.lower():
+    elif "outdoor" in train_path.lower():
         # Fallback in case they configured outdoor in place of indoor
         ds_str = "ds-outdoor"
-    elif indoor_path:
+    elif train_path:
         # Basename of the folder
-        ds_str = f"ds-{os.path.basename(os.path.normpath(indoor_path))}"
+        ds_str = f"ds-{os.path.basename(os.path.normpath(train_path))}"
     else:
         ds_str = "ds-unknown"
 
