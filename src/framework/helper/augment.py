@@ -26,6 +26,7 @@ class AudioAugmentor:
         self.pre_cfg = self.cfg.get('pre_emphasis', {})
         self.hpf_cfg = self.cfg.get('high_pass', {})
         self.rms_cfg = self.cfg.get('rms_norm', {})
+        self.preprocess_cfg = self.cfg.get('preprocess', {})
         raw_config = self.cfg.get('config', {})
         self.overlap_cfg = raw_config.get('segment_overlap') or raw_config.get('overlap') or self.cfg.get('overlap', [0.0, 0.8])
         # Pre-compute HPF coefficients if enabled
@@ -375,6 +376,9 @@ class AudioAugmentor:
         # ----------------------------------------------------
 
         # 1. First, normalize the energy so the model sees consistent volume
+        if self.preprocess_cfg.get('dc_removal', True):
+            audio -= tf.reduce_mean(audio)
+
         audio = self.rms_normalize(
             audio,
             target_rms=float(self.rms_cfg.get('target_rms', 0.5)),

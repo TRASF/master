@@ -61,7 +61,7 @@ class SupervisedDataset:
             overlap_range = overlap_cfg
         else:
             overlap_range = [0.0, 0.8]
-            
+
         avg_overlap = np.mean(overlap_range)
         avg_step = int(self.segment_length * (1.0 - avg_overlap))
         avg_step = max(avg_step, 1)
@@ -79,18 +79,18 @@ class SupervisedDataset:
                         num_samples = f.getnframes()
             except Exception:
                 pass
-                
+
             if num_samples == 0:
                 num_samples = self.segment_length
-                
+
             # Expected number of segments
             num_segments = int(np.ceil(num_samples / avg_step))
-            
+
             # Apply segment capping
             current_max = max_segments
             if self.nomos_index is not None and label == self.nomos_index:
                 current_max = max_segments // 5
-                
+
             num_segments = min(num_segments, current_max)
             counts[label] += num_segments
 
@@ -201,7 +201,7 @@ class SupervisedDataset:
             )
 
         dataset = dataset.batch(batch_size)
-        
+
         mixup_cfg = self.augmentor.cfg.get('mixup', {})
         if augment and mixup_cfg.get('p', 0.0) > 0.0:
             dataset = dataset.map(
@@ -232,8 +232,8 @@ class SupervisedDataset:
         # Define allowed matrix (run once)
         num_classes = self.data_loader.num_classes
         allowed = np.zeros((num_classes, num_classes), dtype=bool)
-        
-        # tf.function does not accept Python dict iterating natively if it changes, 
+
+        # tf.function does not accept Python dict iterating natively if it changes,
         # but mixup_cfg is a static dict from config so it works as a closure.
         mappings = mixup_cfg.get('class_mappings', {})
         if mappings:
@@ -244,14 +244,14 @@ class SupervisedDataset:
                     allowed[int(dst_class), src_class] = True
         else:
             allowed = np.ones((num_classes, num_classes), dtype=bool)
-            
+
         allowed_tensor = tf.constant(allowed, dtype=tf.bool)
 
         # Check if pair is in the mappings list
         pair_indices = tf.stack([label1, label2], axis=1)
         is_mapped_pair = tf.gather_nd(allowed_tensor, pair_indices)
 
-        outside_prob_scale = float(mixup_cfg.get('outside_prob_scale', 0.2))
+        outside_prob_scale = float(mixup_cfg.get(' ', 0.2))
         if mappings:
             prob_scale = tf.where(is_mapped_pair, tf.ones([batch_size]), tf.fill([batch_size], outside_prob_scale))
         else:

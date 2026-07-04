@@ -137,7 +137,7 @@ def apply_reproducibility_environment(settings):
             os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
 
-def resolve_class_weights(config_weights, fallback_weights, num_classes):
+def resolve_class_weights(config_weights, fallback_weights, num_classes, labels_dict=None):
     """Resolve class weights from config or fallback values."""
     if config_weights is None:
         return True, fallback_weights
@@ -155,18 +155,32 @@ def resolve_class_weights(config_weights, fallback_weights, num_classes):
         return False, None
 
     if values is None:
-        return True, fallback_weights
-
-    if isinstance(values, dict):
-        return True, np.array(
+        resolved_weights = fallback_weights
+    elif isinstance(values, dict):
+        resolved_weights = np.array(
             [float(values.get(i, values.get(str(i), 1.0))) for i in range(num_classes)],
             dtype=np.float32,
         )
-
-    if len(values) != num_classes:
+    elif len(values) != num_classes:
         raise ValueError(f"class_weights must contain {num_classes} values, got {len(values)}")
+    else:
+        resolved_weights = np.array(values, dtype=np.float32)
 
-    return True, np.array(values, dtype=np.float32)
+    # Apply overrides if present (e.g. from W&B Sweep)
+    if isinstance(config_weights, dict) and "override" in config_weights:
+        overrides = config_weights["override"]
+        if isinstance(overrides, dict) and resolved_weights is not None:
+            resolved_weights = np.array(resolved_weights, copy=True)
+            for class_name, multiplier in overrides.items():
+                if labels_dict and class_name in labels_dict:
+                    class_idx = labels_dict[class_name]
+                    resolved_weights[class_idx] *= float(multiplier)
+                elif str(class_name).isdigit():
+                    class_idx = int(class_name)
+                    if 0 <= class_idx < num_classes:
+                        resolved_weights[class_idx] *= float(multiplier)
+
+    return True, resolved_weights
 
 
 def extract_optimizer_settings(defaults):
@@ -190,16 +204,28 @@ def extract_callback_settings(defaults):
     return defaults.get('callbacks', {})
 
 
+def extract_preprocess_settings(defaults):
+    """Return normalized preprocessing configuration values from defaults."""
+    preprocess_cfg = defaults.get('preprocess', {})
+    if preprocess_cfg is None:
+        preprocess_cfg = {}
+    return {
+        'dc_removal': bool(preprocess_cfg.get('dc_removal', True)),
+    }
+
+
 def normalize_config(defaults):
     """Consolidate all configuration extractions into a single normalized dictionary."""
     if not defaults:
         defaults = {}
         
+    preprocess_settings = extract_preprocess_settings(defaults)
     normalized = {
         'audio': extract_audio_settings(defaults),
         'train': extract_train_settings(defaults),
         'dataset': extract_dataset_settings(defaults),
-        'augment': extract_augment_settings(defaults),
+        'augment': {**extract_augment_settings(defaults), 'preprocess': preprocess_settings},
+        'preprocess': preprocess_settings,
         'model': extract_model_settings(defaults),
         'reproducibility': extract_reproducibility_settings(defaults),
         'labels': defaults.get('labels', {}),

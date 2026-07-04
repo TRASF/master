@@ -29,3 +29,5 @@ dependencies.lock
 sweep*
 *.old
 quantization_output
+# CocoIndex Code (ccc)
+/.cocoindex_code/

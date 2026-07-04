@@ -773,7 +773,7 @@ void loop() {{
     // Fill input->data.int8 with quantized input values:
     // For raw input x (float):
     // input->data.int8[i] = (int8_t)round(x[i] / input->params.scale + input->params.zero_point);
-    
+
     // Run inference
     TfLiteStatus invoke_status = interpreter->Invoke();
     if (invoke_status != kTfLiteOk) {{
@@ -801,7 +801,7 @@ if __name__ == "__main__":
     parser.add_argument("--model_cfg_path", type=str, default="configs/model.yaml", help="Path to model.yaml config")
     parser.add_argument("--weights_path", type=str, required=True, help="Path to trained Keras model weights checkpoint (.h5)")
     parser.add_argument("--out_dir", type=str, default="quantization_output", help="Directory to save quantized models and C headers")
-    parser.add_argument("--rep_samples", type=int, default=300, help="Number of samples to calibrate quantization")
+    parser.add_argument("--rep_samples", type=int, default=500, help="Number of samples to calibrate quantization")
     args = parser.parse_args()
 
     # Load and Normalize configs
@@ -809,7 +809,7 @@ if __name__ == "__main__":
         # Import local utilities
         import sys
         sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-        
+
         from configs.mos_config import load_config, normalize_config, apply_reproducibility_environment
         from model.mossongplus import MosSongPlusModel
         from src.framework.supervised.dataset import SupervisedDataset
@@ -885,4 +885,3 @@ if __name__ == "__main__":
         rep_samples=args.rep_samples,
         seed=cfg["reproducibility"]["seed"]
     )
-

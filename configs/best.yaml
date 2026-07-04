@@ -11,6 +11,9 @@ labels:
     Cx_quin_Male: 9
     No.Mos: 10
 
+num_classes: 11
+nomos_index: 10
+
 wandb:
     enabled: true
     project: "MosSongPlus"
@@ -21,7 +24,7 @@ wandb:
 
 train:
     batch_size: 256
-    shuffle: True
+    shuffle: true
     epochs: 1000
     seed: 43
     warmup_epochs: 15
@@ -29,7 +32,7 @@ train:
 
 reproducibility:
     enabled: true
-    seed: 42
+    seed: 45
     deterministic_ops: true
     deterministic_data: true
 
@@ -39,6 +42,14 @@ optimizer:
 
 model:
     output_activation: null
+
+    # Best-run BN pattern = 11100
+    # BN enabled on conv layers, disabled on dense layers
+    bn_conv1: true
+    bn_conv2: true
+    bn_conv3: true
+    bn_dense1: false
+    bn_dense2: false
 
 loss:
     name: CategoricalCrossentropy
@@ -51,12 +62,12 @@ callbacks:
         monitor: val_macro_f1
         patience: 100
         mode: max
-        restore_best_weights: True
+        restore_best_weights: true
 
     model_checkpoint:
         monitor: val_macro_f1
-        save_best_only: True
-        save_weights_only: True
+        save_best_only: true
+        save_weights_only: true
         mode: max
 
     reduce_lr_on_plateau:
@@ -65,14 +76,15 @@ callbacks:
         patience: 50
         min_lr: 1e-6
         mode: max
-        restore_best_weights: True
+        restore_best_weights: true
 
     # cosine_annealing:
-    #     t_max: 1000
-    #     eta_min: 1e-5
+    #   t_max: 1000
+    #   eta_min: 1e-5
 
 augment:
     max_segments_per_file: 100
+
     segment_overlap:
         train: [0.0, 0.8]
         val: 0.5
@@ -115,13 +127,15 @@ augment:
         max_gain: 15.0
         min_gain: 0.05
 
+    # Best-run mixup setting
     mixup:
-        p: 1
+        p: 1.0
         alpha: 0.4
 
 audio:
     sample_rate: 8000
     duration: 0.3
+    segment_length: 2400
 
 dataset:
     indoor: "dataset/MSB/Indoor"
@@ -137,5 +151,8 @@ dataset:
 
 class_weights:
     enabled: true
-
     values: null
+    override: {}
+
+preprocess:
+    dc_removal: true

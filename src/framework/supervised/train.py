@@ -264,6 +264,14 @@ def train_supervised(defaults_path="configs/defaults.yaml",
     apply_reproducibility_environment(cfg["reproducibility"])
 
     import tensorflow as tf
+    try:
+        gpus = tf.config.list_physical_devices('GPU')
+        if gpus:
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            print(f"Dynamic GPU memory allocation enabled for {len(gpus)} GPU(s).")
+    except Exception as e:
+        print(f"Failed to configure dynamic GPU memory allocation: {e}")
 
     # Set seeds for reproducibility
     if cfg["reproducibility"]["enabled"]:
@@ -348,9 +356,14 @@ def train_supervised(defaults_path="configs/defaults.yaml",
         shuffle=cfg["train"]["shuffle"]
     )
 
-    # Dynamic Batch Normalization layer overrides from W&B Sweep
+    # Dynamic Batch Normalization layer overrides and L2 Regularization from W&B Sweep
     if "model" in cfg:
+        import keras
         model_overrides = cfg["model"]
+        bn_momentum = model_overrides.get("bn_momentum")
+        dense_l2 = model_overrides.get("dense_l2")
+        conv_l2 = model_overrides.get("conv_l2")
+
         layers = model_cfg.get("model", {}).get("mossongplus", {}).get("layers", [])
         conv_idx = 1
         dense_idx = 1
@@ -359,14 +372,36 @@ def train_supervised(defaults_path="configs/defaults.yaml",
             if l_type == "conv1d":
                 opt_key = f"bn_conv{conv_idx}"
                 if opt_key in model_overrides:
-                    layer["batch_norm"] = bool(model_overrides[opt_key])
+                    enabled = bool(model_overrides[opt_key])
+                    if enabled and bn_momentum is not None:
+                        layer["batch_norm"] = {"momentum": float(bn_momentum)}
+                    else:
+                        layer["batch_norm"] = enabled
                     print(f"[Dynamic BN Config] Overrode {l_type} layer {conv_idx} batch_norm to {layer['batch_norm']}")
+                elif layer.get("batch_norm") and bn_momentum is not None:
+                    layer["batch_norm"] = {"momentum": float(bn_momentum)}
+                    print(f"[Dynamic BN Config] Updated {l_type} layer {conv_idx} batch_norm momentum to {bn_momentum}")
+
+                if conv_l2 is not None and float(conv_l2) > 0:
+                    layer["kernel_regularizer"] = keras.regularizers.l2(float(conv_l2))
+                    print(f"[Dynamic L2 Config] Added L2 ({conv_l2}) regularization to {l_type} layer {conv_idx}")
                 conv_idx += 1
             elif l_type == "dense":
                 opt_key = f"bn_dense{dense_idx}"
                 if opt_key in model_overrides:
-                    layer["batch_norm"] = bool(model_overrides[opt_key])
+                    enabled = bool(model_overrides[opt_key])
+                    if enabled and bn_momentum is not None:
+                        layer["batch_norm"] = {"momentum": float(bn_momentum)}
+                    else:
+                        layer["batch_norm"] = enabled
                     print(f"[Dynamic BN Config] Overrode {l_type} layer {dense_idx} batch_norm to {layer['batch_norm']}")
+                elif layer.get("batch_norm") and bn_momentum is not None:
+                    layer["batch_norm"] = {"momentum": float(bn_momentum)}
+                    print(f"[Dynamic BN Config] Updated {l_type} layer {dense_idx} batch_norm momentum to {bn_momentum}")
+
+                if dense_l2 is not None and float(dense_l2) > 0:
+                    layer["kernel_regularizer"] = keras.regularizers.l2(float(dense_l2))
+                    print(f"[Dynamic L2 Config] Added L2 ({dense_l2}) regularization to {l_type} layer {dense_idx}")
                 dense_idx += 1
 
     # 3. Build Model
@@ -384,6 +419,7 @@ def train_supervised(defaults_path="configs/defaults.yaml",
         cfg["class_weights"],
         ds_builder.class_weights,
         cfg["num_classes"],
+        labels_dict=cfg["labels"]
     )
 
     if class_weights_enabled:

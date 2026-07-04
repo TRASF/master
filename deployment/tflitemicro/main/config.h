@@ -27,18 +27,8 @@
 // L/R = VDD usually means right channel.
 #define USE_LEFT_CHANNEL    1
 
-#define NUM_CLASSES         11
+#define UART_BAUD_RATE      2000000
+#define ENABLE_SERIAL_MONITOR 1
 
-static const char* kClassNames[NUM_CLASSES] = {
-    "Ae_aegypti_Female",
-    "Ae_aegypti_Male",
-    "Ae_albopictus_Female",
-    "Ae_albopictus_Male",
-    "An_dirus_Female",
-    "An_dirus_Male",
-    "An_minimus_Female",
-    "An_minimus_Male",
-    "Cx_quin_Female",
-    "Cx_quin_Male",
-    "No_Mos"
-};
+#define NUM_CLASSES         11
+extern const char* kClassNames[NUM_CLASSES];

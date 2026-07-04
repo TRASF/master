@@ -3,6 +3,14 @@ import random
 import numpy as np
 from configs.mos_config import load_config, normalize_config, apply_reproducibility_environment, resolve_class_weights, generate_experiment_name, resolve_experiment_paths
 import tensorflow as tf
+try:
+    gpus = tf.config.list_physical_devices('GPU')
+    if gpus:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        print(f"Dynamic GPU memory allocation enabled for {len(gpus)} GPU(s).")
+except Exception as e:
+    print(f"Failed to configure dynamic GPU memory allocation: {e}")
 
 
 def _mean_report_metric(report, classes, token, metric_name):
@@ -361,6 +369,7 @@ def train_linear_probe(defaults_path="configs/defaults.yaml",
         cfg["class_weights"],
         ds_builder.class_weights,
         cfg["num_classes"],
+        labels_dict=cfg["labels"]
     )
 
     if class_weights_enabled:

@@ -1,117 +1,125 @@
 #include <stdio.h>
+#include <stdint.h>
+#include <string.h>
 
-#include "audio_provider.h"
-#include "classifier.h"
-#include "config.h"
-
-#include "esp_log.h"
-#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "driver/uart.h"
+#include "esp_log.h"
+#include "esp_system.h"
 
-static const char* TAG = "main";
+#include "audio_provider.h"
+#include "classification.h"
+#include "config.h"
+
+static const char *TAG = "MAIN_APP";
+
+#define STREAM_TO_PYTHON 1
+
+// Tightly pack the ML results and 16-bit audio into a single payload struct
+#pragma pack(push, 1)
+struct TelemetryPayload {
+    uint8_t predicted_class;
+    float confidence;
+    int16_t audio[AUDIO_SAMPLE_COUNT];
+};
+#pragma pack(pop)
+
+// -----------------------------------------------------------------------------
+// COBS ENCODING ALGORITHM
+// -----------------------------------------------------------------------------
+size_t cobs_encode(const uint8_t *input, size_t length, uint8_t *output) {
+    size_t read_index = 0, write_index = 1, code_index = 0;
+    uint8_t code = 1;
+
+    while (read_index < length) {
+        if (input[read_index] == 0) {
+            output[code_index] = code;
+            code = 1;
+            code_index = write_index++;
+            read_index++;
+        } else {
+            output[write_index++] = input[read_index++];
+            code++;
+            if (code == 0xFF) {
+                output[code_index] = code;
+                code = 1;
+                code_index = write_index++;
+            }
+        }
+    }
+    output[code_index] = code;
+    return write_index;
+}
+
+// -----------------------------------------------------------------------------
+// CAPTURE & INFERENCE TASK
+// -----------------------------------------------------------------------------
+void main_loop_task(void *arg) {
+    ESP_LOGI(TAG, "Starting main ML loop...");
+
+    float *audio_window = (float *)malloc(AUDIO_SAMPLE_COUNT * sizeof(float));
+
+    struct TelemetryPayload *payload = (struct TelemetryPayload *)malloc(sizeof(struct TelemetryPayload));
+    size_t max_cobs_len = sizeof(struct TelemetryPayload) + (sizeof(struct TelemetryPayload) / 254) + 2;
+    uint8_t *cobs_buffer = (uint8_t *)malloc(max_cobs_len);
+
+    if (!audio_window || !payload || !cobs_buffer) {
+        ESP_LOGE(TAG, "Failed to allocate memory!");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    while (1) {
+        if (GetAudioWindow(audio_window, AUDIO_SAMPLE_COUNT) == ESP_OK) {
+            ClassifierResult result = {};
+
+            if (RunClassifier(audio_window, AUDIO_SAMPLE_COUNT, &result) == ESP_OK) {
+#if STREAM_TO_PYTHON
+                payload->predicted_class = (uint8_t)result.predicted_class;
+                payload->confidence = result.confidence;
+
+                // Convert float audio back to 16-bit PCM for the visualizer
+                for (size_t i = 0; i < AUDIO_SAMPLE_COUNT; i++) {
+                    // Multiply by 32767 to scale [-1.0, 1.0] to int16 range
+                    payload->audio[i] = (int16_t)(audio_window[i] * 32767.0f);
+                }
+
+                // Encode COBS and send over UART with 0x00 delimiters
+                size_t cobs_len = cobs_encode((const uint8_t *)payload, sizeof(struct TelemetryPayload), cobs_buffer);
+
+                const uint8_t zero = 0x00;
+                uart_write_bytes(UART_NUM_0, &zero, 1);
+                uart_write_bytes(UART_NUM_0, cobs_buffer, cobs_len);
+                uart_write_bytes(UART_NUM_0, &zero, 1);
+#else
+                ESP_LOGI(TAG, "Pred: [%s] | Conf: %.3f", ClassName(result.predicted_class), result.confidence);
+#endif
+            }
+        }
+    }
+}
 
 extern "C" void app_main(void) {
-    ESP_LOGI(TAG, "Mosquito raw-audio edge classifier booting");
+#if STREAM_TO_PYTHON
+    esp_log_level_set("*", ESP_LOG_NONE);
+#endif
 
-    ESP_LOGI(TAG, "Sample rate: %d Hz", SAMPLE_RATE_HZ);
-    ESP_LOGI(TAG, "Window: %d ms", WINDOW_MS);
-    ESP_LOGI(TAG, "Samples/window: %d", AUDIO_SAMPLE_COUNT);
-    ESP_LOGI(TAG, "Target RMS: %.6f", TARGET_RMS);
-    ESP_LOGI(TAG, "Min RMS gate after DC removal: %.6f", MIN_RAW_RMS_GATE);
-    ESP_LOGI(TAG, "Dummy classifier: %d", USE_DUMMY_CLASSIFIER);
+    uart_config_t uart_config = {
+        .baud_rate = UART_BAUD_RATE,
+        .data_bits = UART_DATA_8_BITS,
+        .parity    = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .rx_flow_ctrl_thresh = 0,
+        .source_clk = UART_SCLK_DEFAULT,
+    };
+
+    uart_driver_install(UART_NUM_0, 4096, 8192, 0, NULL, 0);
+    uart_param_config(UART_NUM_0, &uart_config);
 
     ESP_ERROR_CHECK(InitAudio());
     ESP_ERROR_CHECK(InitClassifier());
 
-    static float audio_window[AUDIO_SAMPLE_COUNT];
-
-    while (true) {
-        AudioStats stats = {};
-        ClassifierResult result = {};
-
-        int64_t t0 = esp_timer_get_time();
-
-        esp_err_t err = GetAudioWindow(
-            audio_window,
-            AUDIO_SAMPLE_COUNT,
-            &stats
-        );
-
-        int64_t t1 = esp_timer_get_time();
-
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "GetAudioWindow failed: %s", esp_err_to_name(err));
-            vTaskDelay(pdMS_TO_TICKS(500));
-            continue;
-        }
-
-        err = RunClassifier(
-            audio_window,
-            AUDIO_SAMPLE_COUNT,
-            &stats,
-            &result
-        );
-
-        int64_t t2 = esp_timer_get_time();
-
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "RunClassifier failed: %s", esp_err_to_name(err));
-            vTaskDelay(pdMS_TO_TICKS(500));
-            continue;
-        }
-
-        ESP_LOGI(
-            TAG,
-            "raw: min=%+.6f max=%+.6f mean=%+.6f rms=%.6f peak=%.6f mean/rms=%.3f | "
-            "dc: mean=%+.6f rms=%.6f peak=%.6f | "
-            "norm: mean=%+.6f rms=%.6f peak=%.6f clips=%d present=%d normalized=%d | "
-            "qinput: scale=%.9f zp=%d qclips=%d | "
-            "pred=%d:%s score=%.3f top3=[%d:%s %.3f, %d:%s %.3f, %d:%s %.3f] | "
-            "audio=%lld us infer=%lld us",
-
-            stats.raw_min,
-            stats.raw_max,
-            stats.raw_mean,
-            stats.raw_rms,
-            stats.raw_peak,
-            stats.raw_mean_abs_over_rms,
-
-            stats.dc_mean,
-            stats.dc_rms,
-            stats.dc_peak,
-
-            stats.norm_mean,
-            stats.norm_rms,
-            stats.norm_peak,
-            stats.norm_clip_count,
-            stats.signal_present ? 1 : 0,
-            stats.normalization_applied ? 1 : 0,
-
-            result.input_scale,
-            result.input_zero_point,
-            result.input_clip_count,
-
-            result.predicted_class,
-            ClassName(result.predicted_class),
-            result.confidence,
-
-            result.top_class[0],
-            ClassName(result.top_class[0]),
-            result.top_score[0],
-
-            result.top_class[1],
-            ClassName(result.top_class[1]),
-            result.top_score[1],
-
-            result.top_class[2],
-            ClassName(result.top_class[2]),
-            result.top_score[2],
-
-            (long long)(t1 - t0),
-            (long long)(t2 - t1)
-        );
-
-        vTaskDelay(pdMS_TO_TICKS(50));
-    }
+    xTaskCreatePinnedToCore(main_loop_task, "main_loop_task", 8192, NULL, 5, NULL, 1);
 }
