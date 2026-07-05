@@ -1,0 +1,14 @@
+.git
+.venv
+venv
+dataset
+wandb
+artifacts
+models
+scratch
+*.log
+__pycache__
+.DS_Store
+quantization_output
+.cocoindex_code
+finetuning
