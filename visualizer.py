@@ -1,31 +1,41 @@
-import collections
-import struct
-import sys
-import threading
+#!/usr/bin/env python3
+"""
+ESP32-S3 mosquito audio + classification visualizer.
 
-import matplotlib.animation as animation
-import matplotlib.patches as patches
+Matches the current firmware protocol:
+
+    0x00 | COBS(
+        uint8  predicted_class
+        float32 confidence          # little-endian
+        int16  audio[AUDIO_SAMPLE_COUNT]
+    ) | 0x00
+
+Dependencies:
+    pip install numpy matplotlib pyserial
+
+Example:
+    python esp32_mosquito_visualizer.py
+    python esp32_mosquito_visualizer.py --port COM6
+    python esp32_mosquito_visualizer.py --port /dev/ttyUSB0
+"""
+
+from __future__ import annotations
+
+import argparse
+import collections
+import queue
+import struct
+import threading
+import time
+from dataclasses import dataclass
+from typing import Optional
+
 import matplotlib.pyplot as plt
 import numpy as np
 import serial
-
-# =============================================================================
-# CONFIGURATION
-# =============================================================================
-PORTS = ["/dev/ttyUSB0", "/dev/ttyUSB1", "/dev/ttyACM0"]
-BAUD = 2000000
-FS = 8000
-CHUNK_SIZE = 2400
-
-# Packet Framing Settings
-MAGIC_HEADER = b"\xaa\xbb\xcc\xdd"
-HEADER_SIZE = 4
-ML_PAYLOAD_SIZE = 5  # 1 byte uint8 (class) + 4 byte float32 (confidence)
-AUDIO_BYTES = CHUNK_SIZE * 3  # 24-bit audio = 3 bytes per sample
-TOTAL_PACKET_SIZE = HEADER_SIZE + ML_PAYLOAD_SIZE + AUDIO_BYTES
-
-MAX_INT_VAL = 2**23
-SPEC_HISTORY = 60  # Past 60 classification windows
+from matplotlib import patches
+from matplotlib.animation import FuncAnimation
+from serial.tools import list_ports
 
 CLASS_NAMES = [
     "Ae_aegypti_Female",
@@ -41,241 +51,755 @@ CLASS_NAMES = [
     "No_Mos",
 ]
 
-# Unique colors assigned to different species families for fast tracking
 CLASS_COLORS = {
-    "Ae": "#00ffcc",  # Cyan
-    "An": "#ff3366",  # Pink/Red
-    "Cx": "#ffcc00",  # Yellow
-    "No": "#555555",  # Gray for background
+    "Ae": "#00d6b4",
+    "An": "#ff4d73",
+    "Cx": "#f2c94c",
+    "No": "#808080",
+    "Unknown": "#ffffff",
 }
 
-
-def get_color(name):
-    prefix = name[:2]
-    return CLASS_COLORS.get(prefix, "#ffffff")
-
-
-# =============================================================================
-# SERIAL INITIALIZATION
-# =============================================================================
-SELECTED_PORT = None
-ser = None
-
-for port in PORTS:
-    try:
-        ser = serial.Serial(port, BAUD, timeout=0.1)
-        ser.flushInput()
-        if ser.is_open:
-            SELECTED_PORT = port
-            break
-    except Exception:
-        ser = None
-
-if SELECTED_PORT is None or ser is None:
-    print("FATAL ERROR: Could not connect to any serial ports.")
-    sys.exit(1)
-
-print(f"SUCCESS: Connected to {SELECTED_PORT} at {BAUD} baud.")
-
-# =============================================================================
-# UI & DATA BUFFERS
-# =============================================================================
-raw_byte_pool = bytearray()
-pool_lock = threading.Lock()
-
-audio_buffer = collections.deque(np.zeros(CHUNK_SIZE * 2), maxlen=CHUNK_SIZE * 2)
-spec_matrix = np.zeros((SPEC_HISTORY, CHUNK_SIZE // 2 + 1))
-active_spec_boxes = []  # Keeps track of scrolling historical boxes
-
-fig, (ax_wave, ax_spec) = plt.subplots(2, 1, figsize=(12, 9))
-fig.patch.set_facecolor("#1e1e1e")
-fig.suptitle(
-    "Awaiting Edge ML Stream...", color="#00ffcc", fontsize=16, fontweight="bold"
-)
-
-# --- Waveform Setup ---
-(line,) = ax_wave.plot(np.zeros(CHUNK_SIZE), color="#555555", linewidth=1)
-ax_wave.set_ylim(-MAX_INT_VAL, MAX_INT_VAL)
-ax_wave.set_title("Time Domain Waveform (Active Inference Window)", color="white")
-ax_wave.set_facecolor("#111111")
-ax_wave.tick_params(colors="white")
-ax_wave.grid(True, color="#222222")
-
-# Waveform Bounding Box (highlights the whole window when a mosquito is present)
-wave_box = patches.Rectangle(
-    (0, -MAX_INT_VAL),
-    CHUNK_SIZE,
-    MAX_INT_VAL * 2,
-    linewidth=2,
-    edgecolor="none",
-    facecolor="none",
-    alpha=0.15,
-)
-ax_wave.add_patch(wave_box)
-wave_label = ax_wave.text(
-    50,
-    MAX_INT_VAL * 0.75,
-    "",
-    color="white",
-    fontweight="bold",
-    bbox=dict(facecolor="black", alpha=0.8, edgecolor="none"),
-)
-
-# --- Spectrogram Setup ---
-im = ax_spec.imshow(
-    spec_matrix.T,
-    aspect="auto",
-    origin="lower",
-    extent=[0, SPEC_HISTORY, 0, FS / 2],
-    cmap="inferno",
-    vmin=-100,
-    vmax=0,
-)
-ax_spec.set_title(
-    "Historical Scrolling Spectrogram (With ML Object Bounding Boxes)", color="white"
-)
-ax_spec.set_ylabel("Frequency (Hz)", color="white")
-ax_spec.set_ylim(0, 2500)  # Focus visual window on mosquito wingbeat zones
-ax_spec.tick_params(colors="white")
+DEFAULT_PORT_CANDIDATES = [
+    "/dev/ttyUSB0",
+    "/dev/ttyUSB1",
+    "/dev/ttyACM0",
+    "/dev/ttyACM1",
+]
 
 
-# =============================================================================
-# DATA PROCESSING
-# =============================================================================
-def serial_reader_thread():
-    global raw_byte_pool
-    while True:
-        try:
-            data = ser.read(max(1, ser.in_waiting))
-            if data:
-                with pool_lock:
-                    raw_byte_pool.extend(data)
-        except Exception:
-            break
+def class_color(class_name: str) -> str:
+    if class_name == "Unknown":
+        return CLASS_COLORS["Unknown"]
+    return CLASS_COLORS.get(class_name[:2], "#ffffff")
 
 
-t = threading.Thread(target=serial_reader_thread, daemon=True)
-t.start()
+def cobs_decode(encoded: bytes) -> bytes:
+    """Decode one COBS frame without its 0x00 delimiter."""
+    if not encoded:
+        return b""
+
+    decoded = bytearray()
+    index = 0
+    encoded_len = len(encoded)
+
+    while index < encoded_len:
+        code = encoded[index]
+        if code == 0:
+            raise ValueError("COBS frame contains an unexpected zero byte")
+
+        index += 1
+        block_end = index + code - 1
+
+        if block_end > encoded_len:
+            raise ValueError("COBS code exceeds remaining frame length")
+
+        decoded.extend(encoded[index:block_end])
+        index = block_end
+
+        if code != 0xFF and index < encoded_len:
+            decoded.append(0)
+
+    return bytes(decoded)
 
 
-def decode_24bit_pcm(data_bytes):
-    a = np.frombuffer(data_bytes, dtype=np.uint8).reshape(-1, 3)
-    padded = np.zeros((a.shape[0], 4), dtype=np.uint8)
-    padded[:, :3] = a
-    samples = padded.view(np.int32).flatten()
-    return (samples << 8) >> 8
+@dataclass(frozen=True)
+class TelemetryPacket:
+    class_id: int
+    confidence: float
+    audio_i16: np.ndarray
+    received_at: float
 
 
-def update(frame):
-    global raw_byte_pool, spec_matrix, active_spec_boxes
+@dataclass
+class ReaderStats:
+    bytes_received: int = 0
+    valid_packets: int = 0
+    empty_frames: int = 0
+    cobs_errors: int = 0
+    length_errors: int = 0
+    value_errors: int = 0
+    queue_drops: int = 0
+    buffer_resets: int = 0
+    last_error: str = ""
 
-    with pool_lock:
-        idx = raw_byte_pool.find(MAGIC_HEADER)
-        if idx == -1:
-            if len(raw_byte_pool) > TOTAL_PACKET_SIZE * 4:
-                del raw_byte_pool[: -TOTAL_PACKET_SIZE * 2]
-            return line, im
 
-        if len(raw_byte_pool) >= idx + TOTAL_PACKET_SIZE:
-            packet = raw_byte_pool[idx : idx + TOTAL_PACKET_SIZE]
-            del raw_byte_pool[: idx + TOTAL_PACKET_SIZE]
-        else:
-            return line, im
+class TelemetryReader(threading.Thread):
+    """Read, frame, decode, and validate telemetry away from the UI thread."""
 
-    # 1. Unpack Telemetry Payload
-    class_id = packet[4]
-    confidence = struct.unpack("<f", packet[5:9])[0]
-    class_name = CLASS_NAMES[class_id] if class_id < len(CLASS_NAMES) else "Unknown"
-    color = get_color(class_name)
-
-    # 2. Shift Existing Spectrogram Bounding Boxes Left
-    for rect, text in list(active_spec_boxes):
-        new_x = rect.get_x() - 1
-        if new_x < -1:
-            rect.remove()
-            text.remove()
-            active_spec_boxes.remove((rect, text))
-        else:
-            rect.set_x(new_x)
-            text.set_x(new_x + 0.1)
-
-    # 3. Handle Active Waveform Highlights
-    if class_name != "No_Mos":
-        fig.suptitle(
-            f"DETECTED: {class_name} | Confidence: {confidence * 100:.1f}%",
-            color=color,
-            fontsize=18,
-            fontweight="bold",
+    def __init__(
+        self,
+        serial_port: serial.Serial,
+        sample_count: int,
+        output_queue: queue.Queue[TelemetryPacket],
+        stop_event: threading.Event,
+    ) -> None:
+        super().__init__(name="telemetry-reader", daemon=True)
+        self.serial_port = serial_port
+        self.sample_count = sample_count
+        self.output_queue = output_queue
+        self.stop_event = stop_event
+        self.stats = ReaderStats()
+        self.expected_payload_size = 1 + 4 + sample_count * 2
+        self.max_encoded_size = (
+            self.expected_payload_size + self.expected_payload_size // 254 + 2
         )
-        line.set_color(color)
-        wave_box.set_edgecolor(color)
-        wave_box.set_facecolor(color)
-        wave_label.set_text(f"{class_name} ({confidence * 100:.1f}%)")
-        wave_label.set_visible(True)
+        self.rx_buffer = bytearray()
 
-        # Draw a targeted bounding box around the mosquito signature on the rightmost slot of the spectrogram
-        # Box dimensions target the wingbeat band: Y-axis spans 150 Hz to 1100 Hz
-        box_y = 0
-        box_h = 4000
+    def _publish_latest(self, packet: TelemetryPacket) -> None:
+        try:
+            self.output_queue.put_nowait(packet)
+        except queue.Full:
+            try:
+                self.output_queue.get_nowait()
+            except queue.Empty:
+                pass
+            self.stats.queue_drops += 1
+            self.output_queue.put_nowait(packet)
+
+    def _decode_frame(self, frame: bytes) -> None:
+        try:
+            payload = cobs_decode(frame)
+        except ValueError:
+            self.stats.cobs_errors += 1
+            return
+
+        if len(payload) != self.expected_payload_size:
+            self.stats.length_errors += 1
+            return
+
+        class_id = payload[0]
+        confidence = struct.unpack_from("<f", payload, 1)[0]
+
+        if not np.isfinite(confidence):
+            self.stats.value_errors += 1
+            return
+
+        audio = np.frombuffer(
+            payload,
+            dtype="<i2",
+            count=self.sample_count,
+            offset=5,
+        ).copy()
+
+        packet = TelemetryPacket(
+            class_id=class_id,
+            confidence=float(np.clip(confidence, 0.0, 1.0)),
+            audio_i16=audio,
+            received_at=time.monotonic(),
+        )
+        self.stats.valid_packets += 1
+        self._publish_latest(packet)
+
+    def run(self) -> None:
+        try:
+            while not self.stop_event.is_set():
+                waiting = self.serial_port.in_waiting
+                chunk = self.serial_port.read(waiting if waiting > 0 else 1)
+
+                if not chunk:
+                    continue
+
+                self.stats.bytes_received += len(chunk)
+                self.rx_buffer.extend(chunk)
+
+                # Firmware uses 0x00 as both the leading and trailing delimiter.
+                while True:
+                    delimiter = self.rx_buffer.find(0)
+                    if delimiter < 0:
+                        break
+
+                    frame = bytes(self.rx_buffer[:delimiter])
+                    del self.rx_buffer[: delimiter + 1]
+
+                    if not frame:
+                        self.stats.empty_frames += 1
+                        continue
+
+                    self._decode_frame(frame)
+
+                # Recover if connection starts mid-frame or data becomes corrupted.
+                if len(self.rx_buffer) > self.max_encoded_size * 3:
+                    self.rx_buffer.clear()
+                    self.stats.buffer_resets += 1
+
+        except (serial.SerialException, OSError) as exc:
+            self.stats.last_error = str(exc)
+            self.stop_event.set()
+
+
+def choose_port(explicit_port: Optional[str]) -> str:
+    if explicit_port:
+        return explicit_port
+
+    available = list(list_ports.comports())
+    available_names = {port.device for port in available}
+
+    for candidate in DEFAULT_PORT_CANDIDATES:
+        if candidate in available_names:
+            return candidate
+
+    # Prefer USB serial devices when the operating system exposes metadata.
+    preferred_terms = ("USB", "UART", "CP210", "CH340", "JTAG", "ESP")
+    for port in available:
+        description = f"{port.description} {port.manufacturer or ''}".upper()
+        if any(term in description for term in preferred_terms):
+            return port.device
+
+    if available:
+        return available[0].device
+
+    raise RuntimeError("No serial ports were found")
+
+
+def open_serial(port: str, baud: int) -> serial.Serial:
+    connection = serial.Serial(
+        port=port,
+        baudrate=baud,
+        timeout=0.05,
+        write_timeout=0.2,
+    )
+    connection.reset_input_buffer()
+    return connection
+
+
+def compute_stft_db(
+    samples: np.ndarray,
+    n_fft: int,
+    hop_length: int,
+    floor_db: float,
+) -> np.ndarray:
+    """Return frequency x time STFT magnitude in dBFS."""
+    if len(samples) < n_fft:
+        padded = np.zeros(n_fft, dtype=np.float32)
+        padded[: len(samples)] = samples
+        samples = padded
+
+    frame_count = 1 + (len(samples) - n_fft) // hop_length
+    shape = (frame_count, n_fft)
+    strides = (samples.strides[0] * hop_length, samples.strides[0])
+    frames = np.lib.stride_tricks.as_strided(
+        samples,
+        shape=shape,
+        strides=strides,
+        writeable=False,
+    )
+
+    window = np.hanning(n_fft).astype(np.float32)
+    windowed = frames * window
+    spectrum = np.fft.rfft(windowed, n=n_fft, axis=1)
+
+    # Scaling gives an approximately full-scale referenced magnitude.
+    scale = max(float(window.sum()) / 2.0, 1.0)
+    magnitude = np.abs(spectrum) / scale
+    db = 20.0 * np.log10(np.maximum(magnitude, 10.0 ** (floor_db / 20.0)))
+    return np.maximum(db, floor_db).T.astype(np.float32)
+
+
+class Visualizer:
+    def __init__(
+        self,
+        packet_queue: queue.Queue[TelemetryPacket],
+        reader: TelemetryReader,
+        stop_event: threading.Event,
+        port: str,
+        baud: int,
+        sample_rate: int,
+        sample_count: int,
+        history_seconds: float,
+        detection_threshold: float,
+        max_frequency: float,
+    ) -> None:
+        self.packet_queue = packet_queue
+        self.reader = reader
+        self.stop_event = stop_event
+        self.port = port
+        self.baud = baud
+        self.fs = sample_rate
+        self.sample_count = sample_count
+        self.window_seconds = sample_count / sample_rate
+        self.history_seconds = history_seconds
+        self.detection_threshold = detection_threshold
+        self.max_frequency = min(max_frequency, sample_rate / 2)
+
+        self.n_fft = 512 if sample_count >= 512 else 256
+        self.hop_length = self.n_fft // 4
+        self.floor_db = -100.0
+        self.ceiling_db = -20.0
+
+        self.freqs = np.fft.rfftfreq(self.n_fft, d=1.0 / self.fs)
+        self.spec_columns = max(
+            50, int(round(self.history_seconds * self.fs / self.hop_length))
+        )
+        self.spec_matrix = np.full(
+            (len(self.freqs), self.spec_columns),
+            self.floor_db,
+            dtype=np.float32,
+        )
+
+        history_packets = max(
+            10, int(np.ceil(self.history_seconds / self.window_seconds))
+        )
+        self.class_history = collections.deque(maxlen=history_packets)
+        self.conf_history = collections.deque(maxlen=history_packets)
+        self.peak_history = collections.deque(maxlen=history_packets)
+        self.spec_annotations = []
+
+        self.last_packet_time: Optional[float] = None
+        self.last_stats_time = time.monotonic()
+        self.last_stats_bytes = 0
+        self.last_stats_packets = 0
+        self.bytes_per_second = 0.0
+        self.packets_per_second = 0.0
+
+        self._build_figure()
+
+    def _build_figure(self) -> None:
+        plt.style.use("dark_background")
+        self.fig = plt.figure(figsize=(14, 9))
+        grid = self.fig.add_gridspec(3, 1, height_ratios=[1.0, 1.8, 0.8])
+
+        self.ax_wave = self.fig.add_subplot(grid[0])
+        self.ax_spec = self.fig.add_subplot(grid[1])
+        self.ax_history = self.fig.add_subplot(grid[2])
+
+        self.fig.canvas.manager.set_window_title("ESP32 Mosquito Edge-ML Monitor")
+        self.fig.suptitle("Waiting for telemetry...", fontsize=16, fontweight="bold")
+
+        # Waveform
+        time_ms = np.arange(self.sample_count) * 1000.0 / self.fs
+        (self.wave_line,) = self.ax_wave.plot(
+            time_ms,
+            np.zeros(self.sample_count, dtype=np.float32),
+            linewidth=0.9,
+        )
+        self.ax_wave.set_xlim(0.0, self.window_seconds * 1000.0)
+        self.ax_wave.set_ylim(-1.05, 1.05)
+        self.ax_wave.set_title("Current inference window")
+        self.ax_wave.set_xlabel("Time (ms)")
+        self.ax_wave.set_ylabel("Amplitude")
+        self.ax_wave.grid(True, alpha=0.18)
+        self.wave_info = self.ax_wave.text(
+            0.012,
+            0.93,
+            "",
+            transform=self.ax_wave.transAxes,
+            va="top",
+            ha="left",
+            fontsize=10,
+            bbox={"facecolor": "black", "alpha": 0.65, "edgecolor": "none"},
+        )
+
+        # Spectrogram
+        self.spec_image = self.ax_spec.imshow(
+            self.spec_matrix,
+            origin="lower",
+            aspect="auto",
+            interpolation="nearest",
+            extent=[-self.history_seconds, 0.0, 0.0, self.fs / 2.0],
+            cmap="inferno",
+            vmin=self.floor_db,
+            vmax=self.ceiling_db,
+        )
+        self.ax_spec.set_ylim(0.0, self.max_frequency)
+        self.ax_spec.set_title("Scrolling STFT spectrogram")
+        self.ax_spec.set_xlabel("History (seconds)")
+        self.ax_spec.set_ylabel("Frequency (Hz)")
+        colorbar = self.fig.colorbar(
+            self.spec_image,
+            ax=self.ax_spec,
+            pad=0.01,
+            fraction=0.025,
+        )
+        colorbar.set_label("Magnitude (dBFS)")
+
+        # Classification history
+        (self.conf_line,) = self.ax_history.plot([], [], linewidth=1.0, alpha=0.55)
+        self.class_scatter = self.ax_history.scatter([], [], s=40)
+        self.ax_history.axhline(
+            self.detection_threshold,
+            linewidth=0.8,
+            linestyle="--",
+            alpha=0.7,
+        )
+        self.ax_history.set_xlim(-self.history_seconds, 0.0)
+        self.ax_history.set_ylim(0.0, 1.05)
+        self.ax_history.set_title("Top-class confidence history")
+        self.ax_history.set_xlabel("History (seconds)")
+        self.ax_history.set_ylabel("Confidence")
+        self.ax_history.grid(True, alpha=0.18)
+
+        self.status_text = self.fig.text(
+            0.01,
+            0.008,
+            "",
+            ha="left",
+            va="bottom",
+            fontsize=9,
+            family="monospace",
+        )
+
+        self.fig.tight_layout(rect=(0.0, 0.035, 1.0, 0.96))
+        self.fig.canvas.mpl_connect("close_event", self._on_close)
+
+    def _on_close(self, _event) -> None:
+        self.stop_event.set()
+
+    def _drain_latest_packet(self) -> Optional[TelemetryPacket]:
+        latest = None
+        while True:
+            try:
+                latest = self.packet_queue.get_nowait()
+            except queue.Empty:
+                return latest
+
+    def _peak_frequency(self, audio: np.ndarray) -> float:
+        window = np.hanning(len(audio))
+        spectrum = np.abs(np.fft.rfft(audio * window))
+        frequencies = np.fft.rfftfreq(len(audio), d=1.0 / self.fs)
+
+        band = (frequencies >= 150.0) & (frequencies <= min(1500.0, self.fs / 2))
+        if not np.any(band):
+            return 0.0
+
+        band_indices = np.flatnonzero(band)
+        peak_index = band_indices[int(np.argmax(spectrum[band]))]
+        return float(frequencies[peak_index])
+
+    def _append_spectrogram(self, audio: np.ndarray) -> None:
+        new_columns = compute_stft_db(
+            audio,
+            n_fft=self.n_fft,
+            hop_length=self.hop_length,
+            floor_db=self.floor_db,
+        )
+        column_count = min(new_columns.shape[1], self.spec_columns)
+
+        if column_count >= self.spec_columns:
+            self.spec_matrix[:, :] = new_columns[:, -self.spec_columns :]
+        else:
+            self.spec_matrix[:, :-column_count] = self.spec_matrix[:, column_count:]
+            self.spec_matrix[:, -column_count:] = new_columns[:, -column_count:]
+
+        self.spec_image.set_data(self.spec_matrix)
+
+    def _age_spec_annotations(self) -> None:
+        """Shift existing spectrogram boxes left as new windows arrive."""
+        kept = []
+        for rect, text in self.spec_annotations:
+            new_x = rect.get_x() - self.window_seconds
+            rect.set_x(new_x)
+
+            tx, ty = text.get_position()
+            text.set_position((tx - self.window_seconds, ty))
+
+            if new_x + rect.get_width() < -self.history_seconds:
+                rect.remove()
+                text.remove()
+            else:
+                kept.append((rect, text))
+
+        self.spec_annotations = kept
+
+    def _short_class_label(self, class_name: str) -> str:
+        if class_name == "Unknown":
+            return "Unknown"
+        if class_name == "No_Mos":
+            return "NoMos"
+
+        parts = class_name.split("_")
+        if len(parts) >= 3:
+            species = parts[1]
+            sex = parts[2][0]
+            return f"{species} {sex}"
+        return class_name
+
+    def _detection_band(
+        self, class_name: str, peak_frequency: float
+    ) -> tuple[float, float]:
+        """
+        Return a reasonable frequency band for the bounding box.
+        Uses dominant frequency when it is plausible, otherwise falls back.
+        """
+        fallback_low = 250.0
+        fallback_high = min(900.0, self.max_frequency)
+
+        if peak_frequency < 200.0 or peak_frequency > self.max_frequency:
+            return fallback_low, fallback_high
+
+        if "Male" in class_name:
+            half_band = 120.0
+        elif "Female" in class_name:
+            half_band = 180.0
+        else:
+            half_band = 150.0
+
+        low = max(150.0, peak_frequency - half_band)
+        high = min(self.max_frequency, peak_frequency + half_band)
+
+        if high - low < 120.0:
+            low = max(150.0, peak_frequency - 60.0)
+            high = min(self.max_frequency, peak_frequency + 60.0)
+
+        return low, high
+
+    def _add_spec_box(
+        self,
+        class_name: str,
+        confidence: float,
+        color: str,
+        peak_frequency: float,
+    ) -> None:
+        """Draw a box over the newest spectrogram segment."""
+        low_f, high_f = self._detection_band(class_name, peak_frequency)
+
+        x0 = -self.window_seconds
+        width = self.window_seconds
+        height = high_f - low_f
 
         rect = patches.Rectangle(
-            (SPEC_HISTORY - 1, box_y),
-            1,
-            box_h,
-            linewidth=1.5,
+            (x0, low_f),
+            width,
+            height,
+            linewidth=1.8,
             edgecolor=color,
             facecolor="none",
+            alpha=0.95,
         )
-        text = ax_spec.text(
-            SPEC_HISTORY - 0.9,
-            box_y + 50,
-            class_name.split("_")[1],
+        self.ax_spec.add_patch(rect)
+
+        label = f"{self._short_class_label(class_name)}  {confidence * 100:.0f}%"
+        text_y = min(high_f + 25.0, self.max_frequency - 20.0)
+        text = self.ax_spec.text(
+            x0 + 0.01,
+            text_y,
+            label,
             color=color,
             fontsize=8,
             fontweight="bold",
+            ha="left",
+            va="bottom",
+            bbox={"facecolor": "black", "alpha": 0.55, "edgecolor": "none", "pad": 1.5},
         )
 
-        ax_spec.add_patch(rect)
-        active_spec_boxes.append((rect, text))
-    else:
-        fig.suptitle(
-            "Environment: Monitoring Room Noise (No Mosquito)",
-            color="#555555",
-            fontsize=16,
-            fontweight="normal",
+        self.spec_annotations.append((rect, text))
+
+    def _update_history(self) -> None:
+        count = len(self.conf_history)
+        if count == 0:
+            return
+
+        x = np.arange(-count + 1, 1, dtype=np.float32) * self.window_seconds
+        confidence = np.asarray(self.conf_history, dtype=np.float32)
+        class_ids = list(self.class_history)
+
+        colors = []
+        for class_id in class_ids:
+            name = (
+                CLASS_NAMES[class_id] if 0 <= class_id < len(CLASS_NAMES) else "Unknown"
+            )
+            colors.append(class_color(name))
+
+        self.conf_line.set_data(x, confidence)
+        self.class_scatter.set_offsets(np.column_stack((x, confidence)))
+        self.class_scatter.set_facecolors(colors)
+        self.class_scatter.set_edgecolors(colors)
+
+    def _update_rate_stats(self) -> None:
+        now = time.monotonic()
+        elapsed = now - self.last_stats_time
+        if elapsed < 1.0:
+            return
+
+        stats = self.reader.stats
+        self.bytes_per_second = (stats.bytes_received - self.last_stats_bytes) / elapsed
+        self.packets_per_second = (
+            stats.valid_packets - self.last_stats_packets
+        ) / elapsed
+
+        self.last_stats_time = now
+        self.last_stats_bytes = stats.bytes_received
+        self.last_stats_packets = stats.valid_packets
+
+    def _render_packet(self, packet: TelemetryPacket) -> None:
+        class_name = (
+            CLASS_NAMES[packet.class_id]
+            if 0 <= packet.class_id < len(CLASS_NAMES)
+            else "Unknown"
         )
-        line.set_color("#555555")
-        wave_box.set_edgecolor("none")
-        wave_box.set_facecolor("none")
-        wave_label.set_visible(False)
+        color = class_color(class_name)
+        audio = packet.audio_i16.astype(np.float32) / 32768.0
 
-    # 4. Unpack and Plot Audio Waveform
-    audio_bytes = packet[9:]
-    new_samples = decode_24bit_pcm(audio_bytes).astype(np.float32)
-    audio_buffer.extend(new_samples)
-    y_data = np.array(audio_buffer)[-CHUNK_SIZE:]
-    line.set_ydata(y_data)
+        self._age_spec_annotations()
 
-    # 5. Compute Spectrogram Column
-    normalized_y = y_data / MAX_INT_VAL
-    windowed_data = normalized_y * np.hanning(len(normalized_y))
-    fft_complex = np.fft.rfft(windowed_data)
-    fft_mag = np.abs(fft_complex) / (CHUNK_SIZE / 2)
-    fft_db = 20 * np.log10(fft_mag + 1e-9)
+        rms = float(np.sqrt(np.mean(np.square(audio))))
+        peak = float(np.max(np.abs(audio)))
+        peak_frequency = self._peak_frequency(audio)
 
-    spec_matrix[:-1] = spec_matrix[1:]
-    spec_matrix[-1] = fft_db
-    im.set_array(spec_matrix.T)
+        is_detection = (
+            class_name not in ("No_Mos", "Unknown")
+            and packet.confidence >= self.detection_threshold
+        )
 
-    return line, im
+        self.wave_line.set_ydata(audio)
+        self.wave_line.set_color(color if is_detection else "#a0a0a0")
+
+        if is_detection:
+            title = (
+                f"DETECTED: {class_name}  |  "
+                f"confidence {packet.confidence * 100.0:.1f}%"
+            )
+            self.fig.suptitle(title, color=color, fontsize=16, fontweight="bold")
+            self.ax_wave.set_facecolor("#151515")
+        elif class_name == "No_Mos":
+            self.fig.suptitle(
+                f"No mosquito  |  confidence {packet.confidence * 100.0:.1f}%",
+                color="#a0a0a0",
+                fontsize=15,
+                fontweight="normal",
+            )
+            self.ax_wave.set_facecolor("#101010")
+        else:
+            self.fig.suptitle(
+                f"Uncertain: {class_name}  |  confidence {packet.confidence * 100.0:.1f}%",
+                color="#dddddd",
+                fontsize=15,
+                fontweight="normal",
+            )
+            self.ax_wave.set_facecolor("#101010")
+
+        self.wave_info.set_text(
+            f"class={packet.class_id}: {class_name}\n"
+            f"confidence={packet.confidence:.3f}   "
+            f"RMS={rms:.4f}   peak={peak:.4f}   "
+            f"dominant≈{peak_frequency:.1f} Hz"
+        )
+        self.wave_info.set_color(color if is_detection else "white")
+
+        self._append_spectrogram(audio)
+        if is_detection:
+            self._add_spec_box(
+                class_name=class_name,
+                confidence=packet.confidence,
+                color=color,
+                peak_frequency=peak_frequency,
+            )
+
+        self.class_history.append(packet.class_id)
+        self.conf_history.append(packet.confidence)
+        self.peak_history.append(peak_frequency)
+        self._update_history()
+
+        self.last_packet_time = packet.received_at
+
+    def update(self, _frame):
+        packet = self._drain_latest_packet()
+        if packet is not None:
+            self._render_packet(packet)
+
+        self._update_rate_stats()
+        stats = self.reader.stats
+
+        age_text = "never"
+        if self.last_packet_time is not None:
+            age_text = f"{time.monotonic() - self.last_packet_time:.2f}s"
+
+        status = (
+            f"{self.port} @ {self.baud:,} baud | "
+            f"{self.fs} Hz, {self.sample_count} samples/window "
+            f"({self.window_seconds * 1000.0:.0f} ms) | "
+            f"valid={stats.valid_packets}  "
+            f"rate={self.packets_per_second:.2f} pkt/s  "
+            f"serial={self.bytes_per_second / 1024.0:.1f} KiB/s | "
+            f"COBS_err={stats.cobs_errors}  "
+            f"len_err={stats.length_errors}  "
+            f"dropped={stats.queue_drops}  "
+            f"last={age_text}"
+        )
+        if stats.last_error:
+            status += f" | SERIAL ERROR: {stats.last_error}"
+
+        self.status_text.set_text(status)
+
+        return (
+            self.wave_line,
+            self.spec_image,
+            self.conf_line,
+            self.class_scatter,
+            self.wave_info,
+            self.status_text,
+        )
+
+    def run(self) -> None:
+        # UI refresh can be faster than packet arrival; the queue always keeps the newest packet.
+        self.animation = FuncAnimation(
+            self.fig,
+            self.update,
+            interval=50,
+            blit=False,
+            cache_frame_data=False,
+        )
+        plt.show()
 
 
-# Note: blit must be False so historical box updates render properly over the scrolling background image
-ani = animation.FuncAnimation(
-    fig, update, interval=30, blit=False, cache_frame_data=False
-)
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Visualize COBS-framed ESP32 audio and classification telemetry."
+    )
+    parser.add_argument("--port", help="Serial port, for example COM6 or /dev/ttyUSB0")
+    parser.add_argument("--baud", type=int, default=2_000_000)
+    parser.add_argument("--fs", type=int, default=8_000)
+    parser.add_argument("--samples", type=int, default=2_400)
+    parser.add_argument("--history", type=float, default=12.0)
+    parser.add_argument("--threshold", type=float, default=0.60)
+    parser.add_argument("--max-frequency", type=float, default=2_000.0)
+    return parser.parse_args()
 
-plt.tight_layout()
-plt.show()
 
-ser.close()
+def main() -> int:
+    args = parse_args()
+
+    if args.fs <= 0 or args.samples <= 0:
+        raise ValueError("--fs and --samples must be positive")
+    if not 0.0 <= args.threshold <= 1.0:
+        raise ValueError("--threshold must be between 0 and 1")
+
+    port = choose_port(args.port)
+    serial_port = open_serial(port, args.baud)
+    print(f"Connected to {port} at {args.baud:,} baud")
+
+    packet_queue: queue.Queue[TelemetryPacket] = queue.Queue(maxsize=3)
+    stop_event = threading.Event()
+    reader = TelemetryReader(
+        serial_port=serial_port,
+        sample_count=args.samples,
+        output_queue=packet_queue,
+        stop_event=stop_event,
+    )
+    reader.start()
+
+    visualizer = Visualizer(
+        packet_queue=packet_queue,
+        reader=reader,
+        stop_event=stop_event,
+        port=port,
+        baud=args.baud,
+        sample_rate=args.fs,
+        sample_count=args.samples,
+        history_seconds=args.history,
+        detection_threshold=args.threshold,
+        max_frequency=args.max_frequency,
+    )
+
+    try:
+        visualizer.run()
+    finally:
+        stop_event.set()
+        reader.join(timeout=1.0)
+        if serial_port.is_open:
+            serial_port.close()
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
