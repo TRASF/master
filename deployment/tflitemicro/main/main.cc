@@ -11,10 +11,12 @@
 #include "audio_provider.h"
 #include "classification.h"
 #include "config.h"
+#include "ota_update.h"
+#include "wifi_helper.h"
+#include "nvs_flash.h"
 
 static const char *TAG = "MAIN_APP";
 
-#define STREAM_TO_PYTHON 1
 
 // Tightly pack the ML results and 16-bit audio into a single payload struct
 #pragma pack(push, 1)
@@ -118,8 +120,48 @@ extern "C" void app_main(void) {
     uart_driver_install(UART_NUM_0, 4096, 8192, 0, NULL, 0);
     uart_param_config(UART_NUM_0, &uart_config);
 
-    ESP_ERROR_CHECK(InitAudio());
-    ESP_ERROR_CHECK(InitClassifier());
+    // Initialize NVS
+    esp_err_t nvs_err = nvs_flash_init();
+    if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        nvs_err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(nvs_err);
+
+    esp_err_t init_err = InitAudio();
+    if (init_err != ESP_OK) {
+        ESP_LOGE(TAG, "InitAudio failed during startup self-test: %s", esp_err_to_name(init_err));
+        OtaMarkAppInvalidAndRollbackIfPending();
+        ESP_ERROR_CHECK(init_err);
+    }
+
+    init_err = InitClassifier();
+    if (init_err != ESP_OK) {
+        ESP_LOGE(TAG, "InitClassifier failed during startup self-test: %s", esp_err_to_name(init_err));
+        OtaMarkAppInvalidAndRollbackIfPending();
+        ESP_ERROR_CHECK(init_err);
+    }
+
+    if (OtaRollbackIsPendingVerify()) {
+        init_err = RunClassifierBootSelfTest();
+        if (init_err != ESP_OK) {
+            ESP_LOGE(TAG, "Classifier boot self-test failed: %s", esp_err_to_name(init_err));
+            OtaMarkAppInvalidAndRollbackIfPending();
+            ESP_ERROR_CHECK(init_err);
+        }
+    }
+
+    ESP_ERROR_CHECK(OtaMarkAppValidAfterSuccessfulBoot());
+
+#if !STREAM_TO_PYTHON
+    // Connect to Wi-Fi and start OTA checking in background
+    if (connect_wifi(WIFI_SSID, WIFI_PASSWORD) == ESP_OK) {
+        ESP_LOGI(TAG, "Wi-Fi connected. Starting background OTA checking task.");
+        StartOtaBackgroundChecking();
+    } else {
+        ESP_LOGW(TAG, "Wi-Fi connection failed. Running offline without OTA updates.");
+    }
+#endif
 
     xTaskCreatePinnedToCore(main_loop_task, "main_loop_task", 8192, NULL, 5, NULL, 1);
 }

@@ -23,6 +23,11 @@ const char* ClassName(int class_index);
 
 esp_err_t InitClassifier();
 
+// Bounded deterministic self-test for OTA first-boot validation. It does not
+// read live audio; it validates tensor dimensions, invokes the interpreter with
+// a fixed zero input, and checks that all output values are finite.
+esp_err_t RunClassifierBootSelfTest();
+
 esp_err_t RunClassifier(
     const float* audio_window,
     size_t sample_count,

@@ -11,8 +11,11 @@ class MosSongPlusModel:
                 "Invalid model configuration. Ensure 'mossongplus' exists under 'model' in your YAML."
             )
 
-    def build(self, input_shape, output_units, output_activation="softmax"):
-        inputs = keras.layers.Input(shape=input_shape)
+    def build(self, input_shape, output_units, output_activation="softmax", batch_size=None):
+        if batch_size is not None:
+            inputs = keras.layers.Input(batch_shape=(batch_size,) + input_shape)
+        else:
+            inputs = keras.layers.Input(shape=input_shape)
         x = inputs
 
         # Support for sequential layer list

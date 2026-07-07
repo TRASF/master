@@ -3,6 +3,8 @@ idf_component_register(
         "main.cc"
         "audio_provider.cc"
         "classification.cc"
+        "ota_update.cc"
+        "wifi_helper.cc"
     INCLUDE_DIRS
         "."
     PRIV_REQUIRES
@@ -11,7 +13,14 @@ idf_component_register(
         esp_driver_gpio
         esp-tflite-micro
         esp_driver_uart
+        esp_https_ota
+        esp_http_client
+        app_update
+        nvs_flash
+        esp_wifi
+        esp_event
+        esp_netif
+        json
 )
 
-# Enable ESP-NN optimizations when TFLite Micro inference is added.
-target_compile_options(${COMPONENT_LIB} PRIVATE -DESP_NN)
+# target_compile_options(${COMPONENT_LIB} PRIVATE -DESP_NN)

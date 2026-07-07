@@ -17,6 +17,8 @@ Example:
     python esp32_mosquito_visualizer.py
     python esp32_mosquito_visualizer.py --port COM6
     python esp32_mosquito_visualizer.py --port /dev/ttyUSB0
+    python esp32_mosquito_visualizer.py --n-fft 1024 --hop-length 128
+    python esp32_mosquito_visualizer.py --packet-hop-samples 512 --refresh-ms 20
 """
 
 from __future__ import annotations
@@ -255,7 +257,7 @@ def open_serial(port: str, baud: int) -> serial.Serial:
     connection = serial.Serial(
         port=port,
         baudrate=baud,
-        timeout=0.05,
+        timeout=0.01,
         write_timeout=0.2,
     )
     connection.reset_input_buffer()
@@ -268,11 +270,26 @@ def compute_stft_db(
     hop_length: int,
     floor_db: float,
 ) -> np.ndarray:
-    """Return frequency x time STFT magnitude in dBFS."""
+    """
+    Return frequency x time STFT magnitude in dBFS.
+
+    The signal is centered with half-window padding so the number of output
+    columns tracks elapsed audio time more closely. Per-frame mean removal
+    suppresses DC/very-low-frequency smear.
+    """
+    samples = np.asarray(samples, dtype=np.float32)
+
+    if samples.size == 0:
+        return np.full((n_fft // 2 + 1, 1), floor_db, dtype=np.float32)
+
+    pad = n_fft // 2
+    if samples.size > 1:
+        samples = np.pad(samples, (pad, pad), mode="reflect")
+    else:
+        samples = np.pad(samples, (pad, pad), mode="constant")
+
     if len(samples) < n_fft:
-        padded = np.zeros(n_fft, dtype=np.float32)
-        padded[: len(samples)] = samples
-        samples = padded
+        samples = np.pad(samples, (0, n_fft - len(samples)))
 
     frame_count = 1 + (len(samples) - n_fft) // hop_length
     shape = (frame_count, n_fft)
@@ -285,8 +302,8 @@ def compute_stft_db(
     )
 
     window = np.hanning(n_fft).astype(np.float32)
-    windowed = frames * window
-    spectrum = np.fft.rfft(windowed, n=n_fft, axis=1)
+    detrended = frames - np.mean(frames, axis=1, keepdims=True)
+    spectrum = np.fft.rfft(detrended * window, n=n_fft, axis=1)
 
     # Scaling gives an approximately full-scale referenced magnitude.
     scale = max(float(window.sum()) / 2.0, 1.0)
@@ -307,7 +324,15 @@ class Visualizer:
         sample_count: int,
         history_seconds: float,
         detection_threshold: float,
+        min_frequency: float,
         max_frequency: float,
+        packet_hop_samples: int,
+        live_wave_seconds: float,
+        n_fft: int,
+        hop_length: int,
+        floor_db: float,
+        ceiling_db: float,
+        refresh_ms: int,
     ) -> None:
         self.packet_queue = packet_queue
         self.reader = reader
@@ -319,12 +344,17 @@ class Visualizer:
         self.window_seconds = sample_count / sample_rate
         self.history_seconds = history_seconds
         self.detection_threshold = detection_threshold
+        self.min_frequency = max(0.0, min_frequency)
         self.max_frequency = min(max_frequency, sample_rate / 2)
+        self.packet_hop_samples = min(packet_hop_samples, sample_count)
+        self.packet_advance_seconds = self.packet_hop_samples / sample_rate
+        self.live_wave_seconds = live_wave_seconds
 
-        self.n_fft = 512 if sample_count >= 512 else 256
-        self.hop_length = self.n_fft // 4
-        self.floor_db = -100.0
-        self.ceiling_db = -20.0
+        self.n_fft = n_fft
+        self.hop_length = hop_length
+        self.floor_db = floor_db
+        self.ceiling_db = ceiling_db
+        self.refresh_ms = refresh_ms
 
         self.freqs = np.fft.rfftfreq(self.n_fft, d=1.0 / self.fs)
         self.spec_columns = max(
@@ -335,13 +365,13 @@ class Visualizer:
             self.floor_db,
             dtype=np.float32,
         )
-
-        history_packets = max(
-            10, int(np.ceil(self.history_seconds / self.window_seconds))
+        self.spec_column_remainder = 0.0
+        self.live_wave_sample_count = max(
+            self.sample_count,
+            int(round(self.live_wave_seconds * self.fs)),
         )
-        self.class_history = collections.deque(maxlen=history_packets)
-        self.conf_history = collections.deque(maxlen=history_packets)
-        self.peak_history = collections.deque(maxlen=history_packets)
+        self.live_wave_buffer = np.zeros(self.live_wave_sample_count, dtype=np.float32)
+
         self.spec_annotations = []
 
         self.last_packet_time: Optional[float] = None
@@ -355,27 +385,30 @@ class Visualizer:
 
     def _build_figure(self) -> None:
         plt.style.use("dark_background")
-        self.fig = plt.figure(figsize=(14, 9))
-        grid = self.fig.add_gridspec(3, 1, height_ratios=[1.0, 1.8, 0.8])
+        self.fig = plt.figure(figsize=(15, 8.5))
+        grid = self.fig.add_gridspec(2, 1, height_ratios=[1.0, 2.1])
 
         self.ax_wave = self.fig.add_subplot(grid[0])
         self.ax_spec = self.fig.add_subplot(grid[1])
-        self.ax_history = self.fig.add_subplot(grid[2])
 
         self.fig.canvas.manager.set_window_title("ESP32 Mosquito Edge-ML Monitor")
         self.fig.suptitle("Waiting for telemetry...", fontsize=16, fontweight="bold")
 
         # Waveform
-        time_ms = np.arange(self.sample_count) * 1000.0 / self.fs
+        wave_time = (
+            np.arange(self.live_wave_sample_count, dtype=np.float32)
+            - self.live_wave_sample_count
+            + 1
+        ) / self.fs
         (self.wave_line,) = self.ax_wave.plot(
-            time_ms,
-            np.zeros(self.sample_count, dtype=np.float32),
+            wave_time,
+            self.live_wave_buffer,
             linewidth=0.9,
         )
-        self.ax_wave.set_xlim(0.0, self.window_seconds * 1000.0)
+        self.ax_wave.set_xlim(wave_time[0], 0.0)
         self.ax_wave.set_ylim(-1.05, 1.05)
-        self.ax_wave.set_title("Current inference window")
-        self.ax_wave.set_xlabel("Time (ms)")
+        self.ax_wave.set_title("Live rolling waveform")
+        self.ax_wave.set_xlabel("Time (s)")
         self.ax_wave.set_ylabel("Amplitude")
         self.ax_wave.grid(True, alpha=0.18)
         self.wave_info = self.ax_wave.text(
@@ -400,7 +433,7 @@ class Visualizer:
             vmin=self.floor_db,
             vmax=self.ceiling_db,
         )
-        self.ax_spec.set_ylim(0.0, self.max_frequency)
+        self.ax_spec.set_ylim(self.min_frequency, self.max_frequency)
         self.ax_spec.set_title("Scrolling STFT spectrogram")
         self.ax_spec.set_xlabel("History (seconds)")
         self.ax_spec.set_ylabel("Frequency (Hz)")
@@ -411,22 +444,6 @@ class Visualizer:
             fraction=0.025,
         )
         colorbar.set_label("Magnitude (dBFS)")
-
-        # Classification history
-        (self.conf_line,) = self.ax_history.plot([], [], linewidth=1.0, alpha=0.55)
-        self.class_scatter = self.ax_history.scatter([], [], s=40)
-        self.ax_history.axhline(
-            self.detection_threshold,
-            linewidth=0.8,
-            linestyle="--",
-            alpha=0.7,
-        )
-        self.ax_history.set_xlim(-self.history_seconds, 0.0)
-        self.ax_history.set_ylim(0.0, 1.05)
-        self.ax_history.set_title("Top-class confidence history")
-        self.ax_history.set_xlabel("History (seconds)")
-        self.ax_history.set_ylabel("Confidence")
-        self.ax_history.grid(True, alpha=0.18)
 
         self.status_text = self.fig.text(
             0.01,
@@ -444,13 +461,13 @@ class Visualizer:
     def _on_close(self, _event) -> None:
         self.stop_event.set()
 
-    def _drain_latest_packet(self) -> Optional[TelemetryPacket]:
-        latest = None
+    def _drain_packets(self) -> list[TelemetryPacket]:
+        packets = []
         while True:
             try:
-                latest = self.packet_queue.get_nowait()
+                packets.append(self.packet_queue.get_nowait())
             except queue.Empty:
-                return latest
+                return packets
 
     def _peak_frequency(self, audio: np.ndarray) -> float:
         window = np.hanning(len(audio))
@@ -472,25 +489,52 @@ class Visualizer:
             hop_length=self.hop_length,
             floor_db=self.floor_db,
         )
-        column_count = min(new_columns.shape[1], self.spec_columns)
+
+        # When firmware sends overlapping inference windows, append only the
+        # newest stride instead of duplicating the whole window in history.
+        exact_columns = (
+            self.packet_hop_samples / self.hop_length + self.spec_column_remainder
+        )
+        expected_columns = int(np.floor(exact_columns))
+        self.spec_column_remainder = exact_columns - expected_columns
+
+        if expected_columns <= 0:
+            return
+
+        column_count = min(
+            expected_columns,
+            new_columns.shape[1],
+            self.spec_columns,
+        )
+        newest = new_columns[:, -column_count:]
 
         if column_count >= self.spec_columns:
-            self.spec_matrix[:, :] = new_columns[:, -self.spec_columns :]
+            self.spec_matrix[:, :] = newest[:, -self.spec_columns :]
         else:
             self.spec_matrix[:, :-column_count] = self.spec_matrix[:, column_count:]
-            self.spec_matrix[:, -column_count:] = new_columns[:, -column_count:]
+            self.spec_matrix[:, -column_count:] = newest
 
         self.spec_image.set_data(self.spec_matrix)
+
+    def _append_live_waveform(self, audio: np.ndarray) -> None:
+        newest = audio[-self.packet_hop_samples :]
+        count = min(len(newest), self.live_wave_sample_count)
+        if count <= 0:
+            return
+
+        self.live_wave_buffer[:-count] = self.live_wave_buffer[count:]
+        self.live_wave_buffer[-count:] = newest[-count:]
+        self.wave_line.set_ydata(self.live_wave_buffer)
 
     def _age_spec_annotations(self) -> None:
         """Shift existing spectrogram boxes left as new windows arrive."""
         kept = []
         for rect, text in self.spec_annotations:
-            new_x = rect.get_x() - self.window_seconds
+            new_x = rect.get_x() - self.packet_advance_seconds
             rect.set_x(new_x)
 
             tx, ty = text.get_position()
-            text.set_position((tx - self.window_seconds, ty))
+            text.set_position((tx - self.packet_advance_seconds, ty))
 
             if new_x + rect.get_width() < -self.history_seconds:
                 rect.remove()
@@ -520,8 +564,15 @@ class Visualizer:
         Return a reasonable frequency band for the bounding box.
         Uses dominant frequency when it is plausible, otherwise falls back.
         """
-        fallback_low = 250.0
-        fallback_high = min(900.0, self.max_frequency)
+        visible_span = self.max_frequency - self.min_frequency
+        fallback_low = max(
+            self.min_frequency,
+            min(250.0, self.max_frequency - 0.6 * visible_span),
+        )
+        fallback_high = min(
+            self.max_frequency,
+            max(900.0, fallback_low + 0.25 * visible_span),
+        )
 
         if peak_frequency < 200.0 or peak_frequency > self.max_frequency:
             return fallback_low, fallback_high
@@ -533,11 +584,11 @@ class Visualizer:
         else:
             half_band = 150.0
 
-        low = max(150.0, peak_frequency - half_band)
+        low = max(self.min_frequency, 150.0, peak_frequency - half_band)
         high = min(self.max_frequency, peak_frequency + half_band)
 
         if high - low < 120.0:
-            low = max(150.0, peak_frequency - 60.0)
+            low = max(self.min_frequency, 150.0, peak_frequency - 60.0)
             high = min(self.max_frequency, peak_frequency + 60.0)
 
         return low, high
@@ -552,8 +603,8 @@ class Visualizer:
         """Draw a box over the newest spectrogram segment."""
         low_f, high_f = self._detection_band(class_name, peak_frequency)
 
-        x0 = -self.window_seconds
-        width = self.window_seconds
+        x0 = -self.packet_advance_seconds
+        width = self.packet_advance_seconds
         height = high_f - low_f
 
         rect = patches.Rectangle(
@@ -582,27 +633,6 @@ class Visualizer:
         )
 
         self.spec_annotations.append((rect, text))
-
-    def _update_history(self) -> None:
-        count = len(self.conf_history)
-        if count == 0:
-            return
-
-        x = np.arange(-count + 1, 1, dtype=np.float32) * self.window_seconds
-        confidence = np.asarray(self.conf_history, dtype=np.float32)
-        class_ids = list(self.class_history)
-
-        colors = []
-        for class_id in class_ids:
-            name = (
-                CLASS_NAMES[class_id] if 0 <= class_id < len(CLASS_NAMES) else "Unknown"
-            )
-            colors.append(class_color(name))
-
-        self.conf_line.set_data(x, confidence)
-        self.class_scatter.set_offsets(np.column_stack((x, confidence)))
-        self.class_scatter.set_facecolors(colors)
-        self.class_scatter.set_edgecolors(colors)
 
     def _update_rate_stats(self) -> None:
         now = time.monotonic()
@@ -640,7 +670,7 @@ class Visualizer:
             and packet.confidence >= self.detection_threshold
         )
 
-        self.wave_line.set_ydata(audio)
+        self._append_live_waveform(audio)
         self.wave_line.set_color(color if is_detection else "#a0a0a0")
 
         if is_detection:
@@ -684,16 +714,10 @@ class Visualizer:
                 peak_frequency=peak_frequency,
             )
 
-        self.class_history.append(packet.class_id)
-        self.conf_history.append(packet.confidence)
-        self.peak_history.append(peak_frequency)
-        self._update_history()
-
         self.last_packet_time = packet.received_at
 
     def update(self, _frame):
-        packet = self._drain_latest_packet()
-        if packet is not None:
+        for packet in self._drain_packets():
             self._render_packet(packet)
 
         self._update_rate_stats()
@@ -706,7 +730,9 @@ class Visualizer:
         status = (
             f"{self.port} @ {self.baud:,} baud | "
             f"{self.fs} Hz, {self.sample_count} samples/window "
-            f"({self.window_seconds * 1000.0:.0f} ms) | "
+            f"({self.window_seconds * 1000.0:.0f} ms), "
+            f"step={self.packet_hop_samples} "
+            f"({self.packet_advance_seconds * 1000.0:.0f} ms) | "
             f"valid={stats.valid_packets}  "
             f"rate={self.packets_per_second:.2f} pkt/s  "
             f"serial={self.bytes_per_second / 1024.0:.1f} KiB/s | "
@@ -723,18 +749,16 @@ class Visualizer:
         return (
             self.wave_line,
             self.spec_image,
-            self.conf_line,
-            self.class_scatter,
             self.wave_info,
             self.status_text,
         )
 
     def run(self) -> None:
-        # UI refresh can be faster than packet arrival; the queue always keeps the newest packet.
+        # UI refresh can be faster than packet arrival; each tick drains queued packets.
         self.animation = FuncAnimation(
             self.fig,
             self.update,
-            interval=50,
+            interval=self.refresh_ms,
             blit=False,
             cache_frame_data=False,
         )
@@ -751,7 +775,39 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--samples", type=int, default=2_400)
     parser.add_argument("--history", type=float, default=12.0)
     parser.add_argument("--threshold", type=float, default=0.60)
-    parser.add_argument("--max-frequency", type=float, default=2_000.0)
+    parser.add_argument("--min-frequency", type=float, default=0.0)
+    parser.add_argument("--max-frequency", type=float, default=4_000.0)
+    parser.add_argument(
+        "--packet-hop-samples",
+        type=int,
+        default=None,
+        help=(
+            "Number of new audio samples between packets. Use a smaller value "
+            "when firmware sends overlapping inference windows. Defaults to "
+            "half the window for the current firmware's 50% overlap."
+        ),
+    )
+    parser.add_argument(
+        "--live-wave-seconds",
+        type=float,
+        default=2.0,
+        help="Seconds of rolling waveform to show in the live view.",
+    )
+    parser.add_argument(
+        "--n-fft",
+        type=int,
+        default=1024,
+        help="FFT size. Larger values improve frequency resolution.",
+    )
+    parser.add_argument(
+        "--hop-length",
+        type=int,
+        default=128,
+        help="STFT hop in samples. Smaller values produce denser time columns.",
+    )
+    parser.add_argument("--floor-db", type=float, default=-100.0)
+    parser.add_argument("--ceiling-db", type=float, default=-20.0)
+    parser.add_argument("--refresh-ms", type=int, default=20)
     return parser.parse_args()
 
 
@@ -762,12 +818,30 @@ def main() -> int:
         raise ValueError("--fs and --samples must be positive")
     if not 0.0 <= args.threshold <= 1.0:
         raise ValueError("--threshold must be between 0 and 1")
+    if args.n_fft <= 0 or args.n_fft & (args.n_fft - 1):
+        raise ValueError("--n-fft must be a positive power of two")
+    if not 0 < args.hop_length <= args.n_fft:
+        raise ValueError("--hop-length must be between 1 and --n-fft")
+    if args.floor_db >= args.ceiling_db:
+        raise ValueError("--floor-db must be below --ceiling-db")
+    if args.refresh_ms <= 0:
+        raise ValueError("--refresh-ms must be positive")
+    if args.live_wave_seconds <= 0:
+        raise ValueError("--live-wave-seconds must be positive")
+    if not 0.0 <= args.min_frequency < args.max_frequency <= args.fs / 2:
+        raise ValueError("frequency limits must satisfy 0 <= min < max <= Nyquist")
+
+    packet_hop_samples = (
+        args.samples // 2 if args.packet_hop_samples is None else args.packet_hop_samples
+    )
+    if not 0 < packet_hop_samples <= args.samples:
+        raise ValueError("--packet-hop-samples must be between 1 and --samples")
 
     port = choose_port(args.port)
     serial_port = open_serial(port, args.baud)
     print(f"Connected to {port} at {args.baud:,} baud")
 
-    packet_queue: queue.Queue[TelemetryPacket] = queue.Queue(maxsize=3)
+    packet_queue: queue.Queue[TelemetryPacket] = queue.Queue(maxsize=32)
     stop_event = threading.Event()
     reader = TelemetryReader(
         serial_port=serial_port,
@@ -787,7 +861,15 @@ def main() -> int:
         sample_count=args.samples,
         history_seconds=args.history,
         detection_threshold=args.threshold,
+        min_frequency=args.min_frequency,
         max_frequency=args.max_frequency,
+        packet_hop_samples=packet_hop_samples,
+        live_wave_seconds=args.live_wave_seconds,
+        n_fft=args.n_fft,
+        hop_length=args.hop_length,
+        floor_db=args.floor_db,
+        ceiling_db=args.ceiling_db,
+        refresh_ms=args.refresh_ms,
     )
 
     try:
