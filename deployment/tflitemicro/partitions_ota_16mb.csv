@@ -1,0 +1,16 @@
+# ESP32-S3 16 MB OTA layout with A/B firmware and A/B model slots.
+# Name,      Type, SubType, Offset,   Size,      Flags
+nvs,         data, nvs,     0x9000,   0x6000,
+otadata,     data, ota,     0xF000,   0x2000,
+phy_init,    data, phy,     0x11000,  0x1000,
+
+ota_0,       app,  ota_0,   0x20000,  0x300000,
+ota_1,       app,  ota_1,   0x320000, 0x300000,
+
+# Application-defined partition type 0x40. The bootloader ignores these;
+# the application will manage model A/B selection and validation.
+model_0,     0x40, 0x00,    0x620000, 0x200000,
+model_1,     0x40, 0x01,    0x820000, 0x200000,
+
+storage,     data, littlefs, 0xA20000, 0x5D0000,
+coredump,    data, coredump, 0xFF0000, 0x10000,
