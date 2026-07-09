@@ -36,8 +36,8 @@
 // RMS preprocessing: must match augment.rms_norm in configs/defaults.yaml when
 // PREPROCESS_RMS_NORMALIZE is enabled.
 #define TARGET_RMS              0.05f
-#define RMS_MIN_GAIN            0.05f
-#define RMS_MAX_GAIN            15.0f
+#define RMS_MIN_GAIN            0.1f
+#define RMS_MAX_GAIN            10.0f
 
 // Training does not gate quiet samples before model-space normalization, so keep
 // this disabled by default. Gate uses DC-removed normalized waveform RMS.
