@@ -19,16 +19,30 @@
 #define AUDIO_OVERLAP_PERCENT   50
 #define AUDIO_HOP_SAMPLE_COUNT  (AUDIO_SAMPLE_COUNT * (100 - AUDIO_OVERLAP_PERCENT) / 100)
 
-// Must match augment.rms_norm in configs/defaults.yaml.
+// Select exactly one model-space preprocessing strategy.
+// PREPROCESS_RMS_NORMALIZE matches models trained with per-window RMS normalization.
+// PREPROCESS_FIXED_RANGE matches models trained with fixed post-DC scaling/clipping.
+#define PREPROCESS_FIXED_RANGE   0
+#define PREPROCESS_RMS_NORMALIZE 1
+
+#if PREPROCESS_FIXED_RANGE && PREPROCESS_RMS_NORMALIZE
+#error "Choose either fixed-range scaling or RMS normalization, not both"
+#endif
+
+// Fixed-range preprocessing: after DC removal, divide normalized waveform by this
+// half-range and clip to [-1, 1]. Must match Python training/calibration.
+#define MODEL_INPUT_AMPLITUDE_RANGE 0.03f
+
+// RMS preprocessing: must match augment.rms_norm in configs/defaults.yaml when
+// PREPROCESS_RMS_NORMALIZE is enabled.
 #define TARGET_RMS              0.05f
 #define RMS_MIN_GAIN            0.05f
 #define RMS_MAX_GAIN            15.0f
 
-// Training does not gate quiet samples before RMS normalization, so keep this
-// disabled by default. Set to 1 only as a deployment-specific safety choice.
+// Training does not gate quiet samples before model-space normalization, so keep
+// this disabled by default. Gate uses DC-removed normalized waveform RMS.
 #define ENABLE_RAW_RMS_GATE     0
 #define MIN_RAW_RMS_GATE        0.0005f
-
 // ===== INMP441 I2S pins =====
 // Change these to your actual wiring.
 #define I2S_BCLK_GPIO           GPIO_NUM_4   // SCK / BCLK

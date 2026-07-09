@@ -392,10 +392,16 @@ esp_err_t InitClassifier() {
     s_output = s_interpreter->output(0);
 
     ESP_LOGI(TAG, "Real TFLite model loaded successfully.");
-    ESP_LOGI(TAG, "Input tensor: type=%d, scale=%.6f, zero_point=%d, size=%d bytes",
-             s_input->type, s_input->params.scale, s_input->params.zero_point, s_input->bytes);
-    ESP_LOGI(TAG, "Output tensor: type=%d, scale=%.6f, zero_point=%d, size=%d bytes",
-             s_output->type, s_output->params.scale, s_output->params.zero_point, s_output->bytes);
+    ESP_LOGI(TAG, "Input tensor: type=%d, scale=%.10f, zero_point=%ld, size=%u bytes",
+             s_input->type,
+             (double)s_input->params.scale,
+             (long)s_input->params.zero_point,
+             (unsigned)s_input->bytes);
+    ESP_LOGI(TAG, "Output tensor: type=%d, scale=%.10f, zero_point=%ld, size=%u bytes",
+             s_output->type,
+             (double)s_output->params.scale,
+             (long)s_output->params.zero_point,
+             (unsigned)s_output->bytes);
 
     if (loading_pending) {
         esp_err_t test_err = RunClassifierBootSelfTest();

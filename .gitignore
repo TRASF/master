@@ -31,3 +31,7 @@ sweep*
 quantization_output
 # CocoIndex Code (ccc)
 /.cocoindex_code/
+
+
+build
+managed_components

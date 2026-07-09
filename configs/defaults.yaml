@@ -166,3 +166,8 @@ class_weights:
 
 preprocess:
     dc_removal: true
+
+quantization:
+    input_amplitude_range: 0.03
+    input_dtype: int8
+    representative_samples: 500

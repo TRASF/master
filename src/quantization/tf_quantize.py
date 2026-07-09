@@ -33,7 +33,7 @@ def save_tflite_model(model_bytes: bytes, path: str | Path) -> Path:
 
 def make_representative_dataset(
     val_ds: tf.data.Dataset,
-    max_samples: int = 300,
+    max_samples: int = 500,
     seed: int = 42,
 ) -> Callable:
     """
@@ -60,10 +60,19 @@ def make_representative_dataset(
         for x, _ in rep_ds:
             x = tf.cast(x, tf.float32)
 
-            # Defensive shape check.
-            # Your raw-audio model should receive [1, 2400, 1].
+            # Defensive shape/range checks. The dataset must already be in
+            # model space: DC removed, scaled by the configured amplitude range,
+            # and clipped to [-1, 1].
             if x.shape.rank != 3:
                 raise ValueError(f"Expected rank-3 input [1, 2400, 1], got {x.shape}")
+
+            min_value = float(tf.reduce_min(x))
+            max_value = float(tf.reduce_max(x))
+            if min_value < -1.0001 or max_value > 1.0001:
+                raise ValueError(
+                    "Representative sample is outside model range: "
+                    f"[{min_value}, {max_value}]"
+                )
 
             yield [x]
 
@@ -215,6 +224,46 @@ def _quantize_input(x: np.ndarray, input_detail: Dict) -> np.ndarray:
     return q
 
 
+
+
+def dequantize_input(q: np.ndarray, input_detail: Dict) -> np.ndarray:
+    scale, zero_point = input_detail["quantization"]
+    if scale == 0:
+        raise ValueError("Input quantization scale is 0. Invalid quantized model.")
+    return (q.astype(np.float32) - zero_point) * scale
+
+
+def predict_keras_with_input_qdq(
+    keras_model: tf.keras.Model,
+    ds: tf.data.Dataset,
+    int8_tflite_path: str | Path,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    interpreter = tf.lite.Interpreter(model_path=str(int8_tflite_path))
+    interpreter.allocate_tensors()
+    input_detail = interpreter.get_input_details()[0]
+
+    y_true_all = []
+    y_pred_all = []
+    score_all = []
+
+    for x_batch, y_batch in ds:
+        x = x_batch.numpy().astype(np.float32)
+        q = _quantize_input(x, input_detail)
+        x_qdq = dequantize_input(q, input_detail)
+
+        scores = keras_model(x_qdq, training=False).numpy()
+
+        y_true_all.append(_label_to_int(y_batch.numpy()))
+        y_pred_all.append(np.argmax(scores, axis=-1).astype(np.int64))
+        score_all.append(scores)
+
+    return (
+        np.concatenate(y_true_all),
+        np.concatenate(y_pred_all),
+        np.concatenate(score_all),
+    )
+
+
 def _dequantize_output(y: np.ndarray, output_detail: Dict) -> np.ndarray:
     dtype = output_detail["dtype"]
 
@@ -339,6 +388,19 @@ def evaluate_keras_model(
     result = evaluate_predictions(y_true, y_pred, class_names, out_prefix)
     result["scores"] = scores
     return result
+
+
+def evaluate_keras_input_qdq_model(
+    keras_model: tf.keras.Model,
+    int8_tflite_path: str | Path,
+    test_ds: tf.data.Dataset,
+    class_names: Optional[Sequence[str]] = None,
+    out_prefix: Optional[str | Path] = None,
+) -> Dict:
+    y_true, y_pred, scores = predict_keras_with_input_qdq(
+        keras_model, test_ds, int8_tflite_path
+    )
+    return evaluate_predictions(y_true, y_pred, scores, class_names, out_prefix)
 
 
 def evaluate_tflite_model(
@@ -539,8 +601,10 @@ def run_basic_quantization_suite(
     test_ds: tf.data.Dataset,
     out_dir: str | Path,
     class_names: Optional[Sequence[str]] = None,
-    rep_samples: int = 300,
+    rep_samples: int = 500,
     seed: int = 42,
+    input_amplitude_range: float = 0.03,
+    allow_dummy_calibration: bool = False,
 ) -> Dict:
     out_dir = ensure_dir(out_dir)
 
@@ -550,15 +614,19 @@ def run_basic_quantization_suite(
             max_samples=rep_samples,
             seed=seed,
         )
-    else:
-        print("Dataset not found. Using dummy representative dataset (white noise scaled to 0.05 RMS)...")
+    elif allow_dummy_calibration:
+        print("WARNING: Using dummy representative data. Output is not deployable.")
         def representative_dataset():
             np.random.seed(seed)
             for _ in range(rep_samples):
-                # audio range [-1.0, 1.0], RMS 0.05
                 x = np.random.normal(0.0, 0.05, (1, 2400, 1)).astype(np.float32)
                 x = np.clip(x, -1.0, 1.0)
                 yield [x]
+    else:
+        raise RuntimeError(
+            "Full INT8 deployment requires a real representative dataset. "
+            "Pass --allow_dummy_calibration only for non-deployable smoke tests."
+        )
 
     paths = {}
 
@@ -591,6 +659,12 @@ def run_basic_quantization_suite(
         array_name="g_model_float32",
     )
 
+    paths["input_quant_config"] = export_input_quantization_header(
+        paths["int8"],
+        out_dir / "model_input_quantization.h",
+        amplitude_range=input_amplitude_range,
+    )
+
     # Write deployment guide
     write_esp32_readme(out_dir, array_name="g_model")
 
@@ -621,6 +695,15 @@ def run_basic_quantization_suite(
             out_prefix=out_dir / "tflite_dynamic",
         )
 
+        print("\nEvaluating Keras model with input QDQ...")
+        results["keras_input_qdq"] = evaluate_keras_input_qdq_model(
+            keras_model,
+            paths["int8"],
+            test_ds,
+            class_names=class_names,
+            out_prefix=out_dir / "keras_input_qdq",
+        )
+
         print("\nEvaluating full-int8 TFLite model...")
         results["tflite_int8"] = evaluate_tflite_model(
             paths["int8"],
@@ -642,7 +725,7 @@ def run_basic_quantization_suite(
         summary = pd.DataFrame(summary_rows)
 
         # Agreement against Keras float.
-        for name in ["tflite_float", "tflite_dynamic", "tflite_int8"]:
+        for name in ["tflite_float", "tflite_dynamic", "keras_input_qdq", "tflite_int8"]:
             agreement = compare_model_pair_agreement(
                 results["keras_float"]["scores"],
                 results[name]["scores"],
@@ -830,6 +913,8 @@ if __name__ == "__main__":
     parser.add_argument("--weights_path", type=str, required=True, help="Path to trained Keras model weights checkpoint (.h5)")
     parser.add_argument("--out_dir", type=str, default="quantization_output", help="Directory to save quantized models and C headers")
     parser.add_argument("--rep_samples", type=int, default=500, help="Number of samples to calibrate quantization")
+    parser.add_argument("--input_amplitude_range", type=float, default=None, help="Fixed normalized waveform half-range before clipping")
+    parser.add_argument("--allow_dummy_calibration", action="store_true", help="Allow non-deployable dummy calibration if dataset loading fails")
     args = parser.parse_args()
 
     # Load and Normalize configs
@@ -880,8 +965,14 @@ if __name__ == "__main__":
             shuffle=cfg["train"]["shuffle"]
         )
     except Exception as e:
-        print(f"Warning: Failed to load dataset: {e}. Proceeding with offline dummy calibration...")
-        train_ds = val_ds = test_ds = None
+        if args.allow_dummy_calibration:
+            print(f"Warning: Failed to load dataset: {e}. Proceeding with non-deployable dummy calibration...")
+            train_ds = val_ds = test_ds = None
+        else:
+            raise RuntimeError(
+                "Dataset loading failed. Full INT8 deployment requires a real "
+                "representative dataset."
+            ) from e
 
     print("Building Keras model and loading weights...")
     model_builder = MosSongPlusModel(model_cfg)
@@ -908,6 +999,13 @@ if __name__ == "__main__":
     keras_model.load_weights(weights_path)
     print(f"Weights successfully loaded from: {weights_path}")
 
+    quant_cfg = cfg.get("quantization", {})
+    input_amplitude_range = (
+        args.input_amplitude_range
+        if args.input_amplitude_range is not None
+        else quant_cfg.get("input_amplitude_range", 0.03)
+    )
+
     # Run the quantization suite
     run_basic_quantization_suite(
         keras_model=keras_model,
@@ -916,5 +1014,7 @@ if __name__ == "__main__":
         out_dir=args.out_dir,
         class_names=cfg["classes"],
         rep_samples=args.rep_samples,
-        seed=cfg["reproducibility"]["seed"]
+        seed=cfg["reproducibility"]["seed"],
+        input_amplitude_range=input_amplitude_range,
+        allow_dummy_calibration=args.allow_dummy_calibration,
     )

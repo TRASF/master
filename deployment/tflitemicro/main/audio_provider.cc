@@ -52,7 +52,7 @@ static float I2sSampleToFloat(I2sRawSample raw_sample) {
 #else
     float normalized = (float)sample24 / 8388608.0f;
 #endif
-    return normalized / 0.03;
+    return normalized;
 }
 
 // ============================================================
@@ -102,6 +102,22 @@ static void RmsNormalize(float* x, size_t n, float current_rms) {
     }
 }
 
+// ============================================================
+// Fixed input range preprocessing
+// ============================================================
+static void ApplyFixedInputRange(float* x, size_t n) {
+    if (x == NULL || n == 0) return;
+
+    const float inverse_range = 1.0f / MODEL_INPUT_AMPLITUDE_RANGE;
+
+    for (size_t i = 0; i < n; ++i) {
+        float v = x[i] * inverse_range;
+        if (v > 1.0f) v = 1.0f;
+        else if (v < -1.0f) v = -1.0f;
+        x[i] = v;
+    }
+}
+
 static esp_err_t ReadRawSamples(float* output, size_t sample_count) {
     if (output == NULL) return ESP_ERR_INVALID_ARG;
 
@@ -135,23 +151,31 @@ static esp_err_t ReadRawSamples(float* output, size_t sample_count) {
 }
 
 static void ApplyTrainingPreprocess(float* output, size_t sample_count) {
-    // Training/validation pipeline order:
-    //   1. DC removal
-    //   2. RMS normalization with configured gain clamp
-    //   3. Clip to [-1, 1] inside RmsNormalize
+    if (output == NULL || sample_count == 0) return;
+
+    // This order must match Python exactly. The rolling buffer stores only raw
+    // normalized waveform samples from I2sSampleToFloat().
     RemoveDc(output, sample_count);
 
-    float current_rms = ComputeRms(output, sample_count);
+    // Raw RMS is measured after DC removal, before fixed-range scaling or RMS
+    // normalization, so ENABLE_RAW_RMS_GATE operates on physical normalized
+    // waveform amplitude.
+    const float raw_rms = ComputeRms(output, sample_count);
 
 #if ENABLE_RAW_RMS_GATE
-    // Optional deployment safety gate. Disabled by default because training does
-    // not gate quiet samples before RMS normalization.
-    if (current_rms < MIN_RAW_RMS_GATE) {
+    if (raw_rms < MIN_RAW_RMS_GATE) {
+        memset(output, 0, sample_count * sizeof(output[0]));
         return;
     }
 #endif
 
-    RmsNormalize(output, sample_count, current_rms);
+#if PREPROCESS_FIXED_RANGE
+    ApplyFixedInputRange(output, sample_count);
+#elif PREPROCESS_RMS_NORMALIZE
+    RmsNormalize(output, sample_count, raw_rms);
+#else
+    // DC removal only.
+#endif
 }
 
 // ============================================================
