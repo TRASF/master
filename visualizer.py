@@ -5,8 +5,13 @@ ESP32-S3 mosquito audio + classification visualizer.
 Matches the current firmware protocol:
 
     0x00 | COBS(
+        uint32 seq                  # little-endian
+        uint32 audio_timestamp_us
         uint8  predicted_class
-        float32 confidence          # little-endian
+        float32 confidence
+        uint32 inference_time_us
+        uint32 class_age_ms
+        uint32 classifier_seq
         int16  audio[AUDIO_SAMPLE_COUNT]
     ) | 0x00
 
@@ -104,10 +109,19 @@ def cobs_decode(encoded: bytes) -> bytes:
     return bytes(decoded)
 
 
+HEADER_FORMAT = "<IIBfIII"
+HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
+
+
 @dataclass(frozen=True)
 class TelemetryPacket:
+    seq: int
+    audio_timestamp_us: int
     class_id: int
     confidence: float
+    inference_time_us: int
+    class_age_ms: int
+    classifier_seq: int
     audio_i16: np.ndarray
     received_at: float
 
@@ -141,7 +155,7 @@ class TelemetryReader(threading.Thread):
         self.output_queue = output_queue
         self.stop_event = stop_event
         self.stats = ReaderStats()
-        self.expected_payload_size = 1 + 4 + sample_count * 2
+        self.expected_payload_size = HEADER_SIZE + sample_count * 2
         self.max_encoded_size = (
             self.expected_payload_size + self.expected_payload_size // 254 + 2
         )
@@ -169,8 +183,15 @@ class TelemetryReader(threading.Thread):
             self.stats.length_errors += 1
             return
 
-        class_id = payload[0]
-        confidence = struct.unpack_from("<f", payload, 1)[0]
+        (
+            seq,
+            audio_timestamp_us,
+            class_id,
+            confidence,
+            inference_time_us,
+            class_age_ms,
+            classifier_seq,
+        ) = struct.unpack_from(HEADER_FORMAT, payload, 0)
 
         if not np.isfinite(confidence):
             self.stats.value_errors += 1
@@ -180,12 +201,17 @@ class TelemetryReader(threading.Thread):
             payload,
             dtype="<i2",
             count=self.sample_count,
-            offset=5,
+            offset=HEADER_SIZE,
         ).copy()
 
         packet = TelemetryPacket(
+            seq=seq,
+            audio_timestamp_us=audio_timestamp_us,
             class_id=class_id,
             confidence=float(np.clip(confidence, 0.0, 1.0)),
+            inference_time_us=inference_time_us,
+            class_age_ms=class_age_ms,
+            classifier_seq=classifier_seq,
             audio_i16=audio,
             received_at=time.monotonic(),
         )
@@ -697,9 +723,16 @@ class Visualizer:
             )
             self.ax_wave.set_facecolor("#101010")
 
+        infer_ms = packet.inference_time_us / 1000.0
+        class_age = (
+            "none" if packet.class_age_ms == 0xFFFFFFFF
+            else f"{packet.class_age_ms} ms"
+        )
         self.wave_info.set_text(
             f"class={packet.class_id}: {class_name}\n"
             f"confidence={packet.confidence:.3f}   "
+            f"infer={infer_ms:.2f} ms   class_age={class_age}   "
+            f"class_seq={packet.classifier_seq}   audio_seq={packet.seq}\n"
             f"RMS={rms:.4f}   peak={peak:.4f}   "
             f"dominant≈{peak_frequency:.1f} Hz"
         )
