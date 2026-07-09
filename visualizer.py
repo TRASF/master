@@ -47,14 +47,14 @@ from serial.tools import list_ports
 CLASS_NAMES = [
     "Ae_aegypti_Female",
     "Ae_aegypti_Male",
-    "Ae_albopictus_Female",
-    "Ae_albopictus_Male",
-    "An_dirus_Female",
-    "An_dirus_Male",
-    "An_minimus_Female",
-    "An_minimus_Male",
-    "Cx_quin_Female",
-    "Cx_quin_Male",
+    # "Ae_albopictus_Female",
+    # "Ae_albopictus_Male",
+    # "An_dirus_Female",
+    # "An_dirus_Male",
+    # "An_minimus_Female",
+    # "An_minimus_Male",
+    # "Cx_quin_Female",
+    # "Cx_quin_Male",
     "No_Mos",
 ]
 
@@ -432,7 +432,7 @@ class Visualizer:
             linewidth=0.9,
         )
         self.ax_wave.set_xlim(wave_time[0], 0.0)
-        self.ax_wave.set_ylim(-1.05, 1.05)
+        self.ax_wave.set_ylim(-.05, .05)
         self.ax_wave.set_title("Live rolling waveform")
         self.ax_wave.set_xlabel("Time (s)")
         self.ax_wave.set_ylabel("Amplitude")

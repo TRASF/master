@@ -28,14 +28,14 @@ static const void* s_model_mapped_ptr = nullptr;
 const char* kClassNames[NUM_CLASSES] = {
     "Ae_aegypti_Female",
     "Ae_aegypti_Male",
-    "Ae_albopictus_Female",
-    "Ae_albopictus_Male",
-    "An_dirus_Female",
-    "An_dirus_Male",
-    "An_minimus_Female",
-    "An_minimus_Male",
-    "Cx_quin_Female",
-    "Cx_quin_Male",
+    // "Ae_albopictus_Female",
+    // "Ae_albopictus_Male",
+    // "An_dirus_Female",
+    // "An_dirus_Male",
+    // "An_minimus_Female",
+    // "An_minimus_Male",
+    // "Cx_quin_Female",
+    // "Cx_quin_Male",
     "No.Mos"
 };
 

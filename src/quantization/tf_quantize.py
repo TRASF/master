@@ -400,7 +400,9 @@ def evaluate_keras_input_qdq_model(
     y_true, y_pred, scores = predict_keras_with_input_qdq(
         keras_model, test_ds, int8_tflite_path
     )
-    return evaluate_predictions(y_true, y_pred, scores, class_names, out_prefix)
+    result = evaluate_predictions(y_true, y_pred, class_names, out_prefix)
+    result["scores"] = scores
+    return result
 
 
 def evaluate_tflite_model(
@@ -766,6 +768,37 @@ def run_basic_quantization_suite(
         "summary": summary,
         "summary_path": summary_path,
     }
+
+
+def export_input_quantization_header(
+    tflite_path: str | Path,
+    out_h_path: str | Path,
+    amplitude_range: float,
+) -> Path:
+    interpreter = tf.lite.Interpreter(model_path=str(tflite_path))
+    interpreter.allocate_tensors()
+    input_detail = interpreter.get_input_details()[0]
+    scale, zero_point = input_detail["quantization"]
+
+    if input_detail["dtype"] != np.int8 or scale <= 0:
+        raise ValueError(
+            "Expected an int8 TFLite input with a positive quantization scale."
+        )
+    if not np.isfinite(amplitude_range) or amplitude_range <= 0:
+        raise ValueError("Input amplitude range must be positive and finite.")
+
+    out_h_path = Path(out_h_path)
+    out_h_path.parent.mkdir(parents=True, exist_ok=True)
+    out_h_path.write_text(
+        "#pragma once\n\n"
+        "// Generated from the quantized TFLite model.\n"
+        f"#define MODEL_INPUT_SCALE {scale:.10g}f\n"
+        f"#define MODEL_INPUT_ZERO_POINT {zero_point}\n"
+        f"#define MODEL_INPUT_AMPLITUDE_RANGE {amplitude_range:.10g}f\n",
+        encoding="utf-8",
+    )
+    print(f"Exported input quantization header: {out_h_path}")
+    return out_h_path
 
 
 def export_tflite_to_c_header(
