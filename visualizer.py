@@ -1,36 +1,8 @@
-#!/usr/bin/env python3
-"""
-ESP32-S3 mosquito audio + classification visualizer.
-
-Matches the current firmware protocol:
-
-    0x00 | COBS(
-        uint32 seq                  # little-endian
-        uint32 audio_timestamp_us
-        uint8  predicted_class
-        float32 confidence
-        uint32 inference_time_us
-        uint32 class_age_ms
-        uint32 classifier_seq
-        int16  audio[AUDIO_SAMPLE_COUNT]
-    ) | 0x00
-
-Dependencies:
-    pip install numpy matplotlib pyserial
-
-Example:
-    python esp32_mosquito_visualizer.py
-    python esp32_mosquito_visualizer.py --port COM6
-    python esp32_mosquito_visualizer.py --port /dev/ttyUSB0
-    python esp32_mosquito_visualizer.py --n-fft 1024 --hop-length 128
-    python esp32_mosquito_visualizer.py --packet-hop-samples 512 --refresh-ms 20
-"""
-
 from __future__ import annotations
 
 import argparse
-import collections
 import queue
+import re
 import struct
 import threading
 import time
@@ -65,13 +37,6 @@ CLASS_COLORS = {
     "No": "#808080",
     "Unknown": "#ffffff",
 }
-
-DEFAULT_PORT_CANDIDATES = [
-    "/dev/ttyUSB0",
-    "/dev/ttyUSB1",
-    "/dev/ttyACM0",
-    "/dev/ttyACM1",
-]
 
 
 def class_color(class_name: str) -> str:
@@ -255,39 +220,481 @@ class TelemetryReader(threading.Thread):
             self.stop_event.set()
 
 
-def choose_port(explicit_port: Optional[str]) -> str:
-    if explicit_port:
-        return explicit_port
+# USB vendor IDs are used only as ranking hints. They are never mandatory,
+# because replica ESP32 boards may use many different USB-to-UART bridges.
+KNOWN_USB_SERIAL_VIDS = {
+    0x303A,  # Espressif native USB/JTAG/Serial
+    0x10C4,  # Silicon Labs CP210x
+    0x1A86,  # WCH CH340/CH341/CH910x
+    0x0403,  # FTDI
+    0x067B,  # Prolific PL2303
+}
 
-    available = list(list_ports.comports())
-    available_names = {port.device for port in available}
+ESP_SERIAL_HINTS = (
+    "esp32",
+    "espressif",
+    "usb jtag",
+    "jtag/serial",
+    "usb serial",
+    "usb-serial",
+    "usb uart",
+    "uart bridge",
+    "cp210",
+    "silicon labs",
+    "ch340",
+    "ch341",
+    "ch910",
+    "wch",
+    "ftdi",
+    "pl2303",
+)
 
-    for candidate in DEFAULT_PORT_CANDIDATES:
-        if candidate in available_names:
-            return candidate
-
-    # Prefer USB serial devices when the operating system exposes metadata.
-    preferred_terms = ("USB", "UART", "CP210", "CH340", "JTAG", "ESP")
-    for port in available:
-        description = f"{port.description} {port.manufacturer or ''}".upper()
-        if any(term in description for term in preferred_terms):
-            return port.device
-
-    if available:
-        return available[0].device
-
-    raise RuntimeError("No serial ports were found")
+UNWANTED_PORT_HINTS = (
+    "bluetooth",
+    "infrared",
+    "irda",
+    "dial-up modem",
+)
 
 
-def open_serial(port: str, baud: int) -> serial.Serial:
-    connection = serial.Serial(
-        port=port,
-        baudrate=baud,
-        timeout=0.01,
-        write_timeout=0.2,
+def parse_usb_id(value: str) -> int:
+    """Parse a 16-bit USB VID/PID in decimal or hexadecimal notation."""
+    text = value.strip().lower()
+    try:
+        if text.startswith("0x") or any(char in "abcdef" for char in text):
+            parsed = int(text.removeprefix("0x"), 16)
+        else:
+            parsed = int(text, 10)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"invalid USB ID {value!r}; use values such as 0x303A or 303A"
+        ) from exc
+
+    if not 0 <= parsed <= 0xFFFF:
+        raise argparse.ArgumentTypeError("USB IDs must be between 0x0000 and 0xFFFF")
+    return parsed
+
+
+def _port_text(port) -> str:
+    """Combine available cross-platform serial metadata into searchable text."""
+    values = (
+        getattr(port, "device", None),
+        getattr(port, "name", None),
+        getattr(port, "description", None),
+        getattr(port, "hwid", None),
+        getattr(port, "manufacturer", None),
+        getattr(port, "product", None),
+        getattr(port, "serial_number", None),
+        getattr(port, "location", None),
+        getattr(port, "interface", None),
     )
-    connection.reset_input_buffer()
+    return " ".join(str(value) for value in values if value).casefold()
+
+
+def _usb_id_text(value: Optional[int]) -> str:
+    return "----" if value is None else f"{value:04X}"
+
+
+def _port_identity(port) -> tuple:
+    """Create a physical-device identity used to collapse Linux symlink copies."""
+    vid = getattr(port, "vid", None)
+    pid = getattr(port, "pid", None)
+    serial_number = getattr(port, "serial_number", None)
+    location = getattr(port, "location", None)
+
+    interface = getattr(port, "interface", None)
+    if vid is not None and pid is not None and (serial_number or location):
+        # Location is included because low-cost clone adapters sometimes reuse
+        # the same serial number across multiple physical boards.
+        return ("usb", vid, pid, serial_number, location, interface)
+    return ("device", getattr(port, "device", ""))
+
+
+def _path_preference(port) -> int:
+    """Prefer stable or connection-oriented device paths when duplicates exist."""
+    device = getattr(port, "device", "").casefold()
+    if "/dev/serial/by-id/" in device:
+        return 50
+    if "/dev/serial/by-path/" in device:
+        return 40
+    if device.startswith("/dev/cu."):
+        return 30
+    if device.startswith("/dev/ttyacm") or device.startswith("/dev/ttyusb"):
+        return 20
+    if re.fullmatch(r"com\d+", device):
+        return 20
+    return 0
+
+
+def list_serial_ports() -> list:
+    """Enumerate serial ports on Windows, macOS, Linux, and BSD."""
+    discovered = list(list_ports.comports(include_links=True))
+
+    # include_links=True can return both a Linux tty path and one or more
+    # symlinks for the same physical interface. Keep the most stable path.
+    unique = {}
+    for port in discovered:
+        key = _port_identity(port)
+        current = unique.get(key)
+        if current is None or _path_preference(port) > _path_preference(current):
+            unique[key] = port
+
+    return sorted(unique.values(), key=lambda port: port.device.casefold())
+
+
+def is_unwanted_port(port) -> bool:
+    text = _port_text(port)
+    return any(hint in text for hint in UNWANTED_PORT_HINTS)
+
+
+def score_port(port) -> int:
+    """Rank likely ESP32 ports without excluding unknown replica-board adapters."""
+    score = 0
+    text = _port_text(port)
+    device = port.device.casefold()
+    vid = getattr(port, "vid", None)
+
+    if vid == 0x303A:
+        score += 120
+    elif vid in KNOWN_USB_SERIAL_VIDS:
+        score += 60
+
+    for hint in ESP_SERIAL_HINTS:
+        if hint in text:
+            score += 12
+
+    if getattr(port, "serial_number", None):
+        score += 8
+    if getattr(port, "location", None):
+        score += 4
+
+    if "/dev/serial/by-id/" in device:
+        score += 35
+    elif "/dev/serial/by-path/" in device:
+        score += 25
+    elif device.startswith("/dev/cu."):
+        score += 20
+    elif device.startswith("/dev/ttyacm"):
+        score += 18
+    elif device.startswith("/dev/ttyusb"):
+        score += 16
+    elif re.fullmatch(r"com\d+", device):
+        score += 10
+
+    # Physical motherboard UARTs are less likely than USB serial devices.
+    if device.startswith("/dev/ttys") and vid is None:
+        score -= 25
+
+    if is_unwanted_port(port):
+        score -= 1000
+
+    return score
+
+
+def format_port(port) -> str:
+    """Format one serial device for --list-ports and error diagnostics."""
+    description = (
+        getattr(port, "product", None)
+        or getattr(port, "description", None)
+        or "unknown device"
+    )
+    manufacturer = getattr(port, "manufacturer", None) or "-"
+    serial_number = getattr(port, "serial_number", None) or "-"
+    location = getattr(port, "location", None) or "-"
+    return (
+        f"{port.device:<28} "
+        f"score={score_port(port):>4}  "
+        f"VID:PID={_usb_id_text(getattr(port, 'vid', None))}:"
+        f"{_usb_id_text(getattr(port, 'pid', None))}  "
+        f"manufacturer={manufacturer}  product={description}  "
+        f"serial={serial_number}  location={location}"
+    )
+
+
+def _matches_port_filters(
+    port,
+    target_vid: Optional[int],
+    target_pid: Optional[int],
+    target_serial: Optional[str],
+    port_match: Optional[str],
+) -> bool:
+    if target_vid is not None and getattr(port, "vid", None) != target_vid:
+        return False
+    if target_pid is not None and getattr(port, "pid", None) != target_pid:
+        return False
+    if target_serial is not None:
+        actual = (getattr(port, "serial_number", None) or "").casefold()
+        if actual != target_serial.casefold():
+            return False
+    if port_match is not None and port_match.casefold() not in _port_text(port):
+        return False
+    return True
+
+
+def open_serial(
+    port: str,
+    baud: int,
+    *,
+    timeout: float = 0.01,
+    clear_input: bool = True,
+) -> serial.Serial:
+    """Open a serial port while minimizing ESP32 auto-reset line toggling."""
+    connection = serial.Serial(
+        port=None,
+        baudrate=baud,
+        timeout=timeout,
+        write_timeout=0.2,
+        rtscts=False,
+        dsrdtr=False,
+    )
+    connection.port = port
+
+    # Set inactive line states before opening. Some ESP32 boards connect DTR
+    # and RTS to EN/BOOT, so careless line changes can reset the board.
+    connection.dtr = False
+    connection.rts = False
+    connection.open()
+
+    if clear_input:
+        try:
+            connection.reset_input_buffer()
+        except (serial.SerialException, OSError):
+            connection.close()
+            raise
+
     return connection
+
+
+def _valid_telemetry_payload(payload: bytes, sample_count: int) -> bool:
+    """Validate enough of a decoded frame to identify this firmware protocol."""
+    expected_size = HEADER_SIZE + sample_count * 2
+    if len(payload) != expected_size:
+        return False
+
+    try:
+        (
+            _seq,
+            _audio_timestamp_us,
+            class_id,
+            confidence,
+            _inference_time_us,
+            _class_age_ms,
+            _classifier_seq,
+        ) = struct.unpack_from(HEADER_FORMAT, payload, 0)
+    except struct.error:
+        return False
+
+    if not np.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
+        return False
+
+    # Current and future class sets are expected to stay far below 255. This
+    # rejects random binary streams without tying discovery to CLASS_NAMES.
+    if class_id > 63:
+        return False
+
+    audio = np.frombuffer(
+        payload,
+        dtype="<i2",
+        count=sample_count,
+        offset=HEADER_SIZE,
+    )
+    return audio.size == sample_count
+
+
+def probe_telemetry_port(
+    port: str,
+    baud: int,
+    sample_count: int,
+    timeout_seconds: float,
+) -> tuple[Optional[serial.Serial], str]:
+    """
+    Open a candidate and return its live connection after one valid frame.
+
+    Keeping the successful connection open avoids probing the board and then
+    opening it a second time, which could trigger another ESP32 reset.
+    """
+    connection: Optional[serial.Serial] = None
+    expected_payload_size = HEADER_SIZE + sample_count * 2
+    max_encoded_size = expected_payload_size + expected_payload_size // 254 + 2
+    rx_buffer = bytearray()
+    deadline = time.monotonic() + timeout_seconds
+    success = False
+
+    try:
+        connection = open_serial(
+            port,
+            baud,
+            timeout=min(0.05, max(timeout_seconds / 20.0, 0.01)),
+            clear_input=False,
+        )
+
+        while time.monotonic() < deadline:
+            waiting = connection.in_waiting
+            chunk = connection.read(waiting if waiting > 0 else 1)
+            if not chunk:
+                continue
+
+            rx_buffer.extend(chunk)
+
+            while True:
+                delimiter = rx_buffer.find(0)
+                if delimiter < 0:
+                    break
+
+                frame = bytes(rx_buffer[:delimiter])
+                del rx_buffer[: delimiter + 1]
+
+                if not frame:
+                    continue
+
+                try:
+                    payload = cobs_decode(frame)
+                except ValueError:
+                    continue
+
+                if _valid_telemetry_payload(payload, sample_count):
+                    # The local probe buffer may contain a partial later frame.
+                    # Discard it and let TelemetryReader start at a clean packet.
+                    connection.reset_input_buffer()
+                    connection.timeout = 0.01
+                    success = True
+                    return connection, "valid telemetry frame"
+
+            if len(rx_buffer) > max_encoded_size * 3:
+                rx_buffer.clear()
+
+        return None, f"no valid frame within {timeout_seconds:.1f}s"
+
+    except PermissionError as exc:
+        return None, f"permission denied: {exc}"
+    except (serial.SerialException, OSError) as exc:
+        return None, str(exc)
+    finally:
+        # Keep the successful connection open; close every failed probe.
+        if not success and connection is not None and connection.is_open:
+            connection.close()
+
+
+def discover_serial_connection(
+    explicit_port: Optional[str],
+    baud: int,
+    sample_count: int,
+    probe_timeout: float,
+    target_vid: Optional[int] = None,
+    target_pid: Optional[int] = None,
+    target_serial: Optional[str] = None,
+    port_match: Optional[str] = None,
+    probe_all_ports: bool = False,
+    strict_probe: bool = False,
+) -> tuple[str, serial.Serial]:
+    """Select and open the telemetry device on any supported desktop OS.
+
+    Port discovery is intentionally separate from application-protocol
+    validation. Replica ESP32 boards and USB-UART bridges may reset on open,
+    start streaming slowly, or expose incomplete USB metadata. Therefore:
+
+      * an explicit --port is always opened directly;
+      * a single suitable serial candidate is opened directly by default;
+      * multiple candidates are probed to disambiguate them;
+      * if probing fails, a clearly superior candidate is used as a fallback;
+      * --strict-probe restores fail-closed protocol validation.
+    """
+    if explicit_port:
+        return explicit_port, open_serial(explicit_port, baud)
+
+    ports = list_serial_ports()
+    if not ports:
+        raise RuntimeError(
+            "No serial ports were found. Check the USB data cable, driver, "
+            "device power, and operating-system permissions."
+        )
+
+    filtered = [
+        port
+        for port in ports
+        if _matches_port_filters(
+            port,
+            target_vid=target_vid,
+            target_pid=target_pid,
+            target_serial=target_serial,
+            port_match=port_match,
+        )
+    ]
+
+    if not filtered:
+        available = "\n".join(f"  {format_port(port)}" for port in ports)
+        raise RuntimeError(
+            "No serial port matched the requested filters.\n\n"
+            f"Available ports:\n{available}"
+        )
+
+    if not probe_all_ports:
+        non_unwanted = [port for port in filtered if not is_unwanted_port(port)]
+        if non_unwanted:
+            filtered = non_unwanted
+
+    ranked = sorted(
+        filtered,
+        key=lambda port: (-score_port(port), port.device.casefold()),
+    )
+
+    # If there is only one usable serial interface, discovery has already done
+    # its job. Do not reject a replica board merely because it did not emit a
+    # complete application frame during a short probe window.
+    if len(ranked) == 1 and not strict_probe:
+        candidate = ranked[0]
+        print(
+            f"Selected {candidate.device}: "
+            f"{candidate.description or 'unknown serial device'} "
+            "(only suitable candidate; protocol validation deferred to reader)"
+        )
+        return candidate.device, open_serial(candidate.device, baud)
+
+    failures = []
+    for candidate in ranked:
+        print(f"Probing {candidate.device}: {candidate.description or 'unknown device'}")
+        connection, reason = probe_telemetry_port(
+            port=candidate.device,
+            baud=baud,
+            sample_count=sample_count,
+            timeout_seconds=probe_timeout,
+        )
+        if connection is not None:
+            return candidate.device, connection
+        failures.append((candidate, reason))
+
+    # Metadata fallback for clone boards that reset on open or need more time
+    # than the probe window. Only use it when the winner is unambiguous.
+    if not strict_probe and ranked:
+        best = ranked[0]
+        best_score = score_port(best)
+        second_score = score_port(ranked[1]) if len(ranked) > 1 else -10_000
+        filters_used = any(
+            value is not None
+            for value in (target_vid, target_pid, target_serial, port_match)
+        )
+        clearly_best = best_score >= 35 and (best_score - second_score) >= 20
+
+        if filters_used or clearly_best:
+            print(
+                f"Warning: no candidate produced a valid telemetry frame within "
+                f"{probe_timeout:.1f}s. Falling back to {best.device} based on "
+                "USB metadata. Telemetry validation will continue in the reader."
+            )
+            return best.device, open_serial(best.device, baud)
+
+    diagnostics = "\n".join(
+        f"  {format_port(port)}\n      probe: {reason}"
+        for port, reason in failures
+    )
+    raise RuntimeError(
+        "Serial ports were found, but none emitted a valid telemetry packet and "
+        "no unique metadata-based fallback was safe.\n"
+        "Confirm that the firmware is streaming, the baud rate and --samples "
+        "match the firmware, or select the port explicitly.\n\n"
+        f"Candidates:\n{diagnostics}\n\n"
+        "Use --port COMx to select a device directly, or omit --strict-probe."
+    )
 
 
 def compute_stft_db(
@@ -354,6 +761,13 @@ class Visualizer:
         max_frequency: float,
         packet_hop_samples: int,
         live_wave_seconds: float,
+        auto_wave_x: bool,
+        auto_wave_y: bool,
+        wave_y_min: float,
+        wave_y_max: float,
+        wave_y_percentile: float,
+        wave_y_headroom: float,
+        wave_y_release: float,
         n_fft: int,
         hop_length: int,
         floor_db: float,
@@ -375,6 +789,20 @@ class Visualizer:
         self.packet_hop_samples = min(packet_hop_samples, sample_count)
         self.packet_advance_seconds = self.packet_hop_samples / sample_rate
         self.live_wave_seconds = live_wave_seconds
+
+        # Waveform-axis behavior. X grows with the amount of received audio
+        # until the configured rolling history is full. Y uses a robust peak
+        # estimate, expands immediately, and contracts gradually to avoid
+        # distracting axis flicker.
+        self.auto_wave_x = auto_wave_x
+        self.auto_wave_y = auto_wave_y
+        self.wave_y_min = wave_y_min
+        self.wave_y_max = wave_y_max
+        self.wave_y_percentile = wave_y_percentile
+        self.wave_y_headroom = wave_y_headroom
+        self.wave_y_release = wave_y_release
+        self.current_wave_y_limit = min(max(0.05, wave_y_min), wave_y_max)
+        self.valid_live_wave_samples = 0
 
         self.n_fft = n_fft
         self.hop_length = hop_length
@@ -421,19 +849,25 @@ class Visualizer:
         self.fig.suptitle("Waiting for telemetry...", fontsize=16, fontweight="bold")
 
         # Waveform
-        wave_time = (
+        self.wave_time = (
             np.arange(self.live_wave_sample_count, dtype=np.float32)
             - self.live_wave_sample_count
             + 1
         ) / self.fs
         (self.wave_line,) = self.ax_wave.plot(
-            wave_time,
+            self.wave_time,
             self.live_wave_buffer,
             linewidth=0.9,
         )
-        self.ax_wave.set_xlim(wave_time[0], 0.0)
-        self.ax_wave.set_ylim(-.05, .05)
-        self.ax_wave.set_title("Live rolling waveform")
+        self.ax_wave.set_xlim(self.wave_time[0], 0.0)
+        self.ax_wave.set_ylim(
+            -self.current_wave_y_limit,
+            self.current_wave_y_limit,
+        )
+        axis_mode = []
+
+        mode_suffix = f" ({', '.join(axis_mode)})" if axis_mode else ""
+        self.ax_wave.set_title(f"Live rolling waveform{mode_suffix}")
         self.ax_wave.set_xlabel("Time (s)")
         self.ax_wave.set_ylabel("Amplitude")
         self.ax_wave.grid(True, alpha=0.18)
@@ -542,15 +976,84 @@ class Visualizer:
 
         self.spec_image.set_data(self.spec_matrix)
 
+    def _update_waveform_axes(self) -> None:
+        """Update waveform limits from the valid portion of the rolling data."""
+        valid_count = min(
+            self.valid_live_wave_samples,
+            self.live_wave_sample_count,
+        )
+        if valid_count <= 0:
+            return
+
+        if self.auto_wave_x:
+            visible_seconds = min(
+                self.live_wave_seconds,
+                valid_count / self.fs,
+            )
+            # Avoid a zero-width axis if an unusually short packet arrives.
+            visible_seconds = max(visible_seconds, 2.0 / self.fs)
+            self.ax_wave.set_xlim(-visible_seconds, 0.0)
+
+        if self.auto_wave_y:
+            current = self.live_wave_buffer[-valid_count:]
+            finite = current[np.isfinite(current)]
+            if finite.size:
+                absolute = np.abs(finite)
+                robust_peak = float(
+                    np.percentile(absolute, self.wave_y_percentile)
+                )
+                target_limit = robust_peak * self.wave_y_headroom
+                target_limit = float(
+                    np.clip(target_limit, self.wave_y_min, self.wave_y_max)
+                )
+
+                # Fast attack: never clip a newly stronger signal because of
+                # smoothing. Slow release: quiet periods shrink the plot
+                # gradually instead of making the Y axis jump every packet.
+                if target_limit >= self.current_wave_y_limit:
+                    self.current_wave_y_limit = target_limit
+                else:
+                    self.current_wave_y_limit = (
+                        self.wave_y_release * self.current_wave_y_limit
+                        + (1.0 - self.wave_y_release) * target_limit
+                    )
+
+                self.current_wave_y_limit = float(
+                    np.clip(
+                        self.current_wave_y_limit,
+                        self.wave_y_min,
+                        self.wave_y_max,
+                    )
+                )
+                self.ax_wave.set_ylim(
+                    -self.current_wave_y_limit,
+                    self.current_wave_y_limit,
+                )
+
     def _append_live_waveform(self, audio: np.ndarray) -> None:
-        newest = audio[-self.packet_hop_samples :]
+        # Preserve the complete first inference window. Once initialized,
+        # append only the new hop so overlapping windows are not duplicated.
+        if self.valid_live_wave_samples == 0:
+            newest = audio[-self.live_wave_sample_count :]
+        else:
+            newest = audio[-self.packet_hop_samples :]
+
         count = min(len(newest), self.live_wave_sample_count)
         if count <= 0:
             return
 
-        self.live_wave_buffer[:-count] = self.live_wave_buffer[count:]
-        self.live_wave_buffer[-count:] = newest[-count:]
+        if count >= self.live_wave_sample_count:
+            self.live_wave_buffer[:] = newest[-self.live_wave_sample_count :]
+        else:
+            self.live_wave_buffer[:-count] = self.live_wave_buffer[count:]
+            self.live_wave_buffer[-count:] = newest[-count:]
+
+        self.valid_live_wave_samples = min(
+            self.live_wave_sample_count,
+            self.valid_live_wave_samples + count,
+        )
         self.wave_line.set_ydata(self.live_wave_buffer)
+        self._update_waveform_axes()
 
     def _age_spec_annotations(self) -> None:
         """Shift existing spectrogram boxes left as new windows arrive."""
@@ -734,7 +1237,9 @@ class Visualizer:
             f"infer={infer_ms:.2f} ms   class_age={class_age}   "
             f"class_seq={packet.classifier_seq}   audio_seq={packet.seq}\n"
             f"RMS={rms:.4f}   peak={peak:.4f}   "
-            f"dominant≈{peak_frequency:.1f} Hz"
+            f"dominant≈{peak_frequency:.1f} Hz\n"
+            f"wave_view={min(self.valid_live_wave_samples / self.fs, self.live_wave_seconds):.2f}s   "
+            f"Y=±{self.current_wave_y_limit:.4f}"
         )
         self.wave_info.set_color(color if is_detection else "white")
 
@@ -802,7 +1307,62 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Visualize COBS-framed ESP32 audio and classification telemetry."
     )
-    parser.add_argument("--port", help="Serial port, for example COM6 or /dev/ttyUSB0")
+    parser.add_argument(
+        "--port",
+        help=(
+            "Serial port override, for example COM6, /dev/ttyUSB0, "
+            "or /dev/cu.usbserial-110"
+        ),
+    )
+    parser.add_argument(
+        "--list-ports",
+        action="store_true",
+        help="List detected serial ports with USB metadata and exit.",
+    )
+    parser.add_argument(
+        "--vid",
+        type=parse_usb_id,
+        default=None,
+        help="Optional USB vendor ID filter, for example 0x303A, 10C4, or 1A86.",
+    )
+    parser.add_argument(
+        "--pid",
+        type=parse_usb_id,
+        default=None,
+        help="Optional USB product ID filter.",
+    )
+    parser.add_argument(
+        "--usb-serial",
+        default=None,
+        help="Optional exact USB serial-number filter.",
+    )
+    parser.add_argument(
+        "--port-match",
+        default=None,
+        help=(
+            "Case-insensitive substring matched against port path, product, "
+            "manufacturer, hardware ID, serial number, and location."
+        ),
+    )
+    parser.add_argument(
+        "--probe-timeout",
+        type=float,
+        default=3.0,
+        help="Seconds to wait for a valid telemetry frame from each candidate.",
+    )
+    parser.add_argument(
+        "--probe-all-ports",
+        action="store_true",
+        help="Also probe ports identified as Bluetooth, infrared, or modem devices.",
+    )
+    parser.add_argument(
+        "--strict-probe",
+        action="store_true",
+        help=(
+            "Require a valid telemetry frame during discovery. By default, a "
+            "single or clearly ranked USB serial device is allowed as a fallback."
+        ),
+    )
     parser.add_argument("--baud", type=int, default=2_000_000)
     parser.add_argument("--fs", type=int, default=8_000)
     parser.add_argument("--samples", type=int, default=2_400)
@@ -817,14 +1377,63 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Number of new audio samples between packets. Use a smaller value "
             "when firmware sends overlapping inference windows. Defaults to "
-            "half the window for the current firmware's 50% overlap."
+            "half the window for the current firmware's 50%% overlap."
         ),
     )
     parser.add_argument(
         "--live-wave-seconds",
         type=float,
         default=2.0,
-        help="Seconds of rolling waveform to show in the live view.",
+        help="Maximum seconds of rolling waveform to show in the live view.",
+    )
+    parser.add_argument(
+        "--fixed-wave-x",
+        action="store_true",
+        help=(
+            "Keep the waveform X axis fixed at --live-wave-seconds instead of "
+            "growing with the amount of received audio during startup."
+        ),
+    )
+    parser.add_argument(
+        "--fixed-wave-y",
+        action="store_true",
+        help="Disable automatic waveform Y-axis scaling.",
+    )
+    parser.add_argument(
+        "--wave-y-min",
+        type=float,
+        default=0.005,
+        help="Minimum automatic symmetric waveform Y limit.",
+    )
+    parser.add_argument(
+        "--wave-y-max",
+        type=float,
+        default=1.0,
+        help="Maximum automatic symmetric waveform Y limit.",
+    )
+    parser.add_argument(
+        "--wave-y-percentile",
+        type=float,
+        default=99.8,
+        help=(
+            "Absolute-amplitude percentile used for automatic Y scaling. "
+            "Use 100 to include the exact maximum sample."
+        ),
+    )
+    parser.add_argument(
+        "--wave-y-headroom",
+        type=float,
+        default=1.15,
+        help="Headroom multiplier applied to the automatic Y limit.",
+    )
+    parser.add_argument(
+        "--wave-y-release",
+        type=float,
+        default=0.90,
+        help=(
+            "Y-axis contraction smoothing in [0, 1). Higher values contract "
+            "more slowly and reduce visual flicker."
+        ),
     )
     parser.add_argument(
         "--n-fft",
@@ -847,8 +1456,26 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
 
+    if args.list_ports:
+        ports = list_serial_ports()
+        if not ports:
+            print("No serial ports found.")
+            return 1
+
+        print("Detected serial ports:")
+        for detected_port in sorted(
+            ports,
+            key=lambda port: (-score_port(port), port.device.casefold()),
+        ):
+            print(f"  {format_port(detected_port)}")
+        return 0
+
+    if args.baud <= 0:
+        raise ValueError("--baud must be positive")
     if args.fs <= 0 or args.samples <= 0:
         raise ValueError("--fs and --samples must be positive")
+    if args.probe_timeout <= 0:
+        raise ValueError("--probe-timeout must be positive")
     if not 0.0 <= args.threshold <= 1.0:
         raise ValueError("--threshold must be between 0 and 1")
     if args.n_fft <= 0 or args.n_fft & (args.n_fft - 1):
@@ -861,6 +1488,16 @@ def main() -> int:
         raise ValueError("--refresh-ms must be positive")
     if args.live_wave_seconds <= 0:
         raise ValueError("--live-wave-seconds must be positive")
+    if args.wave_y_min <= 0:
+        raise ValueError("--wave-y-min must be positive")
+    if args.wave_y_max <= args.wave_y_min:
+        raise ValueError("--wave-y-max must be greater than --wave-y-min")
+    if not 0.0 < args.wave_y_percentile <= 100.0:
+        raise ValueError("--wave-y-percentile must be in (0, 100]")
+    if args.wave_y_headroom <= 1.0:
+        raise ValueError("--wave-y-headroom must be greater than 1")
+    if not 0.0 <= args.wave_y_release < 1.0:
+        raise ValueError("--wave-y-release must be in [0, 1)")
     if not 0.0 <= args.min_frequency < args.max_frequency <= args.fs / 2:
         raise ValueError("frequency limits must satisfy 0 <= min < max <= Nyquist")
 
@@ -870,8 +1507,18 @@ def main() -> int:
     if not 0 < packet_hop_samples <= args.samples:
         raise ValueError("--packet-hop-samples must be between 1 and --samples")
 
-    port = choose_port(args.port)
-    serial_port = open_serial(port, args.baud)
+    port, serial_port = discover_serial_connection(
+        explicit_port=args.port,
+        baud=args.baud,
+        sample_count=args.samples,
+        probe_timeout=args.probe_timeout,
+        target_vid=args.vid,
+        target_pid=args.pid,
+        target_serial=args.usb_serial,
+        port_match=args.port_match,
+        probe_all_ports=args.probe_all_ports,
+        strict_probe=args.strict_probe,
+    )
     print(f"Connected to {port} at {args.baud:,} baud")
 
     packet_queue: queue.Queue[TelemetryPacket] = queue.Queue(maxsize=32)
@@ -898,6 +1545,13 @@ def main() -> int:
         max_frequency=args.max_frequency,
         packet_hop_samples=packet_hop_samples,
         live_wave_seconds=args.live_wave_seconds,
+        auto_wave_x=not args.fixed_wave_x,
+        auto_wave_y=not args.fixed_wave_y,
+        wave_y_min=args.wave_y_min,
+        wave_y_max=args.wave_y_max,
+        wave_y_percentile=args.wave_y_percentile,
+        wave_y_headroom=args.wave_y_headroom,
+        wave_y_release=args.wave_y_release,
         n_fft=args.n_fft,
         hop_length=args.hop_length,
         floor_db=args.floor_db,
