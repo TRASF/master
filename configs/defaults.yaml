@@ -144,7 +144,7 @@ dataset:
   outdoor: "dataset/MSB/Outdoor"
   mosLab: "dataset/Philip"
   train_dir: null
-  val_dir: null
+  val_dir: "dataset/MSB/Outdoor"
   test_dir: null
   split_ratios:
     train: 0.8
