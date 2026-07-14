@@ -256,7 +256,7 @@ def train_supervised(defaults_path="configs/defaults.yaml",
         save_path = resolved_paths["save_path"]
     if results_dir is None:
         results_dir = resolved_paths["results_dir"]
-        
+
     print(f"Experiment Name: {exp_name}")
     print(f"Saving weights to: {save_path}")
     print(f"Saving results to: {results_dir}")
@@ -482,6 +482,8 @@ def train_supervised(defaults_path="configs/defaults.yaml",
         val_m_rec = val_metrics.get("male_rec", 0.0)
         val_f_prec = val_metrics.get("female_prec", 0.0)
         val_f_rec = val_metrics.get("female_rec", 0.0)
+        examples_per_second = train_metrics["examples"] / epoch_time
+        batches_per_second = train_metrics["batches"] / epoch_time
 
         # Print metrics with detailed P/R for both sexes
         print(f"Epoch {epoch+1}/{epochs} - loss: {train_metrics['loss']:.4f} - acc: {train_metrics['accuracy']:.4f} | "
@@ -489,7 +491,10 @@ def train_supervised(defaults_path="configs/defaults.yaml",
               f"val_f1: {val_metrics['macro_f1']:.3f} | "
               f"Female (P:{val_f_prec:.2f}, R:{val_f_rec:.2f}, F1:{val_female_f1:.2f}) | "
               f"Male (P:{val_m_prec:.2f}, R:{val_m_rec:.2f}, F1:{val_male_f1:.2f}) | "
-              f"Time: {epoch_time:.1f}s")
+              f"Time: {epoch_time:.2f}s | "
+              f"Batches: {train_metrics['batches']} | "
+              f"Examples: {train_metrics['examples']} | "
+              f"Throughput: {examples_per_second:.0f} examples/s")
 
         # --- Manual Callback Execution ---
         callback_values = {
@@ -592,8 +597,8 @@ def train_supervised(defaults_path="configs/defaults.yaml",
                     if "file_diagnostics" in file_results:
                         diags = file_results["file_diagnostics"]
                         columns = [
-                            "file_name", "true_label", "pred_label", "is_correct", 
-                            "loss", "confidence", "total_segments", "correct_segments", 
+                            "file_name", "true_label", "pred_label", "is_correct",
+                            "loss", "confidence", "total_segments", "correct_segments",
                             "segment_accuracy", "incorrect_segments"
                         ]
                         data = [
@@ -618,8 +623,8 @@ def train_supervised(defaults_path="configs/defaults.yaml",
                     if "file_diagnostics" in train_file_results:
                         diags = train_file_results["file_diagnostics"]
                         columns = [
-                            "file_name", "true_label", "pred_label", "is_correct", 
-                            "loss", "confidence", "total_segments", "correct_segments", 
+                            "file_name", "true_label", "pred_label", "is_correct",
+                            "loss", "confidence", "total_segments", "correct_segments",
                             "segment_accuracy", "incorrect_segments"
                         ]
                         data = [
@@ -697,7 +702,7 @@ if __name__ == "__main__":
     parser.add_argument("--defaults_path", type=str, default="configs/defaults.yaml")
     parser.add_argument("--model_cfg_path", type=str, default="configs/model.yaml")
     args, unknown = parser.parse_known_args()
-    
+
     train_supervised(
         defaults_path=args.defaults_path,
         model_cfg_path=args.model_cfg_path

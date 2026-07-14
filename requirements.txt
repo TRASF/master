@@ -1,5 +1,4 @@
-tensorflow==2.21.0
-tf_keras==2.21.0
+tensorflow[and-cuda]==2.21.0
 numpy==1.26.4
 librosa==0.11.0
 soundfile==0.12.1

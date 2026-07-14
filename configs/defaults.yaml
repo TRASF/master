@@ -1,148 +1,156 @@
 labels:
-    Ae_aegypti_Female: 0
-    Ae_aegypti_Male: 1
-    No.Mos: 2
+  Ae_aegypti_Female: 0
+  Ae_aegypti_Male: 1
+  Ae_albopictus_Female: 2
+  Ae_albopictus_Male: 3
+  An_dirus_Female: 4
+  An_dirus_Male: 5
+  An_minimus_Female: 6
+  An_minimus_Male: 7
+  Cx_quin_Female: 8
+  Cx_quin_Male: 9
+  No.mos: 10
 
-num_classes: 3
-nomos_index: 2
+num_classes: 11
+nomos_index: 10
 
 wandb:
-    enabled: true
-    project: "MosSongPlus"
-    group: "species-nomos-ae_aegypti"
-    job_type: "species_nomos"
-    tags:
-        - species-nomos
-        - ae_aegypti
-        - nomos
-    log_weights_freq: 0
-    aggregate_plot_freq: 0
-    prediction_table_max_rows: 5000
-    log_prediction_audio: false
+  enabled: true
+  log_weights_freq: 0
+  aggregate_plot_freq: 0
+  prediction_table_max_rows: 100
+  log_prediction_audio: false
+  group: 11class-local-bestaug
+  job_type: train
+  tags:
+    - 11class
+    - nomos
+    - indoor
+    - bestaug
+    - local-test
+  notes: "11-class local test using best observed config: overlay20 + gain30 + mixup alpha0.4"
 
 train:
-    batch_size: 256
-    shuffle: true
-    epochs: 1000
-    seed: 45
-    warmup_epochs: 15
-    warmup_augment_p: 0.0
+  batch_size: 256
+  shuffle: true
+  epochs: 1000
+  seed: 45
+  warmup_epochs: 15
+  warmup_augment_p: 0.0
 
 reproducibility:
-    enabled: true
-    seed: 45
-    deterministic_ops: true
-    deterministic_data: true
+  enabled: true
+  seed: 45
+  deterministic_ops: true
+  deterministic_data: true
 
 optimizer:
-    name: Adam
-    learning_rate: 0.001
+  name: Adam
+  learning_rate: 0.001
 
 model:
-    output_activation: null
-
-    # Best-run BN pattern = 11100
-    bn_conv1: true
-    bn_conv2: true
-    bn_conv3: true
-    bn_dense1: false
-    bn_dense2: false
+  output_activation: null
+  bn_conv1: true
+  bn_conv2: true
+  bn_conv3: true
+  bn_dense1: false
+  bn_dense2: false
 
 loss:
-    name: CategoricalCrossentropy
-    from_logits: true
-    reduction: none
+  name: CategoricalCrossentropy
+  from_logits: true
+  reduction: none
 
 callbacks:
-    early_stopping:
-        monitor: val_macro_f1
-        patience: 100
-        mode: max
-        restore_best_weights: true
+  early_stopping:
+    monitor: val_macro_f1
+    patience: 100
+    mode: max
+    restore_best_weights: true
 
-    model_checkpoint:
-        monitor: val_macro_f1
-        save_best_only: true
-        save_weights_only: true
-        mode: max
+  model_checkpoint:
+    monitor: val_macro_f1
+    save_best_only: true
+    save_weights_only: true
+    mode: max
 
-    reduce_lr_on_plateau:
-        monitor: val_macro_f1
-        factor: 0.5
-        patience: 50
-        min_lr: 1e-6
-        mode: max
-        restore_best_weights: true
+  reduce_lr_on_plateau:
+    monitor: val_macro_f1
+    factor: 0.5
+    patience: 50
+    min_lr: 1e-6
+    mode: max
+    restore_best_weights: true
 
 augment:
-    max_segments_per_file: 100
+  max_segments_per_file: 100
 
-    segment_overlap:
-        train: [0.0, 0.8]
-        val: 0.5
+  segment_overlap:
+    train: [0.0, 0.8]
+    val: 0.5
 
-    high_pass:
-        p: 0.0
-        fc: 150
+  high_pass:
+    p: 0.0
+    fc: 150
 
-    noise_banks:
-        - "/app/dataset/MSB/Environmental/humbug_noises"
-        - "/app/dataset/MSB/Environmental/inmp_noises"
-        - "/app/dataset/MSB/Environmental/miru_noises"
-        - "/app/dataset/MSB/Environmental/noises"
-        - "/app/dataset/MSB/Environmental/Nomos"
+  noise_banks:
+    - "dataset/MSB/Environmental/humbug_noises"
+    - "dataset/MSB/Environmental/inmp_noises"
+    - "dataset/MSB/Environmental/miru_noises"
+    - "dataset/MSB/Environmental/noises"
+    - "dataset/MSB/Environmental/Nomos"
 
-    noise_overlay:
-        p: 0.0
-        snr_db: [15, 30]
-        envelope_gain: [0.7, 1.0]
-        post_gain_db: [-3.0, 3.0]
+  noise_overlay:
+    p: 0.20
+    snr_db: [15, 30]
+    envelope_gain: [0.7, 1.0]
+    post_gain_db: [-3.0, 3.0]
 
-    random_gain:
-        p: 0.0
-        gain_db: [-6, 6]
+  random_gain:
+    p: 0.30
+    gain_db: [-3.0, 3.0]
 
-    time_shift:
-        p: 0.0
-        rate: [-0.05, 0.05]
+  time_shift:
+    p: 0.0
+    rate: [-0.05, 0.05]
 
-    pitch_shift:
-        p: 0.0
-        semitones: [-0.2, 0.2]
+  pitch_shift:
+    p: 0.0
+    semitones: [-0.2, 0.2]
 
-    gaussian_noise:
-        p: 0.0
-        snr_db: [20, 50]
+  gaussian_noise:
+    p: 0.0
+    snr_db: [20, 50]
 
-    rms_norm:
-        target_rms: 0.05
-        max_gain: 15.0
-        min_gain: 0.05
+  rms_norm:
+    target_rms: 0.05
+    max_gain: 15.0
+    min_gain: 0.05
 
-    mixup:
-        p: 1.0
-        alpha: 0.4
+  mixup:
+    p: 1.0
+    alpha: 0.4
 
 audio:
-    sample_rate: 8000
-    duration: 0.3
-    segment_length: 2400
+  sample_rate: 8000
+  duration: 0.3
+  segment_length: 2400
 
 dataset:
-    indoor: "dataset/MSB/Indoor"
-    outdoor: "dataset/MSB/Outdoor"
-    mosLab: "dataset/Philip"
-    train_dir: "dataset/pair_ae_aegypti"
-    val_dir: null
-    test_dir: null
-    split_ratios:
-        train: 0.8
-        val: 0.1
-        test: 0.1
+  indoor: "dataset/MSB/Indoor"
+  outdoor: "dataset/MSB/Outdoor"
+  mosLab: "dataset/Philip"
+  train_dir: null
+  val_dir: null
+  test_dir: null
+  split_ratios:
+    train: 0.8
+    val: 0.1
+    test: 0.1
 
 class_weights:
-    enabled: true
-    values: [1.0, 1.0, 1.0]
+  enabled: true
+  values: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
 
 preprocess:
-    dc_removal: true
+  dc_removal: true

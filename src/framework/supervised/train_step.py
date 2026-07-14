@@ -76,7 +76,7 @@ class Train:
         )
 
         self.train_loss_metric.update_state(loss)
-        
+
         if not self.is_contrastive:
             self.train_acc_metric.update_state(y, predictions)
 
@@ -86,10 +86,17 @@ class Train:
         self.train_loss_metric.reset_state()
         self.train_acc_metric.reset_state()
 
+        batches = 0
+        examples = 0
+
         for x, y in self.train_ds:
             self.train_step(x, y)
+            batches += 1
+            examples += int(tf.shape(x)[0])
 
         return {
             "loss": float(self.train_loss_metric.result()),
-            "accuracy": float(self.train_acc_metric.result()) if not self.is_contrastive else 0.0,
+            "accuracy": float(self.train_acc_metric.result()),
+            "batches": batches,
+            "examples": examples,
         }
