@@ -246,7 +246,7 @@ class ModelEvaluator:
                 training=False,
             )
             segments = segments.map(
-                lambda x, y: augmentor.apply_post_processing(x, y, augment=False),
+                lambda x, y, seed: augmentor.apply_post_processing(x, y, seed=seed, augment=False),
                 num_parallel_calls=tf.data.AUTOTUNE,
             )
             segments = segments.map(

@@ -41,9 +41,7 @@ class SupervisedDataset:
 
         self.pure_parallel_calls = tf.data.AUTOTUNE
 
-        self.random_parallel_calls = (
-            1 if deterministic else tf.data.AUTOTUNE
-        )
+        self.random_parallel_calls = tf.data.AUTOTUNE
 
         self.prefetch_buffer = tf.data.AUTOTUNE
 
@@ -150,6 +148,19 @@ class SupervisedDataset:
         shuffle,
         one_hot,
     ):
+        import hashlib
+        import os
+
+        # Calculate paths hash
+        paths_str = "".join(sorted(str(p) for p in file_paths))
+        paths_hash = hashlib.md5(paths_str.encode()).hexdigest()
+
+        # Cache directory under dataset/.tf_cache
+        cache_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../dataset/.tf_cache"))
+        os.makedirs(cache_dir, exist_ok=True)
+        cache_prefix = "train" if augment else "val_test"
+        cache_file = os.path.join(cache_dir, f"{cache_prefix}_{paths_hash}")
+
         dataset = tf.data.Dataset.from_tensor_slices(
             (file_paths, labels)
         )
@@ -166,38 +177,45 @@ class SupervisedDataset:
                 reshuffle_each_iteration=True,
             )
 
+        # Map to load audio
         dataset = dataset.map(
-            self._tf_load_full_audio,
+            lambda path, label: (self._tf_load_full_audio(path), label),
             num_parallel_calls=self.pure_parallel_calls,
             deterministic=self.deterministic,
         )
 
-        dataset = dataset.cache()
-
+        # Cache audio for training dataset
         if augment:
-            segment_parallel_calls = self.random_parallel_calls
+            dataset = dataset.cache(cache_file)
 
-            dataset = dataset.interleave(
-                lambda audio, label: self.augmentor.create_segments(
-                    audio,
-                    label,
-                    training=True,
-                ),
-                num_parallel_calls=segment_parallel_calls,
+        # Zip or assign seeds
+        if augment:
+            seed_ds = tf.data.Dataset.random(seed=self.seed, rerandomize_each_iteration=True)
+            dataset = tf.data.Dataset.zip((dataset, seed_ds))
+            dataset = dataset.map(
+                lambda audio_label, seed: (audio_label[0], audio_label[1], seed),
+                num_parallel_calls=self.pure_parallel_calls,
                 deterministic=self.deterministic,
             )
         else:
-            segment_parallel_calls = self.pure_parallel_calls
-
-            dataset = dataset.interleave(
-                lambda audio, label: self.augmentor.create_segments(
-                    audio,
-                    label,
-                    training=False,
-                ),
-                num_parallel_calls=segment_parallel_calls,
+            dataset = dataset.map(
+                lambda audio, label: (audio, label, tf.constant(0, dtype=tf.int64)),
+                num_parallel_calls=self.pure_parallel_calls,
                 deterministic=self.deterministic,
             )
+
+        # Interleave segments
+        segment_parallel_calls = self.random_parallel_calls if augment else self.pure_parallel_calls
+        dataset = dataset.interleave(
+            lambda audio, label, seed: self.augmentor.create_segments(
+                audio,
+                label,
+                seed,
+                training=augment,
+            ),
+            num_parallel_calls=segment_parallel_calls,
+            deterministic=self.deterministic,
+        )
 
         noise_probability = float(
             self.augmentor.noise_cfg.get("p", 0.0)
@@ -232,10 +250,11 @@ class SupervisedDataset:
             dataset = tf.data.Dataset.zip((dataset, noise_ds))
 
             dataset = dataset.map(
-                lambda signal_label, noise: (
+                lambda element_noise, noise: (
                     self.augmentor.apply_post_processing(
-                        signal_label[0],
-                        signal_label[1],
+                        element_noise[0],
+                        element_noise[1],
+                        element_noise[2],
                         noise=noise,
                         augment=True,
                     )
@@ -244,12 +263,12 @@ class SupervisedDataset:
                 deterministic=self.deterministic,
             )
         else:
-
             dataset = dataset.map(
-                lambda audio, label: (
+                lambda audio, label, seed: (
                     self.augmentor.apply_post_processing(
                         audio,
                         label,
+                        seed,
                         augment=augment,
                     )
                 ),
@@ -277,6 +296,19 @@ class SupervisedDataset:
                 num_parallel_calls=self.pure_parallel_calls,
                 deterministic=self.deterministic,
             )
+        else:
+            dataset = dataset.map(
+                lambda audio, label: (
+                    tf.expand_dims(audio, -1),
+                    label,
+                ),
+                num_parallel_calls=self.pure_parallel_calls,
+                deterministic=self.deterministic,
+            )
+
+        # Cache validation and test datasets at the end
+        if not augment:
+            dataset = dataset.cache(cache_file)
 
         dataset = dataset.batch(batch_size)
 
@@ -284,11 +316,14 @@ class SupervisedDataset:
         mixup_probability = float(mixup_cfg.get("p", 0.0))
 
         if augment and mixup_probability > 0.0:
+            mixup_seed_ds = tf.data.Dataset.random(seed=self.seed + 888 if self.seed is not None else None, rerandomize_each_iteration=True)
+            dataset = tf.data.Dataset.zip((dataset, mixup_seed_ds))
             dataset = dataset.map(
-                lambda audio, label: self._apply_targeted_mixup(
-                    audio,
-                    label,
+                lambda audio_label, seed: self._apply_targeted_mixup(
+                    audio_label[0],
+                    audio_label[1],
                     mixup_cfg,
+                    seed,
                 ),
                 num_parallel_calls=self.random_parallel_calls,
                 deterministic=self.deterministic,
@@ -299,13 +334,17 @@ class SupervisedDataset:
         return self._with_deterministic_options(dataset)
 
     @tf.function
-    def _apply_targeted_mixup(self, x, y, mixup_cfg):
+    def _apply_targeted_mixup(self, x, y, mixup_cfg, seed):
         p = float(mixup_cfg.get('p', 1.0))
         alpha = float(mixup_cfg.get('alpha', 0.2))
 
         batch_size = tf.shape(x)[0]
 
-        indices = tf.random.shuffle(tf.range(batch_size))
+        shuffle_seed = tf.stack([seed, tf.constant(501, dtype=tf.int64)])
+        do_mix_seed = tf.stack([seed, tf.constant(502, dtype=tf.int64)])
+        gamma_seed = tf.stack([seed, tf.constant(503, dtype=tf.int64)])
+
+        indices = tf.random.experimental.stateless_shuffle(tf.range(batch_size), seed=shuffle_seed)
         x2 = tf.gather(x, indices)
         y2 = tf.gather(y, indices)
 
@@ -337,10 +376,12 @@ class SupervisedDataset:
             prob_scale = tf.ones([batch_size])
 
         mix_prob = p * prob_scale
-        do_mix = tf.random.uniform([batch_size]) < mix_prob
+        do_mix = tf.random.stateless_uniform([batch_size], seed=do_mix_seed) < mix_prob
 
-        gamma1 = tf.random.gamma([batch_size], alpha)
-        gamma2 = tf.random.gamma([batch_size], alpha)
+        gamma1_seed = tf.stack([gamma_seed[0], tf.constant(1, dtype=tf.int64)])
+        gamma2_seed = tf.stack([gamma_seed[0], tf.constant(2, dtype=tf.int64)])
+        gamma1 = tf.random.stateless_gamma([batch_size], seed=gamma1_seed, alpha=alpha)
+        gamma2 = tf.random.stateless_gamma([batch_size], seed=gamma2_seed, alpha=alpha)
         lam = gamma1 / (gamma1 + gamma2 + 1e-8)
 
         lam = tf.where(do_mix, lam, tf.ones_like(lam))

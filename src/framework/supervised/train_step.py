@@ -53,7 +53,6 @@ class Train:
 
         return tf.reduce_sum(y * self.class_weights, axis=-1)
 
-    @tf.function
     def train_step(self, x, y):
         sample_weight = self._get_sample_weights(y)
 
@@ -82,17 +81,37 @@ class Train:
 
         return loss
 
+    @tf.function
+    def _train_steps_tf(self, iterator, num_steps):
+        batches = tf.constant(0, dtype=tf.int32)
+        examples = tf.constant(0, dtype=tf.int32)
+
+        for _ in tf.range(num_steps):
+            optional_element = iterator.get_next_as_optional()
+            if not optional_element.has_value():
+                break
+            x, y = optional_element.get_value()
+            self.train_step(x, y)
+            batches += 1
+            examples += tf.shape(x)[0]
+
+        return batches, examples
+
     def train_epoch(self):
         self.train_loss_metric.reset_state()
         self.train_acc_metric.reset_state()
 
         batches = 0
         examples = 0
+        iterator = iter(self.train_ds)
+        steps_per_call = tf.constant(20, dtype=tf.int32)
 
-        for x, y in self.train_ds:
-            self.train_step(x, y)
-            batches += 1
-            examples += int(tf.shape(x)[0])
+        while True:
+            b, e = self._train_steps_tf(iterator, steps_per_call)
+            if b == 0:
+                break
+            batches += int(b)
+            examples += int(e)
 
         return {
             "loss": float(self.train_loss_metric.result()),

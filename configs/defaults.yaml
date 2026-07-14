@@ -15,7 +15,7 @@ num_classes: 11
 nomos_index: 10
 
 wandb:
-  enabled: true
+  enabled: false
   log_weights_freq: 0
   aggregate_plot_freq: 0
   prediction_table_max_rows: 100

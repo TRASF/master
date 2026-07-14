@@ -44,6 +44,15 @@ class AudioAugmentor:
 
         import scipy.signal
 
+        self.hpf_p = float(self.hpf_cfg.get('p', 0.0))
+        self.pre_p = float(self.pre_cfg.get('p', 0.0))
+        self.pitch_p = float(self.pitch_cfg.get('p', 0.0))
+        self.time_p = float(self.time_cfg.get('p', 0.0))
+        self.mask_p = float(self.mask_cfg.get('p', 0.0))
+        self.gain_p = float(self.gain_cfg.get('p', 0.0))
+        self.gauss_p = float(self.gauss_cfg.get('p', 0.0))
+        self.noise_p = float(self.noise_cfg.get('p', 0.0))
+
         if self.hpf_cfg.get("fc", 0) > 0:
             sr = 8000
             taps = scipy.signal.firwin(
@@ -83,26 +92,33 @@ class AudioAugmentor:
         return delta
 
     @tf.function
-    def apply_time_masking(self, audio):
+    def apply_time_masking(self, audio, seed=None):
         """
         Applies time masking by setting a random segment of the audio to zero.
         """
+        if seed is None:
+            seed = tf.constant([0, 0], dtype=tf.int64)
         num_masks = self.mask_cfg.get('num_masks', 1)
         max_mask_size = self.mask_cfg.get('max_mask_size', 400)
 
-        for _ in range(num_masks):
+        for i in range(num_masks):
             max_mask_size = tf.minimum(tf.cast(max_mask_size, tf.int32), self.segment_length)
             max_mask_size = tf.maximum(max_mask_size, 1)
             min_mask_size = tf.minimum(tf.constant(10, dtype=tf.int32), max_mask_size)
 
-            mask_size = tf.random.uniform(
+            mask_size_seed = tf.stack([seed[0], tf.cast(100 + i, tf.int64)])
+            start_idx_seed = tf.stack([seed[0], tf.cast(200 + i, tf.int64)])
+
+            mask_size = tf.random.stateless_uniform(
                 [],
+                seed=mask_size_seed,
                 minval=min_mask_size,
                 maxval=max_mask_size + 1,
                 dtype=tf.int32,
             )
-            start_idx = tf.random.uniform(
+            start_idx = tf.random.stateless_uniform(
                 [],
+                seed=start_idx_seed,
                 minval=0,
                 maxval=self.segment_length - mask_size + 1,
                 dtype=tf.int32,
@@ -117,23 +133,40 @@ class AudioAugmentor:
         return audio
 
     @tf.function
-    def random_segment(self, audio):
+    def random_segment(self, audio, seed=None):
+        if seed is None:
+            seed = tf.constant(0, dtype=tf.int64)
         audio_len = tf.shape(audio)[0]
         pad_size = tf.maximum(0, self.segment_length - audio_len)
         audio = tf.pad(audio, [[0, pad_size]])
         audio_len = tf.shape(audio)[0]
         max_start = audio_len - self.segment_length
-        start_idx = tf.random.uniform([], minval=0, maxval=max_start + 1, dtype=tf.int32)
+        seed_2d = tf.stack([seed, tf.constant(42, dtype=tf.int64)])
+        start_idx = tf.random.stateless_uniform(
+            [],
+            seed=seed_2d,
+            minval=0,
+            maxval=max_start + 1,
+            dtype=tf.int32,
+        )
         segment = audio[start_idx : start_idx + self.segment_length]
         segment.set_shape([self.segment_length])
         return segment
 
-    @tf.function
-    def create_segments(self, audio, label, training=True):
+    def create_segments(self, audio, label, seed=None, training=True):
+        if seed is None:
+            seed = tf.constant(0, dtype=tf.int64)
         audio = tf.cast(audio, tf.float32)
         audio_len = tf.shape(audio)[0]
 
         if training:
+            # Overlap seed (identity 1)
+            overlap_seed = tf.stack([seed, tf.constant(1, dtype=tf.int64)])
+            # Offset seed (identity 2)
+            offset_seed = tf.stack([seed, tf.constant(2, dtype=tf.int64)])
+            # Shuffle seed (identity 3)
+            shuffle_seed = tf.stack([seed, tf.constant(3, dtype=tf.int64)])
+
             # Random overlap between the ranges provided in overlap_cfg
             if isinstance(self.overlap_cfg, dict):
                 overlap_range = self.overlap_cfg.get('train', [0.0, 0.8])
@@ -142,7 +175,7 @@ class AudioAugmentor:
             else:
                 overlap_range = [0.0, 0.8]
 
-            random_overlap = tf.random.uniform([], float(overlap_range[0]), float(overlap_range[1]))
+            random_overlap = tf.random.stateless_uniform([], seed=overlap_seed, minval=float(overlap_range[0]), maxval=float(overlap_range[1]))
             # Convert overlap ratio to step ratio
             current_step_ratio = 1.0 - random_overlap
         else:
@@ -159,7 +192,7 @@ class AudioAugmentor:
         if training:
             # Slicing from offset is safer than tf.roll and gives a random start point
             max_offset = tf.minimum(step, tf.maximum(audio_len, 1))
-            offset = tf.random.uniform([], minval=0, maxval=max_offset, dtype=tf.int32)
+            offset = tf.random.stateless_uniform([], seed=offset_seed, minval=0, maxval=max_offset, dtype=tf.int32)
             audio = audio[offset:]
 
         # Create overlapping frames
@@ -178,16 +211,21 @@ class AudioAugmentor:
                 current_max = max_segments
 
             indices = tf.range(num_frames)
-            shuffled_indices = tf.random.shuffle(indices)
+            shuffled_indices = tf.random.experimental.stateless_shuffle(indices, seed=shuffle_seed)
             sliced_indices = shuffled_indices[:current_max]
 
             frames = tf.gather(frames, sliced_indices)
             labels = tf.gather(labels, sliced_indices)
+            # Create a unique seed per segment based on slice index
+            segment_seeds = seed + tf.cast(sliced_indices, tf.int64)
+            segment_seeds = tf.stack([segment_seeds, tf.fill(tf.shape(segment_seeds), tf.constant(99, dtype=tf.int64))], axis=1)
+        else:
+            segment_seeds = tf.zeros([num_frames, 2], dtype=tf.int64)
 
         frames.set_shape([None, self.segment_length])
 
         # Return as Dataset (Required for .interleave in dataset.py)
-        return tf.data.Dataset.from_tensor_slices((frames, labels))
+        return tf.data.Dataset.from_tensor_slices((frames, labels, segment_seeds))
 
     def build_noise_dataset(self, noise_dirs, load_fn):
         noise_paths = []
@@ -228,12 +266,13 @@ class AudioAugmentor:
             reshuffle_each_iteration=True,
         ).repeat()
 
-        random_parallel_calls = (
-            1 if self.deterministic else tf.data.AUTOTUNE
-        )
+        noise_seed_ds = tf.data.Dataset.random(seed=self.seed + 99 if self.seed is not None else None, rerandomize_each_iteration=True)
+        noise_ds = tf.data.Dataset.zip((noise_ds, noise_seed_ds))
+
+        random_parallel_calls = tf.data.AUTOTUNE
 
         noise_ds = noise_ds.map(
-            self.random_segment,
+            lambda audio, seed: self.random_segment(audio, seed),
             num_parallel_calls=random_parallel_calls,
             deterministic=self.deterministic,
         )
@@ -242,50 +281,60 @@ class AudioAugmentor:
 
 
     @tf.function
-    def sample_noise_snr(self, fallback_range):
+    def sample_noise_snr(self, fallback_range, seed):
         if 'snr_distribution' not in self.noise_cfg:
-            return tf.random.uniform([], minval=float(fallback_range[0]), maxval=float(fallback_range[1]))
+            return tf.random.stateless_uniform([], seed=seed, minval=float(fallback_range[0]), maxval=float(fallback_range[1]))
 
-        r = tf.random.uniform([])
+        r_seed = tf.stack([seed[0], tf.constant(101, dtype=tf.int64)])
+        r = tf.random.stateless_uniform([], seed=r_seed)
         cumulative = 0.0
         branches = []
-        for item in self.noise_cfg['snr_distribution']:
+        for i, item in enumerate(self.noise_cfg['snr_distribution']):
             cumulative += float(item.get('p', 0.0))
             low, high = item.get('snr_db', fallback_range)
+            branch_seed = tf.stack([seed[0], tf.cast(1000 + i, tf.int64)])
             branches.append((
                 r < cumulative,
-                lambda low=low, high=high: tf.random.uniform([], minval=float(low), maxval=float(high)),
+                lambda low=low, high=high, bs=branch_seed: tf.random.stateless_uniform([], seed=bs, minval=float(low), maxval=float(high)),
             ))
 
-        low, high = self.noise_cfg['snr_distribution'][-1].get('snr_db', fallback_range)
+        last_low, last_high = self.noise_cfg['snr_distribution'][-1].get('snr_db', fallback_range)
+        last_seed = tf.stack([seed[0], tf.constant(999, dtype=tf.int64)])
         return tf.case(
             branches,
-            default=lambda: tf.random.uniform([], minval=float(low), maxval=float(high)),
+            default=lambda: tf.random.stateless_uniform([], seed=last_seed, minval=float(last_low), maxval=float(last_high)),
             exclusive=False,
         )
 
     @tf.function
-    def apply_noise_envelope(self, noise):
+    def apply_noise_envelope(self, noise, seed):
         min_gain = float(self.noise_envelope_cfg[0])
         max_gain = float(self.noise_envelope_cfg[1])
-        start_gain = tf.random.uniform([], min_gain, max_gain)
-        end_gain = tf.random.uniform([], min_gain, max_gain)
+        start_seed = tf.stack([seed[0], tf.constant(201, dtype=tf.int64)])
+        end_seed = tf.stack([seed[0], tf.constant(202, dtype=tf.int64)])
+        start_gain = tf.random.stateless_uniform([], seed=start_seed, minval=min_gain, maxval=max_gain)
+        end_gain = tf.random.stateless_uniform([], seed=end_seed, minval=min_gain, maxval=max_gain)
         envelope = tf.linspace(start_gain, end_gain, tf.shape(noise)[0])
         return noise * envelope
 
     @tf.function
-    def add_noise(self, audio, noise, snr_range):
-        noise = self.apply_noise_envelope(noise)
+    def add_noise(self, audio, noise, snr_range, seed):
+        env_seed = tf.stack([seed[0], tf.constant(301, dtype=tf.int64)])
+        snr_seed = tf.stack([seed[0], tf.constant(302, dtype=tf.int64)])
+        gain_seed = tf.stack([seed[0], tf.constant(303, dtype=tf.int64)])
+
+        noise = self.apply_noise_envelope(noise, seed=env_seed)
 
         audio_rms = tf.sqrt(tf.reduce_mean(tf.square(audio)) + 1e-12)
         noise_rms = tf.sqrt(tf.reduce_mean(tf.square(noise)) + 1e-12)
-        snr_db = self.sample_noise_snr(snr_range)
+        snr_db = self.sample_noise_snr(snr_range, seed=snr_seed)
         snr_lin = tf.pow(10.0, snr_db / 20.0)
         scale = audio_rms / (noise_rms * snr_lin + 1e-12)
         augmented = audio + (noise * scale)
 
-        gain_db = tf.random.uniform(
+        gain_db = tf.random.stateless_uniform(
             [],
+            seed=gain_seed,
             minval=float(self.noise_post_gain_cfg[0]),
             maxval=float(self.noise_post_gain_cfg[1]),
         )
@@ -295,11 +344,11 @@ class AudioAugmentor:
         return tf.cond(peak > 0.95, lambda: augmented / peak * 0.95, lambda: augmented)
 
     @tf.function
-    def pitch_shift(self, audio, semitones_range):
+    def pitch_shift(self, audio, semitones_range, seed):
         """
         Approximates pitch shift via resampling using tf.image.resize.
         """
-        semitones = tf.random.uniform([], float(semitones_range[0]), float(semitones_range[1]))
+        semitones = tf.random.stateless_uniform([], seed=seed, minval=float(semitones_range[0]), maxval=float(semitones_range[1]))
         factor = tf.pow(2.0, semitones / 12.0)
         new_len = tf.cast(tf.cast(self.segment_length, tf.float32) / factor, tf.int32)
 
@@ -318,8 +367,8 @@ class AudioAugmentor:
         return final
 
     @tf.function
-    def time_shift(self, audio, rate_range):
-        rate = tf.random.uniform([], float(rate_range[0]), float(rate_range[1]))
+    def time_shift(self, audio, rate_range, seed):
+        rate = tf.random.stateless_uniform([], seed=seed, minval=float(rate_range[0]), maxval=float(rate_range[1]))
         shift = tf.cast(tf.cast(self.segment_length, tf.float32) * rate, tf.int32)
 
         def shift_right():
@@ -339,18 +388,20 @@ class AudioAugmentor:
         )
 
     @tf.function
-    def random_gain(self, audio, gain_db_range):
-        gain_db = tf.random.uniform([], float(gain_db_range[0]), float(gain_db_range[1]))
+    def random_gain(self, audio, gain_db_range, seed):
+        gain_db = tf.random.stateless_uniform([], seed=seed, minval=float(gain_db_range[0]), maxval=float(gain_db_range[1]))
         gain = tf.pow(10.0, gain_db / 20.0)
         return audio * gain
 
     @tf.function
-    def add_gaussian_noise(self, audio, snr_range):
+    def add_gaussian_noise(self, audio, snr_range, seed):
         audio_rms = tf.sqrt(tf.reduce_mean(tf.square(audio)) + 1e-9)
-        snr_db = tf.random.uniform([], float(snr_range[0]), float(snr_range[1]))
+        snr_seed = tf.stack([seed[0], tf.constant(1001, dtype=tf.int64)])
+        noise_seed = tf.stack([seed[0], tf.constant(1002, dtype=tf.int64)])
+        snr_db = tf.random.stateless_uniform([], seed=snr_seed, minval=float(snr_range[0]), maxval=float(snr_range[1]))
         snr_lin = tf.pow(10.0, snr_db / 20.0)
         noise_rms = audio_rms / snr_lin
-        noise = tf.random.normal(tf.shape(audio), mean=0.0, stddev=noise_rms)
+        noise = tf.random.stateless_normal(tf.shape(audio), seed=noise_seed, mean=0.0, stddev=noise_rms)
         return audio + noise
 
     @tf.function
@@ -365,54 +416,80 @@ class AudioAugmentor:
         return tf.reshape(filtered, [self.segment_length])
 
     @tf.function
-    def apply_post_processing(self, audio, label, noise=None, augment=True):
+    def apply_post_processing(self, audio, label, seed=None, noise=None, augment=True):
+        if seed is None:
+            seed = tf.constant([0, 0], dtype=tf.int64)
         # ----------------------------------------------------
         # Phase 1: Signal Conditioning (Structure)
         # ----------------------------------------------------
         # High-pass filter
-        hpf_p = float(self.hpf_cfg.get('p', 0.0))
-        if self.hpf_taps is not None and hpf_p > 0.0:
-            if not augment or (tf.random.uniform([]) < hpf_p):
+        if self.hpf_p > 0.0 and self.hpf_taps is not None:
+            if not augment:
                 audio = self.apply_hpf(audio)
+            else:
+                hpf_toss_seed = tf.stack([seed[0], tf.constant(10, dtype=tf.int64)])
+                if tf.random.stateless_uniform([], seed=hpf_toss_seed) < self.hpf_p:
+                    audio = self.apply_hpf(audio)
 
         # Pre-emphasis
-        pre_p = float(self.pre_cfg.get('p', 0.0))
-        if pre_p > 0.0:
-            if not augment or (tf.random.uniform([]) < pre_p):
-                audio = self.pre_emphasis(audio, coeff=float(self.pre_cfg.get('coeff', 0.97)))
+        if self.pre_p > 0.0:
+            coeff = float(self.pre_cfg.get('coeff', 0.97))
+            if not augment:
+                audio = self.pre_emphasis(audio, coeff=coeff)
+            else:
+                pre_toss_seed = tf.stack([seed[0], tf.constant(20, dtype=tf.int64)])
+                if tf.random.stateless_uniform([], seed=pre_toss_seed) < self.pre_p:
+                    audio = self.pre_emphasis(audio, coeff=coeff)
 
         # ----------------------------------------------------
         # Phase 2 & 3: Augmentations (Timing & Energy)
         # ----------------------------------------------------
         if augment:
             # Pitch Shift
-            if tf.random.uniform([]) < float(self.pitch_cfg.get('p', 0.0)):
-                audio = self.pitch_shift(audio, self.pitch_cfg['semitones'])
+            if self.pitch_p > 0.0:
+                pitch_toss_seed = tf.stack([seed[0], tf.constant(30, dtype=tf.int64)])
+                pitch_val_seed = tf.stack([seed[0], tf.constant(31, dtype=tf.int64)])
+                if tf.random.stateless_uniform([], seed=pitch_toss_seed) < self.pitch_p:
+                    audio = self.pitch_shift(audio, self.pitch_cfg['semitones'], seed=pitch_val_seed)
 
             # Time Shift
-            if tf.random.uniform([]) < float(self.time_cfg.get('p', 0.0)):
-                audio = self.time_shift(audio, self.time_cfg['rate'])
+            if self.time_p > 0.0:
+                time_toss_seed = tf.stack([seed[0], tf.constant(40, dtype=tf.int64)])
+                time_val_seed = tf.stack([seed[0], tf.constant(41, dtype=tf.int64)])
+                if tf.random.stateless_uniform([], seed=time_toss_seed) < self.time_p:
+                    audio = self.time_shift(audio, self.time_cfg['rate'], seed=time_val_seed)
 
             # Time Masking
-            if tf.random.uniform([]) < float(self.mask_cfg.get('p', 0.0)):
-                audio = self.apply_time_masking(audio)
+            if self.mask_p > 0.0:
+                mask_toss_seed = tf.stack([seed[0], tf.constant(50, dtype=tf.int64)])
+                mask_val_seed = tf.stack([seed[0], tf.constant(51, dtype=tf.int64)])
+                if tf.random.stateless_uniform([], seed=mask_toss_seed) < self.mask_p:
+                    audio = self.apply_time_masking(audio, seed=mask_val_seed)
 
             # Random Gain
-            if tf.random.uniform([]) < float(self.gain_cfg.get('p', 0.0)):
-                audio = self.random_gain(audio, self.gain_cfg['gain_db'])
+            if self.gain_p > 0.0:
+                gain_toss_seed = tf.stack([seed[0], tf.constant(60, dtype=tf.int64)])
+                gain_val_seed = tf.stack([seed[0], tf.constant(61, dtype=tf.int64)])
+                if tf.random.stateless_uniform([], seed=gain_toss_seed) < self.gain_p:
+                    audio = self.random_gain(audio, self.gain_cfg['gain_db'], seed=gain_val_seed)
 
             # Gaussian Noise
-            if tf.random.uniform([]) < float(self.gauss_cfg.get('p', 0.0)):
-                audio = self.add_gaussian_noise(audio, self.gauss_cfg['snr_db'])
+            if self.gauss_p > 0.0:
+                gauss_toss_seed = tf.stack([seed[0], tf.constant(70, dtype=tf.int64)])
+                gauss_val_seed = tf.stack([seed[0], tf.constant(71, dtype=tf.int64)])
+                if tf.random.stateless_uniform([], seed=gauss_toss_seed) < self.gauss_p:
+                    audio = self.add_gaussian_noise(audio, self.gauss_cfg['snr_db'], seed=gauss_val_seed)
 
             # Noise Overlay (External Noise Bank)
-            if noise is not None and tf.random.uniform([]) < float(self.noise_cfg.get('p', 0.0)):
-                audio = self.add_noise(audio, noise, self.noise_cfg['snr_db'])
+            if noise is not None and self.noise_p > 0.0:
+                noise_toss_seed = tf.stack([seed[0], tf.constant(80, dtype=tf.int64)])
+                noise_val_seed = tf.stack([seed[0], tf.constant(81, dtype=tf.int64)])
+                if tf.random.stateless_uniform([], seed=noise_toss_seed) < self.noise_p:
+                    audio = self.add_noise(audio, noise, self.noise_cfg['snr_db'], seed=noise_val_seed)
 
         # ----------------------------------------------------
         # Phase 4: Final Standardization (The Capstone)
         # ----------------------------------------------------
-
         # 1. First, normalize the energy so the model sees consistent volume
         if self.preprocess_cfg.get('dc_removal', True):
             audio -= tf.reduce_mean(audio)
