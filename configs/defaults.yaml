@@ -152,8 +152,19 @@ dataset:
     test: 0.1
 
 class_weights:
-  enabled: false
-  values: null
+  enabled: true
+  values:
+    Ae_aegypti_Female: 1.0
+    Ae_aegypti_Male: 1.25
+    Ae_albopictus_Female: 1.0
+    Ae_albopictus_Male: 1.0
+    An_dirus_Female: 1.0
+    An_dirus_Male: 1.0
+    An_minimus_Female: 1.0
+    An_minimus_Male: 1.0
+    Cx_quin_Female: 1.0
+    Cx_quin_Male: 1.25
+    No.Mos: 1.0
 
 preprocess:
   dc_removal: true
