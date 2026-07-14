@@ -30,7 +30,7 @@ def extract_train_settings(defaults):
     train_cfg = defaults.get('train', {})
     val_overlap = float(train_cfg.get('val_overlap', 0.7))
     step_ratio = 1.0 - val_overlap
-    
+
     return {
         'batch_size': int(train_cfg.get('batch_size', 32)),
         'shuffle': bool(train_cfg.get('shuffle', True)),
@@ -47,7 +47,7 @@ def extract_dataset_settings(defaults):
     """Return normalized dataset configuration values from defaults."""
     dataset_cfg = defaults.get('dataset', {})
     split_ratios = dataset_cfg.get('split_ratios', {'train': 0.8, 'val': 0.1, 'test': 0.1})
-    
+
     return {
         'indoor': dataset_cfg.get('indoor', 'dataset/MSB/Indoor'),
         'outdoor': dataset_cfg.get('outdoor', 'dataset/MSB/Outdoor'),
@@ -218,7 +218,7 @@ def normalize_config(defaults):
     """Consolidate all configuration extractions into a single normalized dictionary."""
     if not defaults:
         defaults = {}
-        
+
     preprocess_settings = extract_preprocess_settings(defaults)
     normalized = {
         'audio': extract_audio_settings(defaults),
@@ -235,7 +235,7 @@ def normalize_config(defaults):
         'callbacks': extract_callback_settings(defaults),
         'wandb': defaults.get('wandb', {}),
     }
-    
+
     # Resolve classes list and number of classes supporting merged categories
     labels_dict = normalized['labels']
     if labels_dict:
@@ -257,14 +257,26 @@ def normalize_config(defaults):
         normalized['num_classes'] = 0
 
     normalized['segment_length'] = normalized['audio']['segment_length']
-    
-    # Find No.Mos index
-    normalized['nomos_index'] = None
-    for i, name in enumerate(normalized['classes']):
-        if "No.Mos" in name or "Nomos" in name:
-            normalized['nomos_index'] = i
-            break
-    
+
+    configured_nomos_index = defaults.get("nomos_index")
+    normalized["nomos_index"] = (
+        int(configured_nomos_index)
+        if configured_nomos_index is not None
+        else None
+    )
+
+    if normalized["nomos_index"] is None:
+        for i, name in enumerate(normalized["classes"]):
+            compact_name = "".join(
+                character
+                for character in name.casefold()
+                if character.isalnum()
+            )
+
+            if compact_name == "nomos":
+                normalized["nomos_index"] = i
+                break
+
     return normalized
 
 
@@ -309,7 +321,7 @@ def generate_experiment_name(cfg, mode="Pretrain"):
             # Shorten the name, e.g. noise_overlay -> overlay
             short_name = key.replace("noise_", "").replace("random_", "")
             active_augs.append(short_name)
-    
+
     if active_augs:
         aug_str = "aug-" + "-".join(sorted(active_augs))
     else:
@@ -336,7 +348,7 @@ def resolve_experiment_paths(cfg, experiment_name):
     base_dir = os.path.join("models", "experiments", experiment_name)
     results_dir = os.path.join(base_dir, "results")
     save_path = os.path.join(base_dir, "best_model.weights.h5")
-    
+
     return {
         "save_dir": base_dir,
         "results_dir": results_dir,

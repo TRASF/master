@@ -49,9 +49,15 @@ class SupervisedDataset:
 
         self.nomos_index = nomos_index
         if self.nomos_index is None and classes:
-            for index, name in enumerate(classes):
-                if "No.Mos" in name or "Nomos" in name:
-                    self.nomos_index = index
+            for i, name in enumerate(classes):
+                compact_name = "".join(
+                    character
+                    for character in name.casefold()
+                    if character.isalnum()
+                )
+
+                if compact_name == "nomos":
+                    self.nomos_index = i
                     break
 
         self.augmentor = AudioAugmentor(
