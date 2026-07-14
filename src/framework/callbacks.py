@@ -4,29 +4,14 @@ import tensorflow as tf
 
 class MetricMonitor:
     def __init__(self, monitor="val_loss", mode="min", min_delta=0.0):
-        self.monitor = monitor
-        self.mode = mode
-        self.min_delta = min_delta
-
-        if mode == "min":
-            self.best = float("inf")
-        elif mode == "max":
-            self.best = float("-inf")
-        else:
-            raise ValueError("mode must be 'min' or 'max'")
+        self.monitor, self.mode, self.min_delta = monitor, mode, min_delta
+        self.best = float("inf") if mode == "min" else float("-inf")
 
     def get_value(self, logs):
-        if isinstance(logs, dict):
-            if self.monitor not in logs:
-                raise KeyError(f"Metric '{self.monitor}' not found in logs. Available: {list(logs.keys())}")
-            return float(logs[self.monitor])
-
-        return float(logs)
+        return float(logs[self.monitor]) if isinstance(logs, dict) else float(logs)
 
     def is_improved(self, current):
-        if self.mode == "min":
-            return current < self.best - self.min_delta
-        return current > self.best + self.min_delta
+        return current < self.best - self.min_delta if self.mode == "min" else current > self.best + self.min_delta
 
     def update(self, current):
         if self.is_improved(current):
@@ -39,124 +24,72 @@ class EarlyStopping:
     def __init__(self, patience=10, monitor="val_loss", mode="min", min_delta=0.0,
                  restore_best_weights=False, model=None, checkpoint_path=None):
         self.monitor = MetricMonitor(monitor, mode, min_delta)
-        self.patience = patience
-        self.wait = 0
-        self.stopped_epoch = 0
-        self.restore_best_weights = restore_best_weights
-        self.model = model
-        self.checkpoint_path = checkpoint_path
+        self.patience, self.wait, self.restore_best_weights, self.model, self.checkpoint_path = patience, 0, restore_best_weights, model, checkpoint_path
 
     def check(self, logs, epoch=None):
-        current = self.monitor.get_value(logs)
-
-        if self.monitor.update(current):
+        if self.monitor.update(self.monitor.get_value(logs)):
             self.wait = 0
             return False
-
         self.wait += 1
-
         if self.wait >= self.patience:
-            self.stopped_epoch = epoch if epoch is not None else 0
-
-            if self.restore_best_weights and self.model is not None and self.checkpoint_path is not None:
-                if os.path.exists(self.checkpoint_path):
-                    self.model.load_weights(self.checkpoint_path)
-                    print(f"Restored best weights from {self.checkpoint_path} before stopping.")
-
+            if self.restore_best_weights and self.model and self.checkpoint_path and os.path.exists(self.checkpoint_path):
+                self.model.load_weights(self.checkpoint_path)
+                print(f"Restored best weights from {self.checkpoint_path} before stopping.")
             return True
-
         return False
 
 
 class ModelCheckpoint:
     def __init__(self, filepath, monitor="val_loss", mode="min", save_best_only=True, min_delta=0.0):
-        self.filepath = filepath
-        self.save_best_only = save_best_only
+        self.filepath, self.save_best_only = filepath, save_best_only
         self.monitor = MetricMonitor(monitor, mode, min_delta)
 
     def save(self, model, logs):
-        if not self.save_best_only:
-            self._save_weights(model)
+        if not self.save_best_only or self.monitor.update(self.monitor.get_value(logs)):
+            dirname = os.path.dirname(self.filepath)
+            if dirname: os.makedirs(dirname, exist_ok=True)
+            model.save_weights(self.filepath)
             return True
-
-        current = self.monitor.get_value(logs)
-
-        if self.monitor.update(current):
-            self._save_weights(model)
-            return True
-
         return False
-
-    def _save_weights(self, model):
-        dirname = os.path.dirname(self.filepath)
-        if dirname:
-            os.makedirs(dirname, exist_ok=True)
-
-        model.save_weights(self.filepath)
 
 
 class ReduceLROnPlateau:
     def __init__(self, optimizer, model=None, factor=0.5, patience=5, monitor="val_loss",
                  mode="min", min_lr=1e-6, min_delta=0.0, restore_best_weights=False, checkpoint_path=None):
-        self.optimizer = optimizer
-        self.model = model
-        self.factor = factor
-        self.patience = patience
-        self.min_lr = min_lr
-        self.wait = 0
+        self.optimizer, self.model, self.factor, self.patience, self.min_lr = optimizer, model, factor, patience, min_lr
+        self.wait, self.restore_best_weights, self.checkpoint_path = 0, restore_best_weights, checkpoint_path
         self.monitor = MetricMonitor(monitor, mode, min_delta)
-        self.restore_best_weights = restore_best_weights
-        self.checkpoint_path = checkpoint_path
 
     def on_epoch_end(self, logs):
-        current = self.monitor.get_value(logs)
-
-        if self.monitor.update(current):
+        if self.monitor.update(self.monitor.get_value(logs)):
             self.wait = 0
             return
-
         self.wait += 1
-
         if self.wait >= self.patience:
             old_lr = float(tf.keras.backend.get_value(self.optimizer.learning_rate))
             new_lr = max(old_lr * self.factor, self.min_lr)
-
             if new_lr < old_lr:
                 self.optimizer.learning_rate.assign(new_lr)
                 print(f"\nLearning rate reduced from {old_lr:.8f} to {new_lr:.8f}")
-
-                if self.restore_best_weights and self.model is not None and self.checkpoint_path is not None:
-                    if os.path.exists(self.checkpoint_path):
-                        self.model.load_weights(self.checkpoint_path)
-                        print(f"Restored best weights from {self.checkpoint_path}")
-                    else:
-                        print(f"Warning: Best weights file not found at {self.checkpoint_path}")
-
+                if self.restore_best_weights and self.model and self.checkpoint_path and os.path.exists(self.checkpoint_path):
+                    self.model.load_weights(self.checkpoint_path)
+                    print(f"Restored best weights from {self.checkpoint_path}")
             self.wait = 0
 
 
 class CosineAnnealing:
     def __init__(self, optimizer, t_max=100, eta_min=1e-6):
         import math
-        self.optimizer = optimizer
-        self.t_max = t_max
-        self.eta_min = eta_min
+        self.optimizer, self.t_max, self.eta_min = optimizer, t_max, eta_min
         self.initial_lr = float(tf.keras.backend.get_value(self.optimizer.learning_rate))
         self.current_epoch = 0
 
     def on_epoch_end(self, logs=None):
         import math
         self.current_epoch += 1
-
-        if self.current_epoch > self.t_max:
-            new_lr = self.eta_min
-        else:
-            cosine_decay = 0.5 * (1 + math.cos(math.pi * self.current_epoch / self.t_max))
-            new_lr = self.eta_min + (self.initial_lr - self.eta_min) * cosine_decay
-
+        new_lr = self.eta_min if self.current_epoch > self.t_max else self.eta_min + (self.initial_lr - self.eta_min) * (0.5 * (1 + math.cos(math.pi * self.current_epoch / self.t_max)))
         self.optimizer.learning_rate.assign(new_lr)
-        # Uncomment if you want logging every epoch
-        # print(f"\n[Cosine Annealing] Learning rate: {new_lr:.8f}")
+
 
 
 class WandbLogger:

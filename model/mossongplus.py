@@ -2,9 +2,10 @@ import tensorflow.keras as keras
 
 
 class MosSongPlusModel:
-    def __init__(self, model_config):
+    def __init__(self, model_config, model_overrides=None):
         self.model_config = model_config
         self.config = model_config.get("model", {}).get("mossongplus")
+        self.overrides = model_overrides or {}
 
         if not self.config:
             raise ValueError(
@@ -18,20 +19,11 @@ class MosSongPlusModel:
             inputs = keras.layers.Input(shape=input_shape)
         x = inputs
 
-        # Support for sequential layer list
-        if "layers" in self.config:
-            x = self._build_sequential(x, self.config["layers"])
-        else:
-            x = self._build_legacy(x)
-
-        if self.config.get("global_avg_pool", False):
-            x = keras.layers.GlobalAveragePooling1D()(x)
-
-        if self.config.get("global_max_pool", False):
-            x = keras.layers.GlobalMaxPooling1D()(x)
-
-        if self.config.get("flatten", False):
-            x = keras.layers.Flatten()(x)
+        # Build sequential layer list
+        if "layers" not in self.config:
+            raise ValueError("Expected 'layers' in model configuration.")
+        
+        x = self._build_sequential(x, self.config["layers"])
 
         # Output Layer
         x = keras.layers.Dense(
@@ -69,14 +61,50 @@ class MosSongPlusModel:
         return x
 
     def _build_sequential(self, x, layers_config):
+        bn_momentum = self.overrides.get("bn_momentum")
+        dense_l2 = self.overrides.get("dense_l2")
+        conv_l2 = self.overrides.get("conv_l2")
+
+        conv_idx = 1
+        dense_idx = 1
+
         for layer_def in layers_config:
             layer_type = layer_def.get("type")
+            layer_def = dict(layer_def)  # Copy to avoid modifying model_config dict in-place
 
             if layer_type == "conv1d":
+                opt_key = f"bn_conv{conv_idx}"
+                if opt_key in self.overrides:
+                    enabled = bool(self.overrides[opt_key])
+                    if enabled and bn_momentum is not None:
+                        layer_def["batch_norm"] = {"momentum": float(bn_momentum)}
+                    else:
+                        layer_def["batch_norm"] = enabled
+                elif layer_def.get("batch_norm") and bn_momentum is not None:
+                    layer_def["batch_norm"] = {"momentum": float(bn_momentum)}
+
+                if conv_l2 is not None and float(conv_l2) > 0:
+                    layer_def["kernel_regularizer"] = keras.regularizers.l2(float(conv_l2))
+
                 x = self._add_standard_layer(x, keras.layers.Conv1D, layer_def)
+                conv_idx += 1
 
             elif layer_type == "dense":
+                opt_key = f"bn_dense{dense_idx}"
+                if opt_key in self.overrides:
+                    enabled = bool(self.overrides[opt_key])
+                    if enabled and bn_momentum is not None:
+                        layer_def["batch_norm"] = {"momentum": float(bn_momentum)}
+                    else:
+                        layer_def["batch_norm"] = enabled
+                elif layer_def.get("batch_norm") and bn_momentum is not None:
+                    layer_def["batch_norm"] = {"momentum": float(bn_momentum)}
+
+                if dense_l2 is not None and float(dense_l2) > 0:
+                    layer_def["kernel_regularizer"] = keras.regularizers.l2(float(dense_l2))
+
                 x = self._add_standard_layer(x, keras.layers.Dense, layer_def)
+                dense_idx += 1
 
             elif layer_type == "maxpool1d":
                 cfg = {k: v for k, v in layer_def.items() if k != "type"}
@@ -99,18 +127,3 @@ class MosSongPlusModel:
                  raise ValueError(f"Unsupported layer type: {layer_type}")
         return x
 
-    def _build_legacy(self, x):
-        for conv_cfg in self.config.get("conv", []):
-            x = self._add_standard_layer(x, keras.layers.Conv1D, conv_cfg)
-
-        for pool_cfg in self.config.get("maxpool", []):
-            x = keras.layers.MaxPooling1D(**pool_cfg)(x)
-
-        for d_cfg in self.config.get("dropout", []):
-            rate = d_cfg.get("rate", 0.5) if isinstance(d_cfg, dict) else float(d_cfg)
-            x = keras.layers.Dropout(rate)(x)
-
-        for dense_cfg in self.config.get("dense", []):
-            x = self._add_standard_layer(x, keras.layers.Dense, dense_cfg)
-
-        return x

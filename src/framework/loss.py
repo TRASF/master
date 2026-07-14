@@ -45,46 +45,23 @@ class SupervisedContrastiveLoss(tf.keras.losses.Loss):
 class LossFactory:
     @staticmethod
     def get_loss(config: dict = None):
-        """
-        Retrieves the loss function based on the configuration.
-        """
         config = config or {}
-        loss_config = config.get("loss")
+        loss_cfg = config.get("loss", {}).copy()
+        name = loss_cfg.pop("name", "CategoricalCrossentropy")
 
-        loss_name = loss_config.get("name")
-        loss_params = {k: v for k, v in loss_config.items() if k != "name"}
-
-        if loss_name == "SupervisedContrastiveLoss":
-            # Filter contrastive loss parameters
-            allowed_keys = {"temperature", "from_logits", "reduction", "name"}
-            loss_params = {k: v for k, v in loss_params.items() if k in allowed_keys}
-            return SupervisedContrastiveLoss(**loss_params)
-
-        # Normalize names (e.g., 'CategoricalFocalLoss' -> 'CategoricalFocalCrossentropy')
         aliases = {
             "CategoricalFocalLoss": "CategoricalFocalCrossentropy",
             "FocalLoss": "CategoricalFocalCrossentropy",
         }
-        
-        real_name = aliases.get(loss_name, loss_name)
+        name = aliases.get(name, name)
 
-        # Filter parameters to only those supported by the target Keras loss
-        supported_params = {
-            "CategoricalCrossentropy": {"from_logits", "label_smoothing", "axis", "reduction", "name"},
-            "CategoricalFocalCrossentropy": {"from_logits", "alpha", "gamma", "axis", "reduction", "name"}
-        }
-
-        allowed_keys = supported_params.get(real_name)
-        if allowed_keys is not None:
-            loss_params = {k: v for k, v in loss_params.items() if k in allowed_keys}
+        if name == "SupervisedContrastiveLoss":
+            allowed_keys = {"temperature", "from_logits", "reduction", "name"}
+            loss_params = {k: v for k, v in loss_cfg.items() if k in allowed_keys}
+            return SupervisedContrastiveLoss(**loss_params)
 
         try:
-            # Check tf.keras.losses for the class
-            LossClass = getattr(tf.keras.losses, real_name)
-            return LossClass(**loss_params)
-        except AttributeError:
-            raise ValueError(
-                f"Loss function '{loss_name}' (resolved as '{real_name}') "
-                f"not found in tf.keras.losses. Available include: "
-                f"{[n for n in dir(tf.keras.losses) if 'Crossentropy' in n]}"
-            )
+            return tf.keras.losses.get({"class_name": name, "config": loss_cfg})
+        except Exception as e:
+            raise ValueError(f"Loss function '{name}' not found in tf.keras.losses: {e}")
+
