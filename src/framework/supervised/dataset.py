@@ -22,8 +22,11 @@ class SupervisedDataset:
         self.noise_dirs = noise_dirs
         self.seed = seed
         self.deterministic = deterministic
-        self.parallel_calls = 1 if deterministic else tf.data.AUTOTUNE
-        self.prefetch_buffer = 1 if deterministic else tf.data.AUTOTUNE
+        self.pure_parallel_calls = tf.data.AUTOTUNE
+        self.random_parallel_calls = (
+            1 if deterministic else tf.data.AUTOTUNE
+        )
+        self.prefetch_buffer = tf.data.AUTOTUNE
 
         # Use provided nomos_index or try to find it
         self.nomos_index = nomos_index
@@ -133,7 +136,7 @@ class SupervisedDataset:
         # 2. Load and Cache FULL audio (resampled once)
         dataset = dataset.map(
             self._tf_load_full_audio,
-            num_parallel_calls=self.parallel_calls,
+            num_parallel_calls=self.pure_parallel_calls,
             deterministic=self.deterministic,
         )
         dataset = dataset.cache()
@@ -143,14 +146,14 @@ class SupervisedDataset:
             # Training: Dynamic exhaustive framing with random offset and random step
             dataset = dataset.interleave(
                 lambda x, y: self.augmentor.create_segments(x, y, training=True),
-                num_parallel_calls=self.parallel_calls,
+                num_parallel_calls=self.random_parallel_calls,
                 deterministic=self.deterministic
             )
         else:
             # Val/Test: Deterministic exhaustive slicing with specified overlap
             dataset = dataset.interleave(
                 lambda x, y: self.augmentor.create_segments(x, y, training=False),
-                num_parallel_calls=self.parallel_calls,
+                num_parallel_calls=self.random_parallel_calls,
                 deterministic=self.deterministic
             )
 
@@ -161,26 +164,26 @@ class SupervisedDataset:
                 load_fn=lambda p: self._tf_load_full_audio(p)
             )
 
-            if noise_ds:
+            if augment and self.noise_dirs and float(self.augmentor.noise_cfg.get("p", 0.0)) > 0.0:
                 dataset = tf.data.Dataset.zip((dataset, noise_ds))
                 dataset = dataset.map(
                     lambda signal_label, noise: self.augmentor.apply_post_processing(
                         signal_label[0], signal_label[1], noise=noise, augment=True
                     ),
-                    num_parallel_calls=self.parallel_calls,
+                    num_parallel_calls=self.pure_parallel_calls,
                     deterministic=self.deterministic,
                 )
             else:
                 dataset = dataset.map(
                     lambda x, y: self.augmentor.apply_post_processing(x, y, augment=True),
-                    num_parallel_calls=self.parallel_calls,
+                    num_parallel_calls=self.pure_parallel_calls,
                     deterministic=self.deterministic,
                 )
         else:
             # Post-processing (DC Removal + Range Clipping)
             dataset = dataset.map(
                 lambda x, y: self.augmentor.apply_post_processing(x, y, augment=augment),
-                num_parallel_calls=self.parallel_calls,
+                num_parallel_calls=self.pure_parallel_calls,
                 deterministic=self.deterministic,
             )
 
@@ -196,7 +199,7 @@ class SupervisedDataset:
         if one_hot:
             dataset = dataset.map(
                 lambda x, y: (tf.expand_dims(x, -1), tf.one_hot(y, self.data_loader.num_classes)),
-                num_parallel_calls=self.parallel_calls,
+                num_parallel_calls=self.pure_parallel_calls,
                 deterministic=self.deterministic,
             )
 
@@ -206,7 +209,7 @@ class SupervisedDataset:
         if augment and mixup_cfg.get('p', 0.0) > 0.0:
             dataset = dataset.map(
                 lambda x, y: self._apply_targeted_mixup(x, y, mixup_cfg),
-                num_parallel_calls=self.parallel_calls,
+                num_parallel_calls=self.pure_parallel_calls,
                 deterministic=self.deterministic
             )
 

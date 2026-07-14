@@ -11,7 +11,11 @@ class AudioAugmentor:
         self.seed = seed
         self.deterministic = deterministic
         self.nomos_index = nomos_index
-        self.parallel_calls = 1 if deterministic else tf.data.AUTOTUNE
+        self.pure_parallel_calls = tf.data.AUTOTUNE
+        self.random_parallel_calls = (
+            1 if deterministic else tf.data.AUTOTUNE
+        )
+        self.prefetch_buffer = tf.data.AUTOTUNE
 
         # Initialize augmentation parameters from normalized config
         self.noise_cfg = self.cfg.get('noise_overlay', {})
@@ -54,6 +58,7 @@ class AudioAugmentor:
         audio = audio * gain
         audio.set_shape([self.segment_length])
         return audio
+
     @tf.function
     def delta_waveform(self, x):
         """
