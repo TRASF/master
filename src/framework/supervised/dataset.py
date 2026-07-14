@@ -7,33 +7,51 @@ from pathlib import Path
 from sklearn.model_selection import train_test_split
 
 class SupervisedDataset:
-    def __init__(self, dataset_dir: str, val_dir: str = None, test_dir: str = None,
-                 sample_rate: int = 8000, segment_length: int = 2400,
-                 classes: list = None, noise_dirs: list = None,
-                 augment_cfg: dict = None, seed: int = 42,
-                 deterministic: bool = False, nomos_index: int = None,
-                 labels_dict: dict = None):
+    def __init__(
+        self,
+        dataset_dir: str,
+        val_dir: str = None,
+        test_dir: str = None,
+        sample_rate: int = 8000,
+        segment_length: int = 2400,
+        classes: list = None,
+        noise_dirs: list = None,
+        augment_cfg: dict = None,
+        seed: int = 42,
+        deterministic: bool = False,
+        nomos_index: int = None,
+        labels_dict: dict = None,
+    ):
         self.dataset_dir = dataset_dir
         self.val_dir = val_dir
         self.test_dir = test_dir
         self.sample_rate = sample_rate
         self.segment_length = segment_length
-        self.data_loader = DataLoader(dataset_dir, sample_rate, classes, labels_dict=labels_dict)
+
+        self.data_loader = DataLoader(
+            dataset_dir,
+            sample_rate,
+            classes,
+            labels_dict=labels_dict,
+        )
+
         self.noise_dirs = noise_dirs
         self.seed = seed
         self.deterministic = deterministic
+
         self.pure_parallel_calls = tf.data.AUTOTUNE
+
         self.random_parallel_calls = (
             1 if deterministic else tf.data.AUTOTUNE
         )
+
         self.prefetch_buffer = tf.data.AUTOTUNE
 
-        # Use provided nomos_index or try to find it
         self.nomos_index = nomos_index
         if self.nomos_index is None and classes:
-            for i, name in enumerate(classes):
+            for index, name in enumerate(classes):
                 if "No.Mos" in name or "Nomos" in name:
-                    self.nomos_index = i
+                    self.nomos_index = index
                     break
 
         self.augmentor = AudioAugmentor(
@@ -41,10 +59,9 @@ class SupervisedDataset:
             augment_cfg,
             seed=seed,
             deterministic=deterministic,
-            nomos_index=self.nomos_index
+            nomos_index=self.nomos_index,
         )
 
-        # Attributes to store splits for debugging and metrics
         self.train_paths = None
         self.train_labels = None
         self.val_paths = None
@@ -86,10 +103,8 @@ class SupervisedDataset:
             if num_samples == 0:
                 num_samples = self.segment_length
 
-            # Expected number of segments
             num_segments = int(np.ceil(num_samples / avg_step))
 
-            # Apply segment capping
             current_max = max_segments
             if self.nomos_index is not None and label == self.nomos_index:
                 current_max = max_segments // 5
@@ -120,70 +135,119 @@ class SupervisedDataset:
         options.experimental_deterministic = self.deterministic
         return dataset.with_options(options)
 
-    def _create_pipeline(self, file_paths, labels, augment, batch_size, shuffle, one_hot):
-        # 1. Base Dataset (File Paths)
-        dataset = tf.data.Dataset.from_tensor_slices((file_paths, labels))
+    def _create_pipeline(
+        self,
+        file_paths,
+        labels,
+        augment,
+        batch_size,
+        shuffle,
+        one_hot,
+    ):
+        dataset = tf.data.Dataset.from_tensor_slices(
+            (file_paths, labels)
+        )
         dataset = self._with_deterministic_options(dataset)
 
         if shuffle:
             shuffle_seed = self.seed if self.deterministic else None
             dataset = dataset.shuffle(
-                buffer_size=(int(np.ceil(len(file_paths) / 4))),
+                buffer_size=max(
+                    1,
+                    int(np.ceil(len(file_paths) / 4)),
+                ),
                 seed=shuffle_seed,
                 reshuffle_each_iteration=True,
             )
 
-        # 2. Load and Cache FULL audio (resampled once)
         dataset = dataset.map(
             self._tf_load_full_audio,
             num_parallel_calls=self.pure_parallel_calls,
             deterministic=self.deterministic,
         )
+
         dataset = dataset.cache()
 
-        # 3. Slicing Strategy
         if augment:
-            # Training: Dynamic exhaustive framing with random offset and random step
+            segment_parallel_calls = self.random_parallel_calls
+
             dataset = dataset.interleave(
-                lambda x, y: self.augmentor.create_segments(x, y, training=True),
-                num_parallel_calls=self.random_parallel_calls,
-                deterministic=self.deterministic
+                lambda audio, label: self.augmentor.create_segments(
+                    audio,
+                    label,
+                    training=True,
+                ),
+                num_parallel_calls=segment_parallel_calls,
+                deterministic=self.deterministic,
             )
         else:
-            # Val/Test: Deterministic exhaustive slicing with specified overlap
+            segment_parallel_calls = self.pure_parallel_calls
+
             dataset = dataset.interleave(
-                lambda x, y: self.augmentor.create_segments(x, y, training=False),
-                num_parallel_calls=self.random_parallel_calls,
-                deterministic=self.deterministic
+                lambda audio, label: self.augmentor.create_segments(
+                    audio,
+                    label,
+                    training=False,
+                ),
+                num_parallel_calls=segment_parallel_calls,
+                deterministic=self.deterministic,
             )
 
-        # 4. Noise Augmentation & Post-processing
-        if augment and self.noise_dirs:
+        noise_probability = float(
+            self.augmentor.noise_cfg.get("p", 0.0)
+        )
+
+        use_noise = augment and noise_probability > 0.0
+
+        post_parallel_calls = (
+            self.random_parallel_calls
+            if augment
+            else self.pure_parallel_calls
+        )
+
+        if use_noise:
+            if not self.noise_dirs:
+                raise ValueError(
+                    "noise_overlay.p is greater than zero, but no "
+                    "noise directories were configured."
+                )
+
             noise_ds = self.augmentor.build_noise_dataset(
                 self.noise_dirs,
-                load_fn=lambda p: self._tf_load_full_audio(p)
+                load_fn=lambda path: self._tf_load_full_audio(path),
             )
 
-            if augment and self.noise_dirs and float(self.augmentor.noise_cfg.get("p", 0.0)) > 0.0:
-                dataset = tf.data.Dataset.zip((dataset, noise_ds))
-                dataset = dataset.map(
-                    lambda signal_label, noise: self.augmentor.apply_post_processing(
-                        signal_label[0], signal_label[1], noise=noise, augment=True
-                    ),
-                    num_parallel_calls=self.pure_parallel_calls,
-                    deterministic=self.deterministic,
+            if noise_ds is None:
+                raise ValueError(
+                    "noise_overlay.p is greater than zero, but no "
+                    ".wav or .npy noise files were found."
                 )
-            else:
-                dataset = dataset.map(
-                    lambda x, y: self.augmentor.apply_post_processing(x, y, augment=True),
-                    num_parallel_calls=self.pure_parallel_calls,
-                    deterministic=self.deterministic,
-                )
-        else:
-            # Post-processing (DC Removal + Range Clipping)
+
+            dataset = tf.data.Dataset.zip((dataset, noise_ds))
+
             dataset = dataset.map(
-                lambda x, y: self.augmentor.apply_post_processing(x, y, augment=augment),
-                num_parallel_calls=self.pure_parallel_calls,
+                lambda signal_label, noise: (
+                    self.augmentor.apply_post_processing(
+                        signal_label[0],
+                        signal_label[1],
+                        noise=noise,
+                        augment=True,
+                    )
+                ),
+                num_parallel_calls=post_parallel_calls,
+                deterministic=self.deterministic,
+            )
+        else:
+
+            dataset = dataset.map(
+                lambda audio, label: (
+                    self.augmentor.apply_post_processing(
+                        audio,
+                        label,
+                        augment=augment,
+                    )
+                ),
+                num_parallel_calls=post_parallel_calls,
                 deterministic=self.deterministic,
             )
 
@@ -195,25 +259,37 @@ class SupervisedDataset:
                 reshuffle_each_iteration=True,
             )
 
-        # 5. Encoding & Batching (Adding channel dimension here)
         if one_hot:
             dataset = dataset.map(
-                lambda x, y: (tf.expand_dims(x, -1), tf.one_hot(y, self.data_loader.num_classes)),
+                lambda audio, label: (
+                    tf.expand_dims(audio, -1),
+                    tf.one_hot(
+                        label,
+                        self.data_loader.num_classes,
+                    ),
+                ),
                 num_parallel_calls=self.pure_parallel_calls,
                 deterministic=self.deterministic,
             )
 
         dataset = dataset.batch(batch_size)
 
-        mixup_cfg = self.augmentor.cfg.get('mixup', {})
-        if augment and mixup_cfg.get('p', 0.0) > 0.0:
+        mixup_cfg = self.augmentor.cfg.get("mixup", {})
+        mixup_probability = float(mixup_cfg.get("p", 0.0))
+
+        if augment and mixup_probability > 0.0:
             dataset = dataset.map(
-                lambda x, y: self._apply_targeted_mixup(x, y, mixup_cfg),
-                num_parallel_calls=self.pure_parallel_calls,
-                deterministic=self.deterministic
+                lambda audio, label: self._apply_targeted_mixup(
+                    audio,
+                    label,
+                    mixup_cfg,
+                ),
+                num_parallel_calls=self.random_parallel_calls,
+                deterministic=self.deterministic,
             )
 
         dataset = dataset.prefetch(self.prefetch_buffer)
+
         return self._with_deterministic_options(dataset)
 
     @tf.function
@@ -223,21 +299,16 @@ class SupervisedDataset:
 
         batch_size = tf.shape(x)[0]
 
-        # Shuffle the batch to get pairs
         indices = tf.random.shuffle(tf.range(batch_size))
         x2 = tf.gather(x, indices)
         y2 = tf.gather(y, indices)
 
-        # Get hard labels for mapping check
         label1 = tf.argmax(y, axis=1, output_type=tf.int32)
         label2 = tf.argmax(y2, axis=1, output_type=tf.int32)
 
-        # Define allowed matrix (run once)
         num_classes = self.data_loader.num_classes
         allowed = np.zeros((num_classes, num_classes), dtype=bool)
 
-        # tf.function does not accept Python dict iterating natively if it changes,
-        # but mixup_cfg is a static dict from config so it works as a closure.
         mappings = mixup_cfg.get('class_mappings', {})
         if mappings:
             for src_class_str, allowed_list in mappings.items():
@@ -250,7 +321,6 @@ class SupervisedDataset:
 
         allowed_tensor = tf.constant(allowed, dtype=tf.bool)
 
-        # Check if pair is in the mappings list
         pair_indices = tf.stack([label1, label2], axis=1)
         is_mapped_pair = tf.gather_nd(allowed_tensor, pair_indices)
 
@@ -263,12 +333,10 @@ class SupervisedDataset:
         mix_prob = p * prob_scale
         do_mix = tf.random.uniform([batch_size]) < mix_prob
 
-        # Sample Beta distribution using Gamma
         gamma1 = tf.random.gamma([batch_size], alpha)
         gamma2 = tf.random.gamma([batch_size], alpha)
         lam = gamma1 / (gamma1 + gamma2 + 1e-8)
 
-        # If not doing mixup, lam=1.0 (keep original)
         lam = tf.where(do_mix, lam, tf.ones_like(lam))
 
         lam_x = tf.reshape(lam, [-1, 1, 1])

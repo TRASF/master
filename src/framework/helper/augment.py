@@ -3,41 +3,55 @@ import tensorflow as tf
 import numpy as np
 
 class AudioAugmentor:
-    def __init__(self, segment_length: int = 2400, config: dict = None,
-                 seed: int = None, deterministic: bool = False,
-                 nomos_index: int = None):
+    def __init__(
+        self,
+        segment_length: int = 2400,
+        config: dict = None,
+        seed: int = None,
+        deterministic: bool = False,
+        nomos_index: int = None,
+    ):
         self.segment_length = segment_length
         self.cfg = config or {}
         self.seed = seed
         self.deterministic = deterministic
         self.nomos_index = nomos_index
-        self.pure_parallel_calls = tf.data.AUTOTUNE
-        self.random_parallel_calls = (
-            1 if deterministic else tf.data.AUTOTUNE
+
+        self.noise_cfg = self.cfg.get("noise_overlay", {})
+        self.noise_envelope_cfg = self.noise_cfg.get(
+            "envelope_gain", [0.7, 1.0]
         )
-        self.prefetch_buffer = tf.data.AUTOTUNE
+        self.noise_post_gain_cfg = self.noise_cfg.get(
+            "post_gain_db", [-6.0, 3.0]
+        )
 
-        # Initialize augmentation parameters from normalized config
-        self.noise_cfg = self.cfg.get('noise_overlay', {})
-        self.noise_envelope_cfg = self.noise_cfg.get('envelope_gain', [0.7, 1.0])
-        self.noise_post_gain_cfg = self.noise_cfg.get('post_gain_db', [-6.0, 3.0])
+        self.pitch_cfg = self.cfg.get("pitch_shift", {})
+        self.time_cfg = self.cfg.get("time_shift", {})
+        self.gain_cfg = self.cfg.get("random_gain", {})
+        self.gauss_cfg = self.cfg.get("gaussian_noise", {})
+        self.mask_cfg = self.cfg.get("time_masking", {})
+        self.pre_cfg = self.cfg.get("pre_emphasis", {})
+        self.hpf_cfg = self.cfg.get("high_pass", {})
+        self.rms_cfg = self.cfg.get("rms_norm", {})
+        self.preprocess_cfg = self.cfg.get("preprocess", {})
 
-        self.pitch_cfg = self.cfg.get('pitch_shift', {})
-        self.time_cfg = self.cfg.get('time_shift', {})
-        self.gain_cfg = self.cfg.get('random_gain', {})
-        self.gauss_cfg = self.cfg.get('gaussian_noise', {})
-        self.mask_cfg = self.cfg.get('time_masking', {})
-        self.pre_cfg = self.cfg.get('pre_emphasis', {})
-        self.hpf_cfg = self.cfg.get('high_pass', {})
-        self.rms_cfg = self.cfg.get('rms_norm', {})
-        self.preprocess_cfg = self.cfg.get('preprocess', {})
-        raw_config = self.cfg.get('config', {})
-        self.overlap_cfg = raw_config.get('segment_overlap') or raw_config.get('overlap') or self.cfg.get('overlap', [0.0, 0.8])
-        # Pre-compute HPF coefficients if enabled
+        raw_config = self.cfg.get("config", {})
+        self.overlap_cfg = (
+            raw_config.get("segment_overlap")
+            or raw_config.get("overlap")
+            or self.cfg.get("overlap", [0.0, 0.8])
+        )
+
         import scipy.signal
-        if self.hpf_cfg.get('fc', 0) > 0:
-            sr = 8000 # Default sample rate, should ideally be passed in
-            taps = scipy.signal.firwin(101, self.hpf_cfg['fc'], fs=sr, pass_zero=False)
+
+        if self.hpf_cfg.get("fc", 0) > 0:
+            sr = 8000
+            taps = scipy.signal.firwin(
+                101,
+                self.hpf_cfg["fc"],
+                fs=sr,
+                pass_zero=False,
+            )
             self.hpf_taps = tf.constant(taps, dtype=tf.float32)
         else:
             self.hpf_taps = None
@@ -177,36 +191,55 @@ class AudioAugmentor:
 
     def build_noise_dataset(self, noise_dirs, load_fn):
         noise_paths = []
-        for n_dir in noise_dirs:
-            path_obj = Path(n_dir)
+
+        for noise_dir in noise_dirs:
+            path_obj = Path(noise_dir)
             if path_obj.is_dir():
-                noise_paths.extend([str(p) for p in path_obj.rglob("*.npy")])
-                noise_paths.extend([str(p) for p in path_obj.rglob("*.wav")])
+                noise_paths.extend(
+                    str(path) for path in path_obj.rglob("*.npy")
+                )
+                noise_paths.extend(
+                    str(path) for path in path_obj.rglob("*.wav")
+                )
+
         noise_paths = sorted(set(noise_paths))
+
         if not noise_paths:
             return None
-        noise_ds = tf.data.Dataset.from_tensor_slices(noise_paths)
+
         options = tf.data.Options()
         options.experimental_deterministic = self.deterministic
+
+        noise_ds = tf.data.Dataset.from_tensor_slices(noise_paths)
         noise_ds = noise_ds.with_options(options)
+
         noise_ds = noise_ds.map(
-            lambda p: load_fn(p),
-            num_parallel_calls=self.parallel_calls,
+            lambda path: load_fn(path),
+            num_parallel_calls=tf.data.AUTOTUNE,
             deterministic=self.deterministic,
         )
+
         noise_ds = noise_ds.cache()
+
         noise_seed = self.seed if self.deterministic else None
         noise_ds = noise_ds.shuffle(
-            len(noise_paths),
+            buffer_size=len(noise_paths),
             seed=noise_seed,
             reshuffle_each_iteration=True,
         ).repeat()
+
+        random_parallel_calls = (
+            1 if self.deterministic else tf.data.AUTOTUNE
+        )
+
         noise_ds = noise_ds.map(
-            lambda x: self.random_segment(x),
-            num_parallel_calls=self.parallel_calls,
+            self.random_segment,
+            num_parallel_calls=random_parallel_calls,
             deterministic=self.deterministic,
         )
+
         return noise_ds.with_options(options)
+
 
     @tf.function
     def sample_noise_snr(self, fallback_range):
