@@ -35,3 +35,6 @@ managed_components
 
 # Local agent task state
 .agent/STATE.md
+
+# Agent hook runtime state
+.agent/hook-state/
