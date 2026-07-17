@@ -7,31 +7,31 @@ __pycache__/
 .venv/
 venv/
 ENV/
-
 # Datasets (Too large for GitHub)
 dataset/
-
 # IDEs
 .vscode/
 .idea/
-
 # OS files
 .DS_Store
 Thumbs.db
-
 models/
 wandb
 artifacts
 models
 scratch
 dependencies.lock
-
 sweep*
 *.old
 quantization_output
 # CocoIndex Code (ccc)
 /.cocoindex_code/
-
-
 build
 managed_components
+
+# Agent runtime data
+.agent/raw/
+.agent/backups/
+
+# Local agent task state
+.agent/STATE.md
