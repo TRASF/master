@@ -50,6 +50,15 @@ remove_generated_block \
     '<!-- BEGIN sqz-agents-guidance' \
     '<!-- END sqz-agents-guidance -->'
 
+# Keep the canonical policy file stable after generated-block removal.
+python3 - <<'PY_NORMALIZE'
+from pathlib import Path
+
+path = Path("AGENTS.md")
+if path.exists():
+    path.write_text(path.read_text().rstrip() + "\n")
+PY_NORMALIZE
+
 printf '@AGENTS.md\n' > CLAUDE.md
 
 echo "GitNexus refreshed; agent instructions normalized."
