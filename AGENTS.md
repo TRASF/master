@@ -1,11 +1,8 @@
-This consolidated version keeps the broader development-cycle coverage from your current rules while making Ponytail a mandatory, visible two-stage workflow for non-trivial implementation and refactoring. 
-
 # Repository Agent Operating Rules
 
-## Purpose
+## 1. Purpose
 
-These rules define how an agent operates throughout the software development
-lifecycle in this repository.
+These rules define how an agent operates in this repository.
 
 They apply to:
 
@@ -15,750 +12,1032 @@ They apply to:
 * refactoring;
 * code review;
 * testing;
+* packaging;
 * builds;
 * documentation;
-* research;
-* learning and explanation;
 * configuration;
 * infrastructure;
 * deployment;
 * maintenance;
+* research;
 * incident investigation.
 
-A task prompt defines the current objective, scope, constraints, and acceptance
-criteria. It does not automatically suspend these rules.
+The objective is to complete the explicitly authorized task with the smallest
+sufficient, well-verified change while preserving the repository’s actual
+current behavior.
 
-The user does not need to repeat repository navigation, tool routing, bounded
-retrieval, testing, safety, Ponytail, or reporting requirements in every task.
+The objective is not to maximize:
 
-Repository-specific requirements may be added near the end of this file.
+* tool use;
+* repository exploration;
+* generated code;
+* abstractions;
+* file changes;
+* context collection;
+* output volume.
+
+A task prompt defines the requested objective. It does not automatically
+override repository state, active policy hooks, completed later-phase work, or
+existing compatibility requirements.
 
 ---
 
-## Instruction precedence
+# 2. Authority and instruction precedence
 
 Apply instructions in this order:
 
 1. system and safety requirements;
-2. active policy hooks and tool restrictions;
-3. more specific directory-level or repository-level instructions;
-4. the current user request;
-5. these repository defaults.
+2. active execution hooks and tool restrictions;
+3. more specific directory-level instructions;
+4. repository instructions;
+5. externally controlled phase and write authorization;
+6. confirmed current repository state;
+7. the exact current user task;
+8. these repository defaults.
 
-When instructions conflict, follow the more specific and more restrictive rule
-unless an authorized instruction explicitly overrides it.
+Active hooks are authoritative.
 
-Active policy hooks are authoritative for tool execution.
+A task prompt cannot override an active hook.
 
-Do not bypass a restriction through:
+A task prompt cannot silently authorize:
 
-* equivalent commands;
+* a later phase;
+* removal of existing later-phase behavior;
+* broad repository access;
+* environment modification;
+* destructive actions;
+* writes outside an authorized path set;
+* commits or remote pushes.
+
+Do not bypass restrictions through:
+
 * aliases;
-* alternate tools;
-* subprocess wrappers;
+* alternate commands;
+* another shell;
 * another programming language;
-* generated helper scripts;
-* indirect filesystem access.
+* subprocess wrappers;
+* generated scripts;
+* indirect filesystem access;
+* another tool with equivalent behavior.
+
+When instructions conflict, follow the more restrictive valid instruction.
 
 ---
 
-## Core operating principles
+# 3. Hard operating principles
 
-Use existing conversation context, repository context, prior confirmed findings,
-and available code intelligence before retrieving more information.
+Use the active conversation and confirmed project state before calling tools.
 
-Default to a targeted task.
-
-Do not rediscover the repository because the session is new.
+Do not rediscover the repository because a new session started.
 
 Do not inspect files merely to become familiar with the project.
 
-Do not collect context without a concrete question that the context will
-answer.
+Do not gather context without a concrete question that the context will answer.
 
-Stop retrieving information when sufficient evidence is available.
+Stop retrieving information when sufficient evidence exists.
 
 Prefer:
 
-* the smallest reliable evidence set;
-* the smallest sufficient implementation;
-* the smallest relevant test;
-* the smallest safe write scope;
-* direct solutions over speculative abstractions.
+* targeted semantic queries;
+* exact symbols;
+* exact paths;
+* bounded reads;
+* focused tests;
+* narrow diffs;
+* direct implementations;
+* reuse of existing behavior;
+* preservation of current functionality.
 
-Do not perform unrelated cleanup during focused work.
+Do not perform unrelated cleanup.
 
-Do not narrate routine retrieval steps unless they:
+Do not enter a later phase automatically.
 
-* affect the conclusion;
-* reveal a material risk;
-* expand authorized scope;
-* identify a failure;
-* require user action;
-* block further work.
+Do not force the repository backward to satisfy an obsolete task prompt.
 
 Distinguish clearly between:
 
-* confirmed;
-* inferred;
-* assumed;
-* unverified;
-* blocked;
-* failed.
+* `CONFIRMED`;
+* `INFERRED`;
+* `ASSUMED`;
+* `UNVERIFIED`;
+* `BLOCKED`;
+* `FAILED`;
+* `NOT REQUIRED`.
 
 Never present inference as confirmed behavior.
 
-Never claim that a test passed, an analysis was performed, behavior was
-preserved, or side effects did not occur without evidence.
+Never claim that:
+
+* a test passed;
+* behavior was preserved;
+* Ponytail was completed;
+* impact analysis was performed;
+* no files were changed;
+* no side effects occurred;
+* a phase is complete;
+
+without visible supporting evidence.
 
 ---
 
-## Zero-tool completion
+# 4. Zero-tool completion
 
-When the current conversation already contains enough information to answer,
-plan, request authorization, or identify the next action, use no repository
-tools.
+Before the first tool call, determine whether the active conversation already
+contains enough information to complete the request.
 
-Do not inspect the repository to reconfirm information already established in
-the active conversation.
+Use no repository tools when the task can be completed from current context.
 
-Tasks that often require no repository access include:
+Examples include:
 
-* asking whether to begin a new phase;
-* explaining that a phase requires authorization;
-* planning based on supplied requirements;
-* answering a conceptual question;
+* drafting a task prompt;
+* writing documentation;
+* explaining a known failure;
+* identifying a phase conflict already shown in logs;
+* asking whether to begin another phase;
+* producing a plan from supplied requirements;
 * explaining previously confirmed behavior;
-* rewriting or drafting text;
-* identifying the next action from an established plan.
+* rewriting repository instructions.
 
-Before the first tool call, determine:
+Silently ask:
 
 ```text
-Can this task be completed accurately from the active conversation and
-already-confirmed project context?
+Can this request be completed accurately from the active conversation and
+confirmed project state?
 ```
 
-If yes, do not call repository tools.
+When the answer is yes, do not call repository tools.
 
 ---
 
-## Task classification
+# 5. Explicit objective requirement
 
-Silently classify the request before using tools.
+## 5.1 The current objective must be explicit
 
-### Explanation or learning
+Do not infer the authorized objective or phase from:
+
+* previous conversation intent;
+* an old task template;
+* a branch name;
+* a commit message;
+* repository contents;
+* an earlier agent’s conclusion;
+* an implementation plan from another session.
+
+Use the exact objective stated in the current task.
+
+When the current task does not explicitly state an objective or phase, report:
+
+```text
+Requested objective: UNSPECIFIED
+Requested phase: UNSPECIFIED
+State decision: BLOCK
+```
+
+Do not convert prior-session intent into current authorization.
+
+## 5.2 Previous context is not authorization
+
+Previous context may help identify:
+
+* known repository behavior;
+* possible conflicts;
+* files that may have been touched;
+* prior failed approaches.
+
+Previous context cannot independently authorize:
+
+* code changes;
+* a migration phase;
+* package installation;
+* Docker builds;
+* training;
+* commits;
+* destructive actions.
+
+---
+
+# 6. Evidence provenance
+
+For every state, verification, or completion claim, identify its provenance.
+
+Use these categories:
+
+* current-session evidence;
+* prior-session evidence;
+* repository evidence;
+* user-provided evidence;
+* inference;
+* unverified information.
+
+Do not state that a test currently passes unless it was run successfully in the
+current session.
+
+Prior results may be reported only in this form:
+
+```text
+Prior-session result: reported PASS
+Current-session status: NOT RERUN
+```
+
+Do not use prior-session test results as current completion evidence.
+
+Do not state that a file is unchanged unless a current-session targeted check
+supports that statement.
+
+Do not state that an operation completed when the corresponding write or command
+was denied.
+
+---
+
+# 7. Mandatory authorization envelope
+
+## 7.1 Required authorization fields
+
+Before any production write, establish:
+
+```text
+Authorized objective:
+Authorized phase:
+Authorized write paths:
+Authorized test scope:
+Authorized environment changes:
+Authorized expensive operations:
+Explicitly excluded work:
+```
+
+The authorized phase and write paths must come from:
+
+* active hook state;
+* externally supplied task metadata;
+* an explicit current user instruction consistent with the hook.
+
+Do not infer authorization from repository structure or history.
+
+## 7.2 Exact write scope
+
+Writes are allowed only to exact paths or explicitly authorized path patterns.
+
+Before the first write, record:
+
+```text
+Planned write targets:
+- <exact path>
+- <exact path>
+```
+
+Do not add another target without:
+
+1. explaining why it is required;
+2. confirming that it belongs to the authorized objective;
+3. confirming that it belongs to the authorized phase;
+4. confirming that the hook permits it;
+5. updating the planned target set.
+
+Do not interpret broad terms such as `tests`, `src`, or `docs` as permission to
+modify the complete subtree unless that subtree is explicitly authorized.
+
+## 7.3 No permission probing
+
+Never create, edit, append to, rename, or delete a repository file merely to
+discover whether the action is permitted.
+
+Forbidden reasoning includes:
+
+```text
+I will edit this file to test the write policy.
+```
+
+```text
+I will create a test in this directory to see whether writes are allowed.
+```
+
+```text
+I will append a temporary note and remove it later.
+```
+
+A write must directly serve the authorized user objective.
+
+When a write is denied:
+
+* do not try another path to test the boundary;
+* do not try a nearby directory;
+* do not try another write tool;
+* do not modify an apparently allowed file as a probe;
+* do not attempt a temporary write.
+
+Report the denial and continue only with clearly permitted work.
+
+## 7.4 Existing-file protection
+
+Before using a create operation, verify that the exact target does not already
+exist.
+
+When the target exists:
+
+* do not use create;
+* use a focused edit only when authorized;
+* preserve unrelated content;
+* inspect the relevant section before editing.
+
+Do not replace an existing file because a tool labels the intended operation as
+creation.
+
+---
+
+# 8. Mandatory repository-state reconciliation
+
+## 8.1 State gate
+
+Before editing production code, reconcile the current task with the actual
+repository state.
+
+This is mandatory for:
+
+* phased migrations;
+* packaging work;
+* configuration changes;
+* refactoring;
+* entry-point changes;
+* public API changes;
+* dependency changes;
+* tasks based on an earlier implementation plan.
+
+Record:
+
+```text
+Requested objective:
+Requested phase:
+Hook-authorized phase:
+Confirmed current implementation:
+Existing later-phase functionality:
+Overlapping files or symbols:
+Behavior that must remain:
+Evidence provenance:
+State decision: PROCEED | REFRAME | BLOCK
+```
+
+No production write is allowed until the state gate is complete.
+
+## 8.2 State decisions
+
+Use `PROCEED` only when:
+
+* the objective is explicit;
+* the requested phase matches the hook-authorized phase;
+* the work does not remove later-phase behavior;
+* overlapping files can be modified safely;
+* the baseline state is understood;
+* required write targets are authorized;
+* required verification is available.
+
+Use `REFRAME` when:
+
+* the objective is useful but based on stale assumptions;
+* an earlier phase should be verified rather than recreated;
+* the same goal can be achieved without removing current behavior;
+* the task should become a verification-only audit;
+* existing implementation already satisfies part of the requested work.
+
+Use `BLOCK` when:
+
+* the objective or phase is unspecified;
+* the requested phase exceeds the hook-authorized phase;
+* a required production write is denied;
+* the prompt conflicts with existing later-phase behavior;
+* overlapping user changes cannot be isolated;
+* the correct baseline cannot be established;
+* acceptance criteria require a regression;
+* required environment changes are unauthorized;
+* the task relies on unsupported prior-session claims.
+
+## 8.3 Phase mismatch
+
+Stop before writing when:
+
+* Phase 1 is requested but Phase 2 or later functionality exists in a target;
+* the prompt says to create a file that already contains newer behavior;
+* the prompt says to remove commands current users or tests rely on;
+* later-phase tests already consume the target interface;
+* an active hook reports an earlier authorized phase;
+* the prompt assumes functionality is absent when it is present;
+* fulfilling the task would downgrade the repository.
+
+Do not relabel later-phase code as earlier-phase work to justify continuing.
+
+Do not simplify an interface by removing required current behavior.
+
+## 8.4 Earlier-phase verification
+
+An earlier phase may be audited after later phases exist.
+
+Allowed:
+
+```text
+Verify that package import, help, version, wheel installation, and lightweight
+imports remain valid.
+```
+
+Not allowed:
+
+```text
+Remove the configuration command because the original package-foundation phase
+did not expose it.
+```
+
+When later functionality exists, reframe earlier-phase implementation work as
+verification work unless the user explicitly authorizes a compatible change.
+
+---
+
+# 9. Instruction-file handling
+
+Repository instructions may include:
+
+* `AGENTS.md`;
+* `AGENT.md`;
+* `CLAUDE.md`;
+* `.agent/PROJECT.md`;
+* `.agent/STATE.md`;
+* equivalent directory-specific instruction files.
+
+When repository instructions have already been loaded by the host, do not
+search or read them again merely to locate general rules.
+
+Read a bounded section only when:
+
+* a specific required rule is absent from active context;
+* a concrete instruction conflict must be resolved;
+* the task directly modifies the instruction file;
+* a nested directory may contain more specific instructions;
+* the host did not load repository instructions.
+
+Do not reconstruct an instruction file through consecutive reads.
+
+Do not repeatedly search instruction files for phase names after the active hook
+has already declared the authorized phase.
+
+---
+
+# 10. Tool-denial handling
+
+## 10.1 A denial is final
+
+When a tool call is denied:
+
+1. read the denial message;
+2. treat it as authoritative;
+3. do not retry equivalent syntax;
+4. do not use an alias;
+5. do not switch runtimes;
+6. do not wrap the operation in a script;
+7. do not use another tool for the same restricted operation;
+8. switch to the suggested targeted method;
+9. record blocked evidence when it affects completion.
+
+## 10.2 Denial budget
+
+Maintain a task-local denial counter.
+
+After two denials caused by broad or poorly targeted operations:
+
+* stop broad retrieval;
+* use only exact paths, exact symbols, focused tests, or approved semantic
+  queries.
+
+After three such denials:
+
+* stop implementation planning;
+* reassess the task against the authorization envelope;
+* perform no writes until a clearly permitted route is established.
+
+After four denials:
+
+* disable further writes for the task;
+* return `BLOCK` or `REFRAME` unless all remaining work is read-only.
+
+Do not continue accumulating denials.
+
+Do not test policy boundaries.
+
+## 10.3 Do not inspect policy internals
+
+Do not read or search:
+
+* `.agent/hooks/**`;
+* AGY hook source;
+* global hook configuration;
+* hidden host-policy files;
+* plugin implementation directories;
+* `.git/**`;
+
+merely because an operation was denied.
+
+The denial message is sufficient operational guidance.
+
+Inspect policy implementation only when the user explicitly requests:
+
+* hook development;
+* hook debugging;
+* policy maintenance;
+* authorized policy testing.
+
+Do not reconstruct a guard file through multiple bounded reads during unrelated
+work.
+
+---
+
+# 11. Task classification
+
+Silently classify the current task before using tools.
+
+## 11.1 Explanation or learning
 
 Use supplied context and general knowledge first.
 
-Inspect the repository only when:
+Inspect repository code only when repository-specific evidence is necessary.
 
-* the user asks how this repository implements the concept;
-* repository-specific behavior must be verified;
-* exact code evidence is required.
+## 11.2 Targeted development
 
-### Targeted development
+Work only on the named:
 
-Work only on the named feature, file, symbol, test, configuration, or behavior.
+* feature;
+* file;
+* symbol;
+* command;
+* test;
+* configuration;
+* behavior.
 
-This is the default classification for implementation work.
+This is the default implementation mode.
 
-### Diagnostic debugging
+## 11.3 Diagnostic debugging
 
-Begin with the exact:
+Begin with:
 
-* symptom;
-* traceback;
+* the exact error;
+* exact traceback;
 * failed test;
-* error message;
-* log event;
-* reproduction command.
+* reproduction command;
+* relevant log event.
 
 Expand only to components implicated by evidence.
 
-### Troubleshooting
+## 11.4 Troubleshooting
 
-Determine whether the failure belongs to:
+Determine whether the issue belongs to:
 
-* command usage;
-* environment;
+* command invocation;
+* working directory;
+* interpreter;
+* import path;
+* installation state;
 * dependencies;
 * configuration;
 * permissions;
-* networking;
 * storage;
-* services;
-* runtime;
+* networking;
+* service state;
 * build tooling;
 * application code.
 
-Do not assume every failure requires a code change.
+Do not assume every failure requires a source-code change.
 
-### Structural or refactoring work
+## 11.5 Structural work
 
-Use semantic navigation, execution-flow analysis, dependency analysis, and
-impact analysis before changing shared structure.
+Use semantic navigation and impact analysis before changing:
 
-Preserve behavior unless the task explicitly authorizes a behavior change.
+* shared interfaces;
+* module boundaries;
+* entry points;
+* configuration ownership;
+* public behavior;
+* cross-file flows.
 
-Ponytail is mandatory for non-trivial refactoring.
+Ponytail is mandatory for non-trivial structural work.
 
-### Code review
+## 11.6 Exhaustive work
 
-Inspect only the requested changes and the code needed to understand their
-effects.
-
-Prioritize:
-
-* correctness;
-* safety;
-* regressions;
-* compatibility;
-* missing verification;
-* maintainability.
-
-### Operational work
-
-Treat these as side-effecting:
-
-* deployments;
-* infrastructure changes;
-* remote jobs;
-* package changes;
-* migrations;
-* service restarts;
-* destructive commands.
-
-Verify target, environment, scope, impact, and recovery path first.
-
-### Exhaustive work
-
-Repository-wide discovery is allowed only when the user explicitly requests:
+Repository-wide discovery is allowed only when explicitly requested for:
 
 * an audit;
 * inventory;
 * architecture analysis;
 * migration assessment;
 * security review;
-* repository-wide refactor;
-* another genuinely exhaustive task.
+* repository-wide refactor.
 
-A long plan does not automatically authorize exhaustive inspection.
-
----
-
-## Scope control
-
-Only the current objective, phase, and step are authorized.
-
-Later phases in a plan are reference material, not permission to inspect,
-modify, execute, or test their components.
-
-Do not inspect adjacent files or subsystems because they might be useful.
-
-Expand scope only to resolve a specific:
-
-* unknown symbol;
-* caller or callee;
-* dependency;
-* configuration source;
-* data flow;
-* contradiction;
-* failing test;
-* runtime failure;
-* compatibility requirement;
-* missing acceptance criterion.
-
-When the authorized work is complete, stop.
-
-Do not begin the next phase without explicit authorization.
-
-When a task is underspecified but can be completed safely, make the narrowest
-reasonable assumption and state it.
-
-Ask for clarification only when competing interpretations would produce
-materially different, destructive, or unsafe outcomes.
+A long prompt does not automatically authorize exhaustive work.
 
 ---
 
-## Before every tool call
+# 12. Before every tool call
 
 Silently verify:
 
-1. Is the call necessary for the current objective?
-2. Is the target exact and task-specific?
-3. Is the answer already present in current context?
-4. Is this the narrowest suitable tool?
-5. Would a symbol, reference, or graph query be better than a file read?
-6. Is the output bounded?
-7. Has the same unchanged information already been retrieved?
-8. Is the operation inside the authorized scope?
-9. Is the operation destructive, expensive, or externally visible?
-10. Can a smaller query, range, test, or command answer the question?
-11. Could the command produce continuous or high-volume output?
-12. Does the command require explicit authorization?
-13. Will the call retrieve evidence, or merely gather more context?
+1. Is the call necessary?
+2. Is the answer already in active context?
+3. Is the current objective explicit?
+4. Did the state gate already require `BLOCK` or `REFRAME`?
+5. Is the target exact?
+6. Is the operation inside the authorized phase?
+7. Is the path inside the authorized scope?
+8. Is this the narrowest suitable tool?
+9. Would a semantic query be better than a file read?
+10. Is the output bounded?
+11. Has the same information already been retrieved?
+12. Was an equivalent call already denied?
+13. Could the command produce excessive output?
+14. Does it modify the environment?
+15. Is it expensive or externally visible?
+16. Will it produce decision-relevant evidence?
+17. Can the resulting claim be attributed to current-session evidence?
 
-Do not narrate this self-check.
+Do not narrate this checklist.
 
 ---
 
-## Discovery and navigation routing
+# 13. Discovery and navigation
 
-Do not use file reads as the default method of code discovery.
+## 13.1 Retrieval order
 
-Choose the retrieval method according to the question.
+Use this order:
 
-### Existing task and planning information
+1. current conversation;
+2. confirmed current-task state;
+3. semantic repository graph;
+4. language-server symbol navigation;
+5. syntax-aware search;
+6. bounded exact-text search;
+7. bounded file read;
+8. filesystem discovery only when no narrower method works.
 
-Use the current conversation and established task state first.
+Do not move to a broader method merely to gather additional context.
 
-Do not search the repository for:
+## 13.2 GitNexus usage
 
-* phase names;
-* task names;
-* acceptance criteria;
-* authorization status;
-* requirements already in the conversation;
-* conclusions already confirmed in the current session.
+Use GitNexus for concrete code questions.
 
-Do not read these through tools when their relevant contents are already loaded
-or present in the conversation:
+Good queries:
 
-* `AGENT.md`;
-* `AGENTS.md`;
-* `CLAUDE.md`;
-* `.agent/PROJECT.md`;
-* `.agent/STATE.md`;
-* equivalent instruction or state files.
+```text
+Identify all current CLI commands and their direct module dependencies.
+```
 
-Read an instruction or state file only when:
+```text
+Trace callers of resolve_config and the tests that verify its behavior.
+```
 
-* the task directly concerns the file;
-* a nested directory may contain more specific instructions;
-* the host did not load repository instructions;
-* an instruction conflict must be resolved;
-* required project state is absent from the conversation.
+```text
+Trace how the Docker build installs dependencies and the local package.
+```
 
-### Architecture and execution flow
+```text
+Identify entry points that depend on repository-root imports.
+```
 
-Use a repository graph or semantic code-intelligence tool for:
+```text
+Determine the blast radius of changing the package CLI parser.
+```
 
-* unfamiliar implementations;
-* execution paths;
-* subsystem relationships;
-* callers and callees;
-* shared consumers;
-* dependency analysis;
-* blast radius;
-* entry-point tracing;
-* configuration-loading flows;
-* data flow;
-* state transitions;
-* cross-file refactoring;
-* public interface analysis.
+Bad queries:
 
-When GitNexus is available, use:
+```text
+layout
+test
+requirements
+Phase 1
+Phase 2
+loader.py
+wingbeat_ml
+current migration
+```
+
+Do not use GitNexus as a filesystem listing system.
 
 For understanding:
 
 ```text
 query
-→ context
-→ bounded implementation read
+→ context for a returned symbol
+→ one bounded implementation read
 ```
 
-For shared or structural changes:
+For structural changes:
 
 ```text
 query
 → context
 → impact
-→ bounded implementation read
+→ one bounded implementation read
 ```
 
-Use `rename` for code-symbol renaming when available.
+Use `rename` for code-symbol renames when available.
 
-Use change detection for non-trivial structural changes when the installed
-integration exposes it.
+Use `detect_changes` only after a task-bounded implementation.
 
-Do not query GitNexus with planning labels such as:
+Consume structured MCP results directly.
 
-* `Phase 1`;
-* `Phase 2`;
-* `Phase 3`;
-* `next phase`;
-* `current migration`.
+Do not open:
 
-Translate planning concepts into concrete code questions.
+* MCP spill files;
+* brain paths;
+* cache files;
+* temporary MCP response files;
+* internal file URIs.
 
-Bad:
+When a result is too broad, issue a narrower query.
 
-```text
-Query GitNexus for Phase 3.
-```
+## 13.3 Restricted GitNexus operations
 
-Good:
+Do not use these during ordinary targeted development unless explicitly
+authorized:
 
-```text
-Locate training entry points, configuration consumers, dataset construction,
-preprocessing initialization, and execution flows for pretraining, linear
-probing, and fine-tuning.
-```
+* repository-wide Cypher enumeration;
+* listing every file node;
+* generic test-file enumeration;
+* `tool_map` exploration;
+* generic searches for phase names;
+* generic searches for reports;
+* graph-schema exploration.
 
-Treat symbols, paths, callers, flows, relationships, and risk information
-returned by the MCP response as the retrieval result.
+## 13.4 Exact symbols and structural patterns
 
-Consume the structured MCP response directly.
-
-Do not open host-generated MCP, brain, cache, spill, or temporary file URIs to
-recover the same response in another format.
-
-When an MCP result is too broad or incomplete, repeat the request with narrower
-parameters.
-
-Do not install, update, configure, or reindex GitNexus unless the task
-explicitly concerns GitNexus maintenance.
-
-If an index appears stale, report the evidence.
-
-### Exact symbol questions
-
-When language-server or symbol-navigation tools are available, use them for:
+Use language-server tools for:
 
 * definitions;
 * references;
 * implementations;
-* incoming calls;
-* outgoing calls;
-* type information;
+* callers;
+* callees;
 * diagnostics;
-* document symbols;
-* workspace symbols;
+* type information;
 * safe symbol rename.
 
-Do not read a complete file to locate one known symbol.
-
-### Structural code patterns
-
-Use syntax-aware or AST search when available for:
+Use AST or syntax-aware search for:
 
 * API call patterns;
 * decorators;
-* inheritance patterns;
-* exception-handler structures;
-* repeated constructs;
+* inheritance;
+* exception structures;
 * import patterns;
 * deprecated API usage.
 
-Use text search only when syntax-aware retrieval is unavailable or the target
-is textual rather than structural.
-
-### Textual information
-
-Use bounded exact search for:
-
-* configuration keys;
-* error messages;
-* environment variables;
-* documentation;
-* test names;
-* logs;
-* generated strings;
-* command-line flags;
-* literal paths.
-
-Restrict searches by:
-
-* exact file;
-* known subsystem;
-* file type;
-* exact directory;
-* result count;
-* exact term.
-
-### Code reads
-
-Read code only after discovery identifies the exact symbol or range required.
-
-A normal targeted sequence should usually require:
-
-* one focused graph or symbol query;
-* one context or impact query when needed;
-* one bounded implementation read.
-
-Additional retrieval must answer a specific unresolved question.
-
-Do not continue retrieval merely to gather more context.
-
-A second code range must answer a question not resolved by the first.
-
-Do not read complete implementation and test files merely because they exist or
-because their tests passed.
-
-### Tool fallback order
-
-Use this order:
-
-1. current conversation and established task state;
-2. repository graph or semantic index;
-3. language-server symbol navigation;
-4. syntax-aware structural search;
-5. bounded exact-text search;
-6. bounded file read;
-7. filesystem discovery.
-
-Do not move to a broader level until the previous level is insufficient.
+Do not read a complete file to locate one known symbol.
 
 ---
 
-## Repository discovery
+# 14. Repository and Git inspection
 
-Do not begin normal work with broad repository discovery.
+## 14.1 No cold-start enumeration
 
-Avoid cold-start actions such as:
+Do not begin normal work with:
 
-* recursive directory listings;
+* `ls` for repository discovery;
 * `tree`;
 * repository-wide `find`;
 * repository-wide `fd`;
-* `git ls-files`;
 * `rg --files`;
+* `git ls-files`;
 * recursive globbing;
 * repository-wide line counts;
-* reading all configuration files;
-* reading all documentation;
-* reading all tests;
-* reading complete large source files;
-* checking every dependency;
-* checking every tool;
-* inspecting hooks or MCP configuration when unrelated;
-* running `git status` merely to understand the repository.
+* listing every test;
+* listing every package;
+* `git clean -n`;
+* broad `git status`;
+* broad `git diff`.
 
-Do not reproduce broad discovery through:
+Do not reproduce enumeration through Python, Node.js, or generated scripts.
 
-* Python filesystem traversal;
-* Node.js filesystem traversal;
-* shell loops;
-* subprocess wrappers;
-* alternate Git commands;
-* generated manifests;
-* another tool with equivalent behavior.
+## 14.2 Targeted Git inspection
 
-Broad discovery is acceptable only when:
+Use exact paths:
 
-* the user explicitly requests exhaustive work;
-* repository structure is the subject of the task;
-* targeted discovery failed and broader scope is justified;
-* no semantic or indexed navigation capability is available.
+```bash
+git status --short -- <path> <path>
+git diff -- <path> <path>
+git diff --stat -- <path> <path>
+git diff --name-only -- <path> <path>
+git log -n 1 --oneline -- <path>
+```
 
-When broad discovery is justified, bound it by:
+When a path-bounded `git status` is denied, do not retry broad status.
 
-* directory;
-* depth;
-* subsystem;
-* file type;
-* result count;
-* exact question.
+Use an allowed targeted diff or report that status evidence is blocked.
 
----
+Do not use Git history as the only source of repository state.
 
-## Code intelligence and impact analysis
+A commit title does not prove phase completion.
 
-Use semantic tools for:
+A branch name does not authorize work.
 
-* unfamiliar implementations;
-* execution flows;
-* callers and callees;
-* shared consumers;
-* dependency relationships;
-* public API changes;
-* entry-point changes;
-* cross-file refactors;
-* configuration-loading paths;
-* state and data flow;
-* symbol renaming;
-* blast-radius analysis.
+## 14.3 Existing-path checks
 
-Do not use semantic repository tools for:
+When determining whether one known file exists, use an exact-path check.
 
-* conceptual questions;
-* comments;
-* documentation-only edits;
-* fixtures;
-* exact known text files;
-* formatting;
-* isolated value changes;
-* trivial local changes with confirmed callers.
+Do not enumerate a directory to find it.
 
-Run available impact analysis before changing:
+When determining whether one known path is tracked, use a path-specific Git
+query.
 
-* public APIs;
-* shared functions, classes, or methods;
-* entry points;
-* symbols with unknown callers;
-* cross-file behavior;
-* configuration-loading paths;
-* persistence formats;
-* schemas;
-* protocols;
-* deployment behavior;
-* security-sensitive behavior;
-* symbols used by several subsystems;
-* code-symbol names.
-
-Impact analysis is usually unnecessary for:
-
-* documentation;
-* comments;
-* formatting;
-* fixtures;
-* test data;
-* isolated values;
-* local private helpers with confirmed callers;
-* exact-path non-symbol edits.
-
-Warn before proceeding when impact analysis reports high or critical risk.
-
-Do not claim impact analysis occurred unless the operation appears in the
-execution record.
+Do not list the complete tracked-file set.
 
 ---
 
-## File reading
+# 15. File reading
 
-Prefer symbol-level retrieval for:
+Prefer symbol-level retrieval for code.
 
-* functions;
-* classes;
-* methods;
-* references;
-* callers;
-* callees;
-* imports;
-* execution flows.
+Use bounded reads for:
 
-Use bounded text reads for:
-
-* exact strings;
-* errors;
-* configuration keys;
+* exact documentation sections;
+* exact configuration fragments;
 * test cases;
-* documentation;
 * logs;
-* generated output.
+* generated output;
+* small known files.
 
-Follow the active hook’s read limit.
+Follow the active read limit.
 
-When no repository-specific limit exists, default to approximately 200 lines or
-fewer per read.
+For this repository, do not request more than 120 lines per read unless the hook
+explicitly permits it.
 
-Do not read a complete large file unless:
+Do not reconstruct a large file through consecutive reads.
 
-* the complete file is explicitly under review;
-* the file itself is the task target;
-* symbolic retrieval is unavailable;
-* bounded retrieval was insufficient;
-* whole-file consistency must be verified.
+After two reads from one file, reconsider whether:
 
-Do not read the same unchanged content twice.
+* a symbol query;
+* exact text search;
+* targeted diff;
+* AST query;
 
-A later read is valid only when it:
+would answer the question more efficiently.
 
-* retrieves unseen content;
-* verifies a specific edit;
-* resolves a specific unanswered question.
+Do not read unchanged content twice.
 
-Do not reconstruct a large file through many consecutive reads.
+A repeated read must:
 
-Before a second range from one file, identify the unresolved question requiring
-it.
-
-After two bounded reads from one file, reconsider whether a symbol query, exact
-search, changed hunk, or structural query is more efficient.
-
-Do not inspect neighboring files preemptively.
+* verify an edit;
+* retrieve unseen required content;
+* answer a named unresolved question.
 
 Do not read host-internal:
 
-* agent files;
-* MCP spill files;
-* cache files;
 * brain files;
+* spill files;
+* cache files;
 * hidden reasoning files;
-* temporary internal reports;
-
-unless the task explicitly concerns those systems and access is authorized.
+* temporary MCP reports.
 
 ---
 
-## Search behavior
+# 16. Test and baseline resolution
 
-Use exact:
+## 16.1 Resolve the supported command first
 
-* symbols;
-* strings;
-* error messages;
-* configuration keys;
-* paths;
-* test names.
+Before treating a test failure as a product failure, confirm:
 
-Text searches should normally target:
+* interpreter;
+* working directory;
+* package installation state;
+* project layout;
+* supported test command;
+* required `PYTHONPATH`;
+* relevant test target.
 
-* one exact file;
-* one known directory;
-* one subsystem;
-* one exact term;
-* a bounded result count.
+Do not run plain `pytest` reflexively.
 
-Do not run repository-wide searches for broad terms such as:
+For this repository, the default source-layout test form is:
 
-* `main`;
-* `config`;
-* `model`;
-* `service`;
-* `test`;
-* `error`;
-* `TODO`;
-* `data`;
-* `train`;
-* `phase`;
+```bash
+PYTHONPATH=src pytest <target>
+```
 
-unless exhaustive work requires it.
+Use another command only when repository instructions or the current task
+explicitly require it.
 
-A search with no result does not automatically justify broader discovery.
+## 16.2 Import failures
 
-Refine the term, inspect a known caller, query a symbol, or identify another
-concrete evidence source.
+A `ModuleNotFoundError` may indicate:
 
-Do not repeat equivalent searches with superficial wording changes.
+* an uninstalled source-layout package;
+* missing `PYTHONPATH`;
+* wrong interpreter;
+* wrong working directory.
+
+Verify those before editing source code.
+
+Do not change package code to compensate for an incorrect test invocation.
+
+## 16.3 No environment fishing
+
+Do not try a sequence of guessed environments such as:
+
+* multiple Conda environments;
+* Poetry;
+* `.venv`;
+* `venv`;
+* arbitrary interpreters;
+
+unless concrete evidence indicates one is required.
+
+Do not enumerate every package or environment during normal test resolution.
+
+Use the documented or already confirmed project environment.
+
+## 16.4 Baseline record
+
+Before production edits, record:
+
+```text
+Baseline command:
+Interpreter:
+Working directory:
+Environment assumptions:
+Current-session result:
+Warnings:
+Baseline status: PASS | FAIL | BLOCKED
+```
+
+When the initial command is wrong, correct it once.
+
+When the correct baseline fails for a product reason, stop unless the current
+task explicitly authorizes fixing that failure.
+
+## 16.5 Test progression
+
+Run:
+
+1. exact failing test;
+2. exact affected test file;
+3. smallest affected test group;
+4. parity or compatibility tests;
+5. integration tests;
+6. full suite only when justified.
+
+Do not rerun the same broad suite merely for additional verbosity.
+
+Do not regenerate fixtures, snapshots, or baselines to hide a failure.
 
 ---
 
-# Mandatory Ponytail Workflow
+# 17. Dependency and packaging ownership
 
-## Purpose
+Before editing dependency metadata, identify the authoritative source.
+
+For this repository during the current packaging migration:
+
+```text
+Runtime dependency authority: requirements.txt
+Package metadata: pyproject.toml
+```
+
+Do not duplicate all runtime dependencies into `pyproject.toml` unless the task
+explicitly migrates dependency ownership.
+
+A valid installation pattern is:
+
+```bash
+python -m pip install -r requirements.txt
+python -m pip install --no-deps .
+```
+
+Do not:
+
+* guess dependency constraints;
+* upgrade dependencies;
+* repin TensorFlow;
+* alter CUDA or cuDNN versions;
+* add a package-management framework;
+* redesign dependency ownership;
+* install missing tools automatically.
+
+When package metadata and dependency ownership conflict, report the conflict and
+use `REFRAME` or `BLOCK`.
+
+---
+
+# 18. Mandatory Ponytail workflow
+
+## 18.1 Purpose
 
 Ponytail is the required simplicity and anti-overengineering workflow for
 non-trivial implementation and refactoring.
 
 Ponytail is not:
 
-* an output compressor;
-* a substitute for testing;
-* a substitute for semantic navigation;
-* a substitute for impact analysis;
-* a substitute for compatibility analysis;
-* a general statement that code is simple.
+* output compression;
+* a replacement for testing;
+* a replacement for impact analysis;
+* permission to remove required functionality;
+* a statement that code appears simple.
 
-Reading a Ponytail skill file alone does not count as using Ponytail.
+Reading the Ponytail skill file alone does not count.
 
-Mentioning Ponytail in a final report does not count as completing a Ponytail
-review.
+Mentioning Ponytail in the final report does not count.
 
-## When Ponytail is mandatory
+## 18.2 Mandatory triggers
 
-Use the full Ponytail workflow when a task:
+Use Ponytail when a task:
 
 * adds a source module;
 * adds a class;
@@ -771,112 +1050,81 @@ Use the full Ponytail workflow when a task:
 * introduces a service;
 * introduces an interface;
 * introduces a dependency;
-* adds configuration structure;
 * changes module boundaries;
+* changes public behavior;
 * moves responsibility between components;
-* changes a public or shared interface;
-* removes or replaces existing code;
+* adds configuration structure;
+* removes or replaces code;
 * performs a cross-file refactor;
-* is explicitly described as refactoring;
-* produces a non-trivial source-code diff.
+* produces a non-trivial source diff.
 
 Ponytail is normally optional for:
 
-* comments;
 * spelling;
+* comments;
 * formatting;
 * documentation-only edits;
-* isolated value changes;
-* one-line fixes without structural effects;
-* fixture content;
+* isolated literal changes;
 * generated files.
 
-When uncertain, treat Ponytail as mandatory.
+When uncertain, use Ponytail.
 
-## Required stages
+## 18.3 Stage 1: pre-change analysis
 
-A mandatory Ponytail workflow contains two visible stages:
-
-```text
-Pre-change Ponytail analysis
-        ↓
-Implementation and focused tests
-        ↓
-Post-change Ponytail review
-        ↓
-Final affected tests
-```
-
-Both stages must appear in the execution record.
-
----
-
-## Stage 1 — Pre-change Ponytail analysis
-
-Before writing code, activate or follow the installed Ponytail implementation
-or planning skill.
-
-The analysis must produce a compact decision record:
+Before writing code, record:
 
 ```text
 Pre-change Ponytail analysis
 
-Existing behavior that can be reused:
+Existing behavior to reuse:
 Standard-library alternatives:
 Installed-library alternatives:
 New abstractions considered:
-Why each proposed abstraction is necessary:
+Confirmed consumers:
 Simpler designs considered:
-Code that can be deleted or consolidated:
+Code that may be deleted or consolidated:
 Speculative features rejected:
-Selected smallest sufficient design:
+Smallest sufficient design:
+Compatibility behavior preserved:
+Later-phase behavior preserved:
 ```
 
-Before adding any module, class, function, helper, wrapper, adapter, service,
-factory, registry, interface, configuration layer, or dependency, answer:
+Answer:
 
 1. Does equivalent behavior already exist?
-2. Can an existing implementation be reused?
-3. Can an existing function be extended safely?
-4. Can the standard library provide the behavior?
-5. Can an installed dependency provide the behavior?
-6. Can the change remain local to an existing module?
-7. Is a function sufficient instead of a class?
-8. Is a direct call sufficient instead of a wrapper?
-9. Does the abstraction have at least two confirmed consumers?
-10. Is the abstraction required by the current task?
-11. Is it being introduced only for a hypothetical future phase?
-12. Can existing code be removed instead of adding new code?
+2. Can an existing implementation be extended?
+3. Can the standard library provide it?
+4. Can an installed dependency provide it?
+5. Can the change remain local?
+6. Is a function sufficient instead of a class?
+7. Is a direct call sufficient instead of a wrapper?
+8. Are current consumers confirmed?
+9. Is the abstraction required now?
+10. Is it only for a hypothetical future phase?
+11. Can code be removed instead of added?
+12. Would the simplification remove newer behavior?
+13. Would it conflict with passing tests?
+14. Would it recreate an earlier phase over later work?
 
-Do not begin implementation until the smallest sufficient design has been
-identified.
+When questions 12, 13, or 14 are true, use `REFRAME` or `BLOCK`.
 
-Do not create extension points without a confirmed current consumer.
+Do not begin implementation until the smallest compatible design is selected.
 
-Do not add architecture solely because a future task may need it.
+## 18.4 Stage 1 evidence
 
-### Stage 1 evidence
+The execution record must contain:
 
-The execution record must contain one of:
+* an actual Ponytail skill invocation; or
+* a complete explicitly labeled pre-change analysis.
 
-* invocation of the installed Ponytail planning or implementation skill;
-* invocation of an installed Ponytail pre-change command;
-* an explicitly labeled `Pre-change Ponytail analysis` containing the required
-  decision fields.
+Reading a short Ponytail skill file without applying the procedure is
+insufficient.
 
-Reading `SKILL.md` without applying its procedure is insufficient.
+## 18.5 Stage 2: post-change review
 
----
+After focused tests pass, inspect the actual task-bounded diff.
 
-## Stage 2 — Post-change Ponytail review
-
-After implementation and focused tests pass, inspect only the task-bounded
-diff.
-
-Activate or follow the installed diff-focused Ponytail review skill when
-available.
-
-Review the actual changed code for:
+Review for:
 
 * unnecessary modules;
 * unnecessary classes;
@@ -892,993 +1140,563 @@ Review the actual changed code for:
 * unnecessary registries;
 * excessive indirection;
 * dead code;
-* compatibility code without confirmed consumers;
+* unsupported compatibility layers;
 * custom code already provided by the standard library;
-* custom code already provided by an installed dependency;
-* comments compensating for unnecessarily complex code.
+* custom code already provided by installed dependencies.
 
-Each concrete candidate must be reported as:
+Report each candidate:
 
 ```text
 Candidate:
 Location:
 Why it may be unnecessary:
 Safe simplification:
-Behavior that must remain unchanged:
+Behavior that must remain:
 Decision: APPLY | REJECT | DEFER
 Reason:
 ```
 
-A report containing only:
+A statement such as `Ponytail review completed` is invalid without concrete
+candidate decisions.
 
-```text
-Ponytail review completed.
-```
+## 18.6 Applying simplifications
 
-is invalid.
+Apply a recommendation only when it:
 
-Finding one unused helper does not prove a complete Ponytail review unless the
-review explicitly covers all required categories.
-
----
-
-## Applying Ponytail simplifications
-
-Automatically apply a recommendation only when it:
-
-* remains inside authorized scope;
-* preserves required behavior;
-* preserves public compatibility;
-* preserves validation;
-* preserves error handling;
+* remains in authorized scope;
+* preserves current behavior;
+* preserves later-phase behavior;
+* preserves compatibility;
+* preserves validation and error handling;
 * preserves deterministic behavior;
 * does not weaken security;
 * does not remove required observability;
 * is covered by focused tests.
 
-Before applying a recommendation that changes:
+After simplification:
 
-* public structure;
-* configuration shape;
-* compatibility behavior;
-* module boundaries;
-* external interfaces;
+1. rerun affected tests;
+2. rerun relevant parity tests;
+3. inspect the final bounded diff;
+4. confirm no replacement abstraction was introduced.
 
-obtain authorization when that structural change is not already authorized by
-the task.
+## 18.7 Ponytail status
 
-After applying simplifications:
+Report `PASS` only when:
 
-1. rerun the exact affected tests;
-2. rerun relevant parity or compatibility tests;
-3. inspect the final task-bounded diff;
-4. confirm the simplification introduced no replacement abstraction;
-5. record the final decision.
-
----
-
-## Ponytail completion gate
-
-A mandatory Ponytail workflow is complete only when:
-
-* pre-change analysis is visible;
-* the smallest sufficient design is stated;
-* reuse opportunities are documented;
-* new abstractions have explicit justification;
-* speculative features are rejected explicitly;
-* the post-change review examines the actual diff;
-* concrete candidates and decisions are reported;
+* pre-change analysis is complete;
+* current-state compatibility is confirmed;
+* the smallest design is recorded;
+* abstractions are justified;
+* the actual diff is reviewed;
+* candidate decisions are reported;
 * accepted simplifications are applied;
-* rejected or deferred recommendations include reasons;
-* affected tests are rerun after simplification.
+* affected tests are rerun.
 
-When any required item is absent, Ponytail status is:
-
-```text
-UNVERIFIED
-```
-
-Do not report Ponytail as `PASS`.
-
-Successful tests do not compensate for an absent Ponytail review.
-
----
-
-## Ponytail reporting format
-
-For every mandatory Ponytail task, report:
+Otherwise:
 
 ```text
-Ponytail status: PASS | FAIL | UNVERIFIED
-
-Pre-change analysis:
-- Reused:
-- Added:
-- Rejected as unnecessary:
-- Selected design:
-
-Post-change review:
-- Candidates examined:
-- Applied:
-- Rejected:
-- Deferred:
-
-Verification after simplification:
-- Commands:
-- Results:
+Ponytail status: UNVERIFIED
 ```
 
-Do not claim Ponytail was used unless the execution record supports the claim.
+Successful tests do not compensate for missing Ponytail stages.
 
 ---
 
-## Implementation workflow
-
-For normal development:
-
-1. Confirm the objective.
-2. Confirm acceptance criteria.
-3. Identify the exact implementation target.
-4. Retrieve only required context.
-5. Assess impact when shared behavior is involved.
-6. Identify existing behavior that can be reused.
-7. Run pre-change Ponytail analysis when required.
-8. Establish the smallest relevant baseline test.
-9. Design the smallest sufficient change.
-10. Implement in small, coherent steps.
-11. Run the smallest relevant verification.
-12. Inspect the task-bounded diff.
-13. Run the post-change Ponytail review when required.
-14. Apply safe, in-scope simplifications.
-15. Rerun affected tests.
-16. Report verified results and risks.
-
-Do not introduce unrelated cleanup.
-
-Record unrelated defects separately unless they block the task.
-
-Do not claim completion until acceptance criteria are verified.
-
-Do not create speculative extension points.
-
-Prefer direct, explicit implementations over frameworks when a framework is not
-required.
-
-A non-trivial implementation is not complete when mandatory Ponytail stages are
-missing.
-
----
-
-## Debugging workflow
-
-Begin with evidence, not repository exploration.
+# 19. Implementation workflow
 
 Use this sequence:
 
-1. Capture the exact symptom.
-2. Preserve the reproduction command or triggering action.
-3. Confirm whether the failure is reproducible.
-4. Identify the first meaningful error.
-5. Determine the smallest implicated component.
-6. Form explicit hypotheses.
-7. Test the cheapest discriminating hypothesis first.
-8. Inspect only implicated code or configuration.
-9. Fix the root cause with the smallest justified change.
-10. Add or update a regression test.
-11. Rerun the original reproduction.
-12. Run the smallest relevant surrounding tests.
-13. Use Ponytail when the fix introduces non-trivial structure.
+1. confirm the exact current objective;
+2. establish the authorization envelope;
+3. reconcile the requested phase with current state;
+4. identify exact write targets;
+5. identify behavior that must remain;
+6. retrieve only required context;
+7. run semantic impact analysis when necessary;
+8. resolve the supported baseline command;
+9. run the smallest relevant baseline;
+10. perform pre-change Ponytail analysis when required;
+11. add focused tests when required;
+12. implement the smallest compatible change;
+13. run focused tests;
+14. inspect the task-bounded diff;
+15. run post-change Ponytail review;
+16. apply safe simplifications;
+17. rerun affected tests;
+18. run required parity or compatibility checks;
+19. run semantic change detection when justified;
+20. report only current-session verified results.
 
-Do not change code because it merely looks suspicious.
+Do not:
 
-Do not apply several speculative fixes simultaneously.
-
-Do not hide failures using:
-
-* broad exception handling;
-* arbitrary retries;
-* warning suppression;
-* disabled validation;
-* ignored exit codes;
-* unverified fallback behavior.
-
-When reproduction is impossible, state:
-
-* what was attempted;
-* what was observed;
-* what remains unknown;
-* what is needed to reproduce it.
+* add unrelated cleanup;
+* create speculative extension points;
+* remove current functionality because an older phase did not require it;
+* enter another phase automatically;
+* write outside the authorized path set;
+* treat prior-session results as current evidence.
 
 ---
 
-## Troubleshooting workflow
-
-For system, tooling, build, service, environment, or deployment failures,
-inspect layers deliberately.
-
-A useful default order is:
-
-1. exact error and timestamp;
-2. command syntax;
-3. working directory;
-4. process or service state;
-5. configuration;
-6. credentials and permissions;
-7. environment variables;
-8. dependency and runtime versions;
-9. filesystem and storage;
-10. network and external services;
-11. application code.
-
-Use the order appropriate to the symptom.
-
-Do not modify application code until evidence implicates application code.
-
-Prefer read-only diagnostics before state-changing commands.
-
-Before proposing a destructive fix, explain:
-
-* affected state;
-* expected result;
-* recovery path;
-* evidence supporting the action.
-
-Do not treat reinstalling dependencies or rebuilding the environment as the
-default solution.
-
----
-
-## Refactoring workflow
-
-A refactor begins by identifying behavior that must remain unchanged.
-
-Ponytail is mandatory for every non-trivial refactor.
-
-### Before editing
-
-1. State the refactor objective.
-2. Identify preserved interfaces.
-3. Identify preserved invariants.
-4. Locate direct and indirect consumers.
-5. Run impact analysis when available.
-6. Establish baseline or characterization tests.
-7. Run pre-change Ponytail analysis.
-8. Identify code that can be reused.
-9. Identify code that can be consolidated.
-10. Identify code that can be deleted.
-11. Select the smallest behavior-preserving design.
-12. Define reversible implementation steps.
-
-### During the refactor
-
-* separate behavior-preserving changes from behavior changes;
-* do not combine movement, renaming, redesign, and new features unnecessarily;
-* preserve compatibility unless removal is explicitly authorized;
-* use semantic rename tools when available;
-* keep intermediate states testable;
-* avoid speculative framework layers;
-* avoid moving adjacent subsystems without authorization;
-* run focused tests after each meaningful step;
-* do not introduce abstractions rejected during Ponytail analysis.
-
-### After editing
-
-1. Run focused tests.
-2. Run parity or compatibility tests.
-3. Inspect the task-bounded diff.
-4. Run change detection when available.
-5. Run the post-change Ponytail review.
-6. Apply safe simplifications.
-7. Rerun affected focused tests.
-8. Rerun relevant parity tests.
-9. Report preserved behavior and risks.
-
-A refactor is not complete merely because code compiles.
-
-A refactor is not complete while required behavior remains unverified.
-
-A refactor is not complete when mandatory Ponytail stages are missing.
-
----
-
-## Code review
-
-Review the requested change, not the entire repository.
-
-Prioritize findings in this order:
-
-1. correctness;
-2. security and data safety;
-3. behavior regressions;
-4. compatibility;
-5. concurrency and state consistency;
-6. error handling;
-7. performance when material;
-8. missing tests;
-9. unnecessary complexity;
-10. maintainability;
-11. style.
-
-Each finding should include:
-
-* severity;
-* exact location;
-* observed issue;
-* why it matters;
-* concrete correction;
-* required verification.
-
-Do not report speculative style concerns as defects.
-
-Do not inflate issue severity.
-
-Do not praise routine code when the user requests defect-focused review.
-
-When reviewing a non-trivial implementation or refactor, include Ponytail-style
-complexity review findings.
-
-When no defect is found, state:
-
-* what was reviewed;
-* what evidence was available;
-* what remains unverified.
-
----
-
-## Learning and explanation
-
-For educational requests:
-
-* answer the actual question first;
-* adapt depth to demonstrated experience;
-* explain purpose before implementation details;
-* use a minimal working example when useful;
-* distinguish general concepts from repository-specific behavior;
-* identify assumptions;
-* explain tradeoffs;
-* avoid presenting one approach as universally correct.
-
-Do not inspect the repository for a conceptual question unless repository
-evidence is necessary.
-
-When explaining repository behavior, cite exact symbols, paths, or confirmed
-flows.
-
-Do not turn a learning request into implementation unless asked.
-
----
-
-## Documentation
-
-Documentation must describe confirmed behavior.
-
-Before documenting code behavior:
-
-* verify the implementation;
-* verify commands when execution is safe;
-* distinguish current behavior from planned behavior;
-* preserve compatibility and safety constraints;
-* avoid unsupported assumptions.
-
-Do not claim that:
-
-* a command works;
-* a test passes;
-* a feature is integrated;
-* a migration is complete;
-* an interface is stable;
-* a deployment is supported;
-
-without evidence.
-
-Prefer examples that are:
-
-* small;
-* executable;
-* current;
-* consistent with repository conventions.
-
-Do not duplicate documentation that already has an authoritative location.
-
-Do not create documentation merely to preserve temporary reasoning.
-
----
-
-## Tests and builds
-
-Run the smallest relevant verification first.
-
-Use this progression when applicable:
-
-1. exact failing test;
-2. exact affected test file;
-3. smallest affected test group;
-4. affected subsystem;
-5. integration test;
-6. full suite only when justified.
-
-Run the full suite when:
-
-* the user requests it;
-* focused tests pass and broader verification is necessary;
-* shared infrastructure changed;
-* a release or commit gate requires it.
-
-Do not rerun the same full test command merely to obtain more verbose output.
-
-When tests pass with warnings, inspect the exact warning source before unrelated
-files.
-
-After a small edit, rerun exact affected tests first.
-
-Run broader verification once at the final gate when required.
-
-Return compact results:
-
-* command;
-* exit status;
-* failed tests;
-* minimal relevant stack frames;
-* pass/fail summary;
-* runtime when useful;
-* warnings requiring attention.
-
-Do not list every passing test unless requested.
-
-Do not stream complete build output when a summary is sufficient.
-
-Do not install missing dependencies automatically unless explicitly authorized.
-
-Report blocked verification precisely.
-
-Do not claim that no checks were blocked when required operations were:
-
-* denied;
-* skipped;
-* unavailable;
-* not run.
-
----
-
-## Long-running and high-volume processes
-
-This applies to:
-
-* model training;
-* large builds;
-* simulations;
-* data processing;
-* migrations;
-* benchmarks;
-* deployment logs;
-* continuous tests;
-* service logs;
-* remote jobs.
-
-Do not stream continuous output directly into agent context.
-
-Prefer structured status containing:
-
-* process state;
-* current stage;
-* progress;
-* current metrics;
-* best metrics when relevant;
-* warnings;
-* errors;
-* exit status;
-* completion result;
-* raw-log path.
-
-React to meaningful events rather than every update.
-
-Meaningful events include:
-
-* stage changes;
-* new best results;
-* warnings;
-* regression;
-* stalled progress;
-* resource exhaustion;
-* traceback;
-* service failure;
-* process exit;
-* completion.
-
-Do not repeatedly poll unchanged output.
-
-Store verbose output outside model context when possible.
-
-Inspect raw output only in bounded relevant sections.
-
-Do not start long-running, GPU, remote, production, or expensive jobs without
-explicit authorization.
-
----
-
-## Output control
-
-Reduce output at the source.
+# 20. Debugging workflow
 
 Use:
 
-* exact paths;
-* exact symbols;
-* result limits;
-* summary modes;
-* quiet modes;
-* bounded ranges;
-* bounded timestamps;
-* bounded `head` or `tail`;
-* filtered warnings and errors.
+1. capture the exact symptom;
+2. preserve the reproduction command;
+3. verify interpreter and working directory;
+4. verify import and installation state;
+5. reproduce the failure;
+6. identify the first meaningful error;
+7. identify the smallest implicated component;
+8. form explicit hypotheses;
+9. test the cheapest discriminating hypothesis;
+10. inspect only implicated code;
+11. apply the smallest root-cause fix;
+12. add or update a regression test;
+13. rerun the original reproduction;
+14. run surrounding focused tests;
+15. use Ponytail when structure changes.
 
-Use only one output-compression mechanism per command.
+Do not change code because it merely appears suspicious.
 
-Do not stack compressors or wrappers.
+Do not apply several speculative fixes simultaneously.
 
-Compression does not make a broad command acceptable.
+Do not hide failures through:
 
-For substantial output:
-
-1. preserve complete output outside agent context;
-2. preserve the exact command;
-3. preserve the exit status;
-4. return relevant warnings, errors, metrics, and final lines;
-5. report the raw-output location;
-6. inspect raw output only in bounded sections.
-
-Ponytail is not an output-compression mechanism.
-
-Do not use a spill file as a substitute for a concise tool response.
-
----
-
-## Log handling
-
-Begin with a bounded view.
-
-Suitable operations include:
-
-* recent lines;
-* initial lines;
-* exact timestamp range;
-* exact request or job ID;
-* exact error string;
-* limited warning and error search.
-
-Do not dump a complete log unless explicitly requested.
-
-Do not use an unbounded read merely because a file is text.
-
-Do not repeatedly inspect the same unchanged section.
-
-Identify the first relevant failure rather than copying the entire cascade.
-
-Do not monitor logs line by line when structured status exists.
+* broad exception handling;
+* warning suppression;
+* ignored exit codes;
+* arbitrary retries;
+* disabled validation;
+* unverified fallback behavior.
 
 ---
 
-## Environment and dependency changes
+# 21. Refactoring workflow
 
-Do not modify the environment unless authorized.
+Ponytail is mandatory for every non-trivial refactor.
 
-Environment-changing actions include:
+Before editing:
+
+1. establish authorization;
+2. reconcile repository state;
+3. identify preserved interfaces;
+4. identify preserved invariants;
+5. identify direct and indirect consumers;
+6. run impact analysis;
+7. establish characterization tests;
+8. run pre-change Ponytail analysis;
+9. select the smallest behavior-preserving design;
+10. define reversible steps.
+
+During refactoring:
+
+* separate movement from behavior changes;
+* do not combine renaming, redesign, and new features unnecessarily;
+* preserve compatibility;
+* preserve later-phase behavior;
+* use semantic rename tools;
+* keep intermediate states testable;
+* avoid speculative frameworks;
+* run focused tests after meaningful steps.
+
+After refactoring:
+
+1. run focused tests;
+2. run parity or compatibility tests;
+3. inspect the bounded diff;
+4. run semantic change detection;
+5. run post-change Ponytail review;
+6. apply safe simplifications;
+7. rerun affected tests;
+8. report preserved behavior and remaining risks.
+
+A refactor is not complete merely because the code imports or compiles.
+
+---
+
+# 22. Environment and expensive operations
+
+Do not modify the environment without explicit current-task authorization.
+
+Environment changes include:
 
 * package installation;
 * package removal;
 * lockfile regeneration;
 * interpreter changes;
-* global tool installation;
-* operating-system package changes;
+* system package changes;
 * container builds;
 * service restarts;
-* remote job submission;
-* infrastructure changes;
-* external downloads.
+* downloads;
+* remote job submission.
 
-Before an authorized environment change:
+Do not start without explicit authorization:
+
+* model training;
+* GPU workloads;
+* Docker builds;
+* remote jobs;
+* deployments;
+* large benchmarks;
+* data migrations.
+
+Before an authorized operation:
 
 1. identify the target environment;
-2. inspect the existing project declaration or lockfile;
-3. prefer project-local changes;
-4. explain expected effects;
-5. preserve reproducibility;
-6. verify the result.
-
-Do not use package listings, environment dumps, or dependency discovery as a
-cold-start repository survey.
-
-When a dependency is unavailable, report:
-
-* missing component;
-* failed command;
-* blocked verification;
-* smallest required next action.
-
-Do not silently install a replacement tool.
+2. identify expected cost and side effects;
+3. identify the recovery path;
+4. preserve reproducibility;
+5. verify the result.
 
 ---
 
-## Git and working-tree safety
+# 23. Git and write safety
 
-Do not run `git status` merely to begin a session.
+Modify only authorized files.
 
-Use Git commands only when they answer a task-specific question.
+Before every write, verify:
 
-When inspecting changes:
+* exact path;
+* file existence;
+* create versus edit operation;
+* reason for change;
+* authorized objective;
+* authorized phase;
+* authorized path set;
+* risk of overwriting later work;
+* whether the file is generated;
+* whether a smaller change is sufficient.
 
-1. begin with named paths;
-2. inspect relevant hunks;
-3. use bounded diffs;
-4. use diff summaries only when broader scope is justified;
-5. avoid unrelated changes.
+Do not:
 
-Do not modify, stage, restore, discard, or delete unrelated work.
+* stage unrelated files;
+* restore unrelated files;
+* reset unrelated work;
+* clean the repository;
+* overwrite existing files;
+* write reports into host-internal directories.
 
 Never use:
 
-* `git add .`;
-* `git add -A`.
+```bash
+git add .
+git add -A
+```
 
-Do not run broad reset, restore, clean, or checkout commands without explicit
-authorization and a confirmed target.
+Do not commit unless explicitly authorized in the current task.
 
 Before committing:
 
-* confirm intended files;
-* confirm intended diff;
-* confirm required tests;
-* confirm no unrelated paths are staged.
+* confirm exact intended paths;
+* inspect the bounded diff;
+* confirm current-session test evidence;
+* confirm no unrelated staged changes;
+* confirm the state gate passed;
+* confirm Ponytail passed when required.
 
-Do not create a commit unless explicitly requested.
+Do not create a completion commit when any required criterion is:
 
-Do not use Git history as the default source of planning information when the
-conversation already provides the plan.
-
----
-
-## Write safety
-
-Modify only files required by the task.
-
-Before writing, verify:
-
-* target path;
-* reason for the change;
-* authorized scope;
-* whether a smaller edit is sufficient;
-* whether unrelated content could be overwritten;
-* whether the file is generated;
-* whether the write has external side effects.
-
-Prefer focused edits over full-file replacement.
-
-Do not create speculative:
-
-* helpers;
-* wrappers;
-* abstractions;
-* configuration files;
-* adapters;
-* documentation;
-* registries;
-* factories;
-* extension points.
-
-Do not edit generated files unless regeneration is part of the task.
-
-Do not write outside the repository unless authorized.
-
-Use approved temporary or scratch paths for temporary artifacts.
-
-Clean temporary files when required.
-
-Do not write reports into host-internal agent, brain, cache, or MCP directories.
-
-Return reports directly unless the user requests a file and the location is
-authorized.
-
-Active write-policy hooks override broader task wording.
+* `FAIL`;
+* `BLOCKED`;
+* `UNVERIFIED`.
 
 ---
 
-## Destructive and irreversible actions
+# 24. Output and log control
 
-Require explicit authorization for:
+Reduce output at the source.
 
-* deleting files or data;
-* database migrations;
-* schema changes;
-* force pushes;
-* history rewrites;
-* broad Git cleanup;
-* production deployments;
-* service termination;
-* credential rotation;
-* destructive cloud operations;
-* overwriting checkpoints or artifacts;
-* permanent environment removal.
+Use:
 
-Before execution, confirm:
+* exact targets;
+* quiet modes;
+* summary modes;
+* result limits;
+* bounded ranges;
+* focused warnings;
+* focused error lines.
 
-* exact target;
-* exact environment;
-* expected impact;
-* backup or recovery status;
-* rollback path;
-* user authorization.
+Do not stream continuous output into agent context.
 
-Prefer reversible actions.
+For long-running commands, report:
 
-Do not weaken safety checks to make a command succeed.
+* command;
+* process state;
+* progress;
+* warnings;
+* errors;
+* exit status;
+* final result;
+* raw-log path when authorized.
 
----
+Do not repeatedly poll unchanged output.
 
-## Repository context files
+Do not state that you will pause and wait after a synchronous command has
+already returned.
 
-Use repository context files when they exist and are relevant.
-
-A stable project-context file may contain:
-
-* architecture;
-* important directories;
-* entry points;
-* approved commands;
-* conventions;
-* deployment model;
-* persistent constraints.
-
-A task-state file may contain:
-
-* current objective;
-* active phase;
-* completed work;
-* relevant files and symbols;
-* confirmed findings;
-* commands already executed;
-* current failure;
-* next safe action.
-
-Do not assume specific filenames exist in every repository.
-
-Do not read context files automatically when the conversation contains the
-required information.
-
-Update task state only when multi-step work benefits from durable continuation.
-
-Do not store:
-
-* secrets;
-* raw logs;
-* full diffs;
-* conversation transcripts;
-* large generated output;
-* hidden reasoning;
-* host-internal paths.
+Do not paste complete test logs when a compact result is sufficient.
 
 ---
 
-## Tool denials
+# 25. Reporting
 
-When a tool call is denied:
+## 25.1 State report
 
-1. read the denial reason;
-2. treat the denial as final for that operation;
-3. do not retry equivalent syntax;
-4. do not use an alias;
-5. do not switch runtimes to bypass it;
-6. do not wrap it in a subprocess;
-7. do not use another tool for the same restricted action;
-8. narrow the target;
-9. use the suggested allowed method;
-10. continue with permitted work.
+For phased work, report:
 
-A denied broad action does not mean the task is blocked.
+```text
+Requested objective:
+Requested phase:
+Hook-authorized phase:
+Confirmed repository state:
+Existing later-phase behavior:
+Evidence provenance:
+State decision: PROCEED | REFRAME | BLOCK
+Conflicts:
+```
 
-Do not test policy boundaries during normal work.
+When the objective is missing:
 
-Policy testing must be an explicit task.
+```text
+Requested objective: UNSPECIFIED
+Requested phase: UNSPECIFIED
+State decision: BLOCK
+```
 
-Request broader access only when the objective cannot be completed through a
-targeted permitted method.
-
-Record denied operations as blocked evidence when they affect verification.
-
-Do not report that no work was blocked if required operations were denied.
-
----
-
-## Failure handling
-
-When a command, test, or operation fails:
-
-1. capture the exact failure;
-2. preserve the reproduction command;
-3. identify the smallest implicated layer;
-4. inspect only relevant evidence;
-5. form a specific hypothesis;
-6. apply the smallest justified correction;
-7. rerun the smallest relevant verification.
-
-Do not respond to one failure with repository-wide inspection.
-
-Do not reinterpret failure as success.
-
-Do not claim these occurred without evidence:
-
-* tests passed;
-* behavior was preserved;
-* no side effects occurred;
-* impact analysis completed;
-* change detection completed;
-* Ponytail analysis completed;
-* Ponytail review completed;
-* a service is healthy;
-* a file is unchanged.
-
-When work remains blocked, state:
-
-* what is confirmed;
-* what failed;
-* what is unverified;
-* what evidence is missing;
-* what action would unblock it.
-
----
-
-## Reporting
-
-Return compact, decision-relevant results.
-
-Prefer:
-
-* changed chunks over complete files;
-* confirmed evidence over speculation;
-* exact commands over broad tutorials;
-* relevant stack frames over full traces;
-* compact metrics over complete logs;
-* exact risks over vague uncertainty.
-
-Do not repeat information already established.
-
-Do not include large unchanged code sections.
-
-### Implementation report
+## 25.2 Implementation report
 
 Report:
 
 * objective;
+* authorized write targets;
 * files and symbols changed;
-* behavior changed or preserved;
-* tests run;
-* results;
-* Ponytail status when required;
+* behavior changed;
+* behavior preserved;
+* current-session tests and commands;
+* current-session results;
+* prior-session results, clearly labeled;
+* Ponytail status;
 * blocked checks;
-* risks;
+* concrete remaining risks;
 * next safe action.
 
-### Debugging report
+## 25.3 Verification statuses
 
-Report:
-
-* reproduction;
-* root cause;
-* evidence;
-* fix;
-* regression test;
-* remaining uncertainty.
-
-### Refactoring report
-
-Report:
-
-* preserved invariants;
-* impact analysis;
-* structural changes;
-* compatibility;
-* pre-change Ponytail analysis;
-* post-change Ponytail review;
-* simplifications applied or rejected;
-* verification;
-* remaining risks.
-
-### Code-review report
-
-Report findings before summaries.
-
-Each finding must contain an exact location and actionable correction.
-
-### Phased work report
-
-Mark every required criterion:
+Use only:
 
 * `PASS`;
 * `FAIL`;
-* `UNVERIFIED`.
+* `BLOCKED`;
+* `UNVERIFIED`;
+* `NOT REQUIRED`;
+* `NOT RERUN`.
 
-Do not declare a phase complete while a required criterion is failed or
-unverified.
+Do not report `PASS` when:
 
-Do not claim the next phase is authorized unless the user explicitly authorized
-it.
+* a required write was denied;
+* required checks were skipped;
+* the baseline was not run in the current session;
+* a wheel was not built when required;
+* Docker was not tested when required;
+* an impact review was not run when required;
+* Ponytail post-review was absent;
+* the repository state remained unclear.
 
----
+## 25.4 Unsupported claims
 
-## Repository-specific extension
-
-Add repository-specific information below this section.
-
-Include only information specific to the current repository, such as:
-
-* architecture;
-* domain boundaries;
-* build commands;
-* focused test commands;
-* installed semantic tools;
-* project hooks;
-* read and write limits;
-* supported environments;
-* deployment restrictions;
-* compatibility requirements;
-* data constraints;
-* security constraints;
-* phase gates;
-* approved temporary paths;
-* expensive operations requiring authorization.
-
-Do not duplicate universal rules.
-
-Example:
+Do not claim:
 
 ```text
-Semantic index:
-GitNexus is installed and indexed for this repository.
-
-Focused unit tests:
-PYTHONPATH=src pytest tests/unit/<target>.py
-
-Focused parity tests:
-PYTHONPATH=src pytest tests/parity/<target>.py
-
-Read limit:
-The active hook limits file reads to 120 lines.
-
-Expensive operations requiring authorization:
-Training, GPU workloads, Docker builds, remote jobs, deployments, package
-installation, and external downloads.
+Dependency ownership was modified.
 ```
+
+when the write was denied.
+
+Do not claim:
+
+```text
+CLI simplification was verified.
+```
+
+when no simplification occurred.
+
+Do not claim:
+
+```text
+Phase complete.
+```
+
+when acceptance criteria remain unverified.
+
+The final status must follow the evidence, not the intended outcome.
 
 ---
 
-## Operating summary
+# 26. Stop conditions
+
+Stop before writing when:
+
+* the current objective is unspecified;
+* the requested phase is unspecified where phase authorization is required;
+* task phase conflicts with hook phase;
+* repository state conflicts with the prompt;
+* the change would remove later-phase functionality;
+* an exact required write is denied;
+* the target path is not authorized;
+* the baseline command cannot be determined safely;
+* the correct baseline fails;
+* overlapping user changes cannot be isolated;
+* dependency ownership is unclear;
+* the task requires an unauthorized environment change;
+* the denial budget is exhausted;
+* the prompt is demonstrably obsolete;
+* required current-session evidence cannot be obtained.
+
+Stop after writing when:
+
+* focused tests fail;
+* parity tests fail;
+* compatibility changes unexpectedly;
+* the final diff contains unrelated changes;
+* Ponytail identifies unresolved structural risk;
+* required acceptance criteria remain unverified.
+
+Do not weaken tests or regenerate baselines to force completion.
+
+---
+
+# 27. Repository-specific rules
+
+## Semantic code intelligence
+
+GitNexus is installed and indexed for this repository.
+
+Use it for:
+
+* execution flow;
+* callers and callees;
+* dependency relationships;
+* entry-point impact;
+* cross-file behavior;
+* structural change analysis.
+
+Do not use GitNexus for generic filesystem enumeration.
+
+## Read limit
+
+The active hook permits a maximum of 120 lines per file read.
+
+Do not reconstruct large files through repeated reads.
+
+## Test command
+
+The default source-layout test invocation is:
+
+```bash
+PYTHONPATH=src pytest <target>
+```
+
+Use the smallest relevant target first.
+
+A prior-session successful test is not current-session evidence.
+
+## Dependency authority
+
+During the current packaging migration:
+
+```text
+requirements.txt remains authoritative for runtime dependencies.
+pyproject.toml provides build and package metadata.
+```
+
+Do not duplicate or migrate dependency ownership without explicit
+authorization.
+
+## Phase authority
+
+The active phase is determined by external hook state.
+
+The agent must not:
+
+* infer the active phase;
+* advance the active phase;
+* edit a file to test phase permissions;
+* treat prior-session intent as current authorization;
+* treat a user prompt as overriding a phase hook.
+
+## Existing later-phase behavior
+
+Earlier phases may be verified, but they must not overwrite or remove
+functionality already introduced by later phases.
+
+## Expensive operations
+
+These require explicit authorization:
+
+* model training;
+* GPU workloads;
+* Docker builds;
+* remote jobs;
+* deployments;
+* package installation;
+* dependency changes;
+* external downloads.
+
+## Protected paths
+
+Do not inspect these during ordinary development:
+
+```text
+.agent/hooks/**
+.git/**
+~/.gemini/**
+**/brain/**
+**/cache/**
+**/spill/**
+```
+
+Access them only for an explicitly authorized policy-maintenance task.
+
+---
+
+# 28. Operating summary
 
 During normal work:
 
-* use existing context first;
-* use no tools when the answer is already known;
-* classify the task;
-* remain inside scope;
-* retrieve targeted evidence;
-* prefer semantic navigation over file discovery;
-* assess impact before structural changes;
-* use bounded exact reads;
-* avoid duplicate retrieval;
-* reuse existing behavior;
-* run mandatory pre-change Ponytail analysis;
-* implement the smallest sufficient change;
+* use active context first;
+* use no tools when no tools are needed;
+* require an explicit current objective;
+* do not inherit authorization from a previous session;
+* establish exact authorization;
+* reconcile the task with actual repository state;
+* preserve later-phase functionality;
+* stop on phase mismatch;
+* distinguish current evidence from prior evidence;
+* never probe permissions through writes;
+* use exact write targets;
+* treat denials as final;
+* stop after repeated denials;
+* do not inspect hooks during unrelated work;
+* do not reread loaded instruction files without a specific reason;
+* prefer semantic navigation;
+* use concrete GitNexus questions;
+* avoid filesystem enumeration;
+* resolve the correct test command first;
+* preserve dependency ownership;
+* perform pre-change Ponytail analysis;
+* implement the smallest compatible change;
 * run focused tests;
-* run mandatory post-change Ponytail review;
-* apply safe simplifications;
+* inspect the bounded diff;
+* perform post-change Ponytail review;
 * rerun affected tests;
-* inspect only relevant diffs;
-* avoid destructive or unrelated actions;
-* treat tool denials as final;
-* distinguish confirmed from unverified;
-* stop when the objective is satisfied.
+* report only supported claims;
+* stop when the authorized objective is complete.
 
-The goal is not to maximize context, generated code, abstractions, or tool use.
+The repository’s confirmed current behavior is more authoritative than an
+obsolete implementation prompt.
 
-The goal is to complete the authorized task with the smallest sufficient,
-well-verified implementation.
-
-The repository-specific section should contain your GitNexus availability, 120-line hook limit, test commands, write allowlists, GPU restrictions, and phase-specific gates.
+Simplicity means removing unnecessary complexity while preserving all required
+current functionality.
