@@ -97,27 +97,179 @@ def file_hash(path):
         return ""
 
 
-def duplicate_read(session_id, path, digest, state_dir):
-    if not session_id or not digest:
-        return False
+def _merge_read_ranges(ranges):
+    normalized = []
 
-    state_dir.mkdir(parents=True, exist_ok=True)
-    state_file = state_dir / f"{session_id}.json"
+    for value in ranges:
+        if not isinstance(value, (list, tuple)) or len(value) != 2:
+            continue
+
+        try:
+            start = int(value[0])
+            end = int(value[1])
+        except (TypeError, ValueError):
+            continue
+
+        if start < 0 or end < start:
+            continue
+
+        normalized.append([start, end])
+
+    normalized.sort(key=lambda item: (item[0], item[1]))
+
+    merged = []
+
+    for start, end in normalized:
+        if not merged or start > merged[-1][1] + 1:
+            merged.append([start, end])
+        else:
+            merged[-1][1] = max(merged[-1][1], end)
+
+    return merged
+
+
+def _read_range_is_covered(ranges, start, end):
+    for existing_start, existing_end in _merge_read_ranges(ranges):
+        if existing_start <= start and existing_end >= end:
+            return True
+
+    return False
+
+
+def duplicate_read(
+    session_id,
+    target,
+    digest,
+    state_dir,
+    scope="full",
+):
+    """
+    Return True only when the requested content has already been covered
+    in this session.
+
+    Changing the file content resets coverage because the digest changes.
+    """
+
+    import hashlib
+    import json
+    from pathlib import Path
+
+    target = Path(target).resolve()
+    state_dir = Path(state_dir)
+
+    range_state_dir = state_dir / "read-ranges-v2"
+    range_state_dir.mkdir(parents=True, exist_ok=True)
+
+    session_key = hashlib.sha256(
+        str(session_id).encode("utf-8")
+    ).hexdigest()[:24]
+
+    state_path = range_state_dir / f"{session_key}.json"
 
     try:
-        state = json.loads(state_file.read_text())
-    except Exception:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+
+        if not isinstance(state, dict):
+            state = {}
+    except (OSError, ValueError, TypeError):
         state = {}
 
-    key = str(path)
-    duplicate = state.get(key) == digest
-    state[key] = digest
+    target_key = str(target)
+    record = state.get(target_key)
 
-    temp = state_file.with_suffix(".tmp")
-    temp.write_text(json.dumps(state, indent=2, sort_keys=True))
-    temp.replace(state_file)
+    if not isinstance(record, dict) or record.get("digest") != digest:
+        record = {
+            "digest": digest,
+            "full": False,
+            "line_ranges": [],
+            "offset_ranges": [],
+            "other_scopes": [],
+        }
+
+    duplicate = False
+    changed = False
+
+    if record.get("full") is True:
+        duplicate = True
+
+    elif scope == "full":
+        # A full read after partial reads still adds unseen content.
+        record["full"] = True
+        changed = True
+
+    elif scope.startswith("lines:"):
+        try:
+            _, raw_start, raw_end = scope.split(":", 2)
+            start = int(raw_start)
+            end = int(raw_end)
+        except (TypeError, ValueError):
+            start = end = None
+
+        if start is None or end is None or start < 1 or end < start:
+            scopes = set(record.get("other_scopes", []))
+            duplicate = scope in scopes
+
+            if not duplicate:
+                scopes.add(scope)
+                record["other_scopes"] = sorted(scopes)
+                changed = True
+        else:
+            ranges = record.get("line_ranges", [])
+            duplicate = _read_range_is_covered(ranges, start, end)
+
+            if not duplicate:
+                ranges.append([start, end])
+                record["line_ranges"] = _merge_read_ranges(ranges)
+                changed = True
+
+    elif scope.startswith("offset:"):
+        try:
+            _, raw_offset, _, raw_limit = scope.split(":", 3)
+            start = int(raw_offset)
+            limit = int(raw_limit)
+            end = start + limit - 1
+        except (TypeError, ValueError):
+            start = end = None
+
+        if start is None or end is None or start < 0 or end < start:
+            scopes = set(record.get("other_scopes", []))
+            duplicate = scope in scopes
+
+            if not duplicate:
+                scopes.add(scope)
+                record["other_scopes"] = sorted(scopes)
+                changed = True
+        else:
+            ranges = record.get("offset_ranges", [])
+            duplicate = _read_range_is_covered(ranges, start, end)
+
+            if not duplicate:
+                ranges.append([start, end])
+                record["offset_ranges"] = _merge_read_ranges(ranges)
+                changed = True
+
+    else:
+        scopes = set(record.get("other_scopes", []))
+        duplicate = scope in scopes
+
+        if not duplicate:
+            scopes.add(scope)
+            record["other_scopes"] = sorted(scopes)
+            changed = True
+
+    if changed:
+        state[target_key] = record
+
+        temporary_path = state_path.with_suffix(".tmp")
+        temporary_path.write_text(
+            json.dumps(state, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        temporary_path.replace(state_path)
 
     return duplicate
+
+
 
 
 data = load_input()
@@ -290,7 +442,39 @@ if normalized_tool in {
 
         digest = file_hash(target)
 
-        if duplicate_read(session_id, target, digest, state_dir):
+        start_line = tool_input.get("start_line")
+        if start_line in (None, ""):
+            start_line = tool_input.get("line_start")
+
+        end_line = tool_input.get("end_line")
+        if end_line in (None, ""):
+            end_line = tool_input.get("line_end")
+
+        offset = tool_input.get("offset")
+        limit = tool_input.get("limit")
+
+        if (
+            start_line not in (None, "")
+            and end_line not in (None, "")
+        ):
+            scope = f"lines:{start_line}:{end_line}"
+
+        elif (
+            offset not in (None, "")
+            and limit not in (None, "")
+        ):
+            scope = f"offset:{offset}:limit:{limit}"
+
+        else:
+            scope = "full"
+
+        if duplicate_read(
+            session_id,
+            target,
+            digest,
+            state_dir,
+            scope,
+        ):
             output_deny(
                 event_name,
                 f"Duplicate unchanged read blocked: {target}. "

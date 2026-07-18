@@ -17,3 +17,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 # Copy the rest of the application code
 COPY . .
+
+# Install the package normally
+RUN pip install --no-cache-dir .
+

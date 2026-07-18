@@ -1,158 +1,253 @@
-labels:
-  Ae_aegypti_Female: 0
-  Ae_aegypti_Male: 1
-  Ae_albopictus_Female: 2
-  Ae_albopictus_Male: 3
-  An_dirus_Female: 4
-  An_dirus_Male: 5
-  An_minimus_Female: 6
-  An_minimus_Male: 7
-  Cx_quin_Female: 8
-  Cx_quin_Male: 9
-  No_mos: 10
+loss:
+  name: CategoricalCrossentropy
+  reduction: none
+  from_logits: true
 
-num_classes: 11
-nomos_index: 10
-
-wandb:
-  enabled: true
-  project: "MosSongPlus"
-  log_weights_freq: 1
-  aggregate_plot_freq: 1
-  prediction_table_max_rows: 5000
-  log_prediction_audio: true
-
-train:
-  batch_size: 256
-  shuffle: true
-  epochs: 1000
-  seed: 43
-  warmup_epochs: 15
-  warmup_augment_p: 0.0
-
-reproducibility:
-  enabled: true
-  seed: 45
-  deterministic_ops: true
-  deterministic_data: true
-
-optimizer:
-  name: Adam
-  learning_rate: 0.001
+audio:
+  duration: 0.3
+  sample_rate: 8000
+  segment_length: 2400
 
 model:
-  output_activation: null
-
-  # Best-run BN pattern = 11100
-  # BN enabled on conv layers, disabled on dense layers
   bn_conv1: true
   bn_conv2: true
   bn_conv3: true
   bn_dense1: false
   bn_dense2: false
+  output_activation: null
 
-loss:
-  name: CategoricalCrossentropy
-  from_logits: true
-  reduction: none
-  # label_smoothing: 0.1
+train:
+  seed: 45
+  epochs: 1000
+  shuffle: true
+  batch_size: 256
+  warmup_epochs: 15
+  warmup_augment_p: 0
+
+wandb:
+  tags:
+    - 11class
+    - nomos
+    - indoor
+    - bestaug
+    - local-test
+  group: 11class-local-bestaug
+  notes: "11-class local test using best observed config: overlay20 + gain30 + mixup alpha0.4"
+  enabled: false
+  job_type: train
+  log_weights_freq: 0
+  aggregate_plot_freq: 0
+  log_prediction_audio: false
+  prediction_table_max_rows: 100
+
+labels:
+  No.mos: 10
+  Cx_quin_Male: 9
+  An_dirus_Male: 5
+  Cx_quin_Female: 8
+  Ae_aegypti_Male: 1
+  An_dirus_Female: 4
+  An_minimus_Male: 7
+  Ae_aegypti_Female: 0
+  An_minimus_Female: 6
+  Ae_albopictus_Male: 3
+  Ae_albopictus_Female: 2
+
+augment:
+  mixup:
+    p: 1
+    alpha: 0.4
+  rms_norm:
+    max_gain: 15
+    min_gain: 0.05
+    target_rms: 0.05
+  high_pass:
+    p: 0
+    fc: 150
+  preprocess:
+    dc_removal: true
+  time_shift:
+    p: 0
+    rate:
+      - -0.05
+      - 0.05
+  noise_banks:
+    - /app/dataset/MSB/Environmental/humbug_noises
+    - /app/dataset/MSB/Environmental/inmp_noises
+    - /app/dataset/MSB/Environmental/miru_noises
+    - /app/dataset/MSB/Environmental/noises
+    - /app/dataset/MSB/Environmental/Nomos
+  pitch_shift:
+    p: 0
+    semitones:
+      - -0.2
+      - 0.2
+  random_gain:
+    p: 0.3
+    gain_db:
+      - -3
+      - 3
+  noise_overlay:
+    p: 0.2
+    snr_db:
+      - 15
+      - 30
+    post_gain_db:
+      - -3
+      - 3
+    envelope_gain:
+      - 0.7
+      - 1
+  gaussian_noise:
+    p: 0
+    snr_db:
+      - 20
+      - 50
+  segment_overlap:
+    val: 0.5
+    train:
+      - 0
+      - 0.8
+  max_segments_per_file: 100
+
+classes:
+  - Ae_aegypti_Female
+  - Ae_aegypti_Male
+  - Ae_albopictus_Female
+  - Ae_albopictus_Male
+  - An_dirus_Female
+  - An_dirus_Male
+  - An_minimus_Female
+  - An_minimus_Male
+  - Cx_quin_Female
+  - Cx_quin_Male
+  - No.mos
+
+dataset:
+  indoor: /app/dataset/MSB/Indoor
+  mosLab: /app/dataset/Philip
+  outdoor: /app/dataset/MSB/Outdoor
+  val_dir: null
+  test_dir: null
+  train_dir: /app/dataset/MSB/Indoor
+  split_list:
+    - 0.8
+    - 0.1
+    - 0.1
+  split_ratios:
+    val: 0.1
+    test: 0.1
+    train: 0.8
 
 callbacks:
   early_stopping:
-    monitor: val_macro_f1
-    patience: 100
     mode: max
-    restore_best_weights: true
-
-  model_checkpoint:
     monitor: val_macro_f1
+    patience: 80
+    min_delta: 0
+    restore_best_weights: true
+  model_checkpoint:
+    mode: max
+    monitor: val_macro_f1
+    min_delta: 0
     save_best_only: true
     save_weights_only: true
-    mode: max
-
   reduce_lr_on_plateau:
-    monitor: val_macro_f1
-    factor: 0.5
-    patience: 50
-    min_lr: 1e-6
     mode: max
+    factor: 0.5
+    min_lr: 3.0e-05
+    monitor: val_macro_f1
+    patience: 30
+    min_delta: 0.001
     restore_best_weights: true
 
-  # cosine_annealing:
-  #   t_max: 1000
-  #   eta_min: 1e-5
-
-augment:
-  max_segments_per_file: 100
-
-  segment_overlap:
-    train: [0.0, 0.8]
-    val: 0.5
-
-  high_pass:
-    p: 0.0
-    fc: 150
-
-  noise_banks:
-    - "dataset/MSB/Environmental/humbug_noises"
-    - "dataset/MSB/Environmental/inmp_noises"
-    - "dataset/MSB/Environmental/miru_noises"
-    - "dataset/MSB/Environmental/noises"
-    - "dataset/MSB/Environmental/Nomos"
-
-  noise_overlay:
-    p: 0.0
-    snr_db: [15, 30]
-    envelope_gain: [0.7, 1.0]
-    post_gain_db: [-3.0, 3.0]
-
-  random_gain:
-    p: 0.0
-    gain_db: [-6, 6]
-
-  time_shift:
-    p: 0.0
-    rate: [-0.05, 0.05]
-
-  pitch_shift:
-    p: 0.0
-    semitones: [-0.2, 0.2]
-
-  gaussian_noise:
-    p: 0.0
-    snr_db: [20, 50]
-
-  rms_norm:
-    target_rms: 0.05
-    max_gain: 15.0
-    min_gain: 0.05
-
-  # Best-run mixup setting
-  mixup:
-    p: 1.0
-    alpha: 0.4
-
-audio:
-  sample_rate: 8000
-  duration: 0.3
-  segment_length: 2400
-
-dataset:
-  indoor: "dataset/MSB_Indoor_with_NoMos"  # Combined dataset with all classes including No.Mos
-  outdoor: "dataset/MSB/Outdoor"
-  mosLab: "dataset/Philip"
-  train_dir: null
-  val_dir: null
-  test_dir: null
-  split_ratios:
-    train: 0.8
-    val: 0.1
-    test: 0.1
-
-class_weights:
-  enabled: true
-  values: null
-  override: {}
+optimizer:
+  name: Adam
+  learning_rate: 0.001
 
 preprocess:
   dc_removal: true
+
+nomos_index: 10
+num_classes: 11
+segment_length: 2400
+
+class_weights:
+  values:
+    No.Mos: 1
+    Cx_quin_Male: 1.25
+    An_dirus_Male: 1
+    Cx_quin_Female: 1
+    Ae_aegypti_Male: 1.25
+    An_dirus_Female: 1
+    An_minimus_Male: 1
+    Ae_aegypti_Female: 1
+    An_minimus_Female: 1
+    Ae_albopictus_Male: 1
+    Ae_albopictus_Female: 1
+  enabled: true
+
+reproducibility:
+  seed: 45
+  enabled: true
+  deterministic_ops: true
+  deterministic_data: true
+
+# Flattened autoresearch override keys logged in W&B config
+train.seed: 48
+train.epochs: 1000
+train.batch_size: 128
+reproducibility.seed: 48
+
+wandb.tags:
+  - autoresearch
+  - gpu2
+  - 50run
+  - 11class
+  - indoor
+  - outdoor-validation
+  - indoor_holdout
+  - I07_gpuE_b128_lr1e3_o022_seed48
+
+wandb.group: autoresearch-gpu2-50-indoor-outdoor-robust-v1
+wandb.notes: "I07_gpuE_b128_lr1e3_o022_seed48: Indoor holdout stability of GPU winner E basin b128/lr1e-3/overlay0.22. Non-overlap 50-run plan: indoor F1 plus outdoor validation/test robustness."
+wandb.enabled: true
+wandb.project: MosSongPlus
+wandb.job_type: autoresearch_gpu2_50_indoor_outdoor_robust
+wandb.log_weights_freq: 0
+wandb.aggregate_plot_freq: 0
+wandb.log_prediction_audio: false
+wandb.prediction_table_max_rows: 0
+
+dataset.indoor: /app/dataset/MSB/Indoor
+dataset.mosLab: /app/dataset/Philip
+dataset.outdoor: /app/dataset/MSB/Outdoor
+dataset.val_dir: null
+dataset.test_dir: null
+dataset.train_dir: /app/dataset/MSB/Indoor
+
+augment.mixup.p: 1
+augment.mixup.alpha: 0.4
+augment.high_pass.p: 0
+augment.time_shift.p: 0
+augment.pitch_shift.p: 0
+augment.random_gain.p: 0.3
+augment.random_gain.gain_db:
+  - -3
+  - 3
+augment.noise_overlay.p: 0.22
+augment.noise_overlay.snr_db:
+  - 15
+  - 30
+augment.noise_overlay.post_gain_db:
+  - -3
+  - 3
+augment.noise_overlay.envelope_gain:
+  - 0.7
+  - 1
+augment.gaussian_noise.p: 0
+augment.gaussian_noise.snr_db:
+  - 20
+  - 50
+
+optimizer.learning_rate: 0.001
