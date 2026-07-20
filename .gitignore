@@ -16,7 +16,7 @@ dataset/
 .DS_Store
 Thumbs.db
 models/
-wandb
+/wandb/
 artifacts
 models
 scratch
