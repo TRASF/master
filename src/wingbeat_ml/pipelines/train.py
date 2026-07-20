@@ -6,8 +6,10 @@ import copy
 import time
 from collections.abc import Callable, Mapping
 
+import numpy as np
 import tensorflow as tf
 
+from wingbeat_ml.config.runtime import resolve_class_weights
 from wingbeat_ml.training import (
     CallbackFactory,
     LossFactory,
@@ -50,6 +52,37 @@ def configure_trainable_layers(model, mode: str) -> str:
             layer.trainable = True
 
     return normalized
+
+
+def resolve_training_class_weights(
+    config: dict,
+    dataset_builder,
+    *,
+    show_counts: bool = False,
+):
+    """Resolve class weights once and record them in the run config."""
+    enabled, weights = resolve_class_weights(
+        config["class_weights"],
+        dataset_builder.class_weights,
+        config["num_classes"],
+        labels_dict=config["labels"],
+    )
+
+    if not enabled:
+        if show_counts:
+            print("Class weights disabled.")
+        config["resolved_class_weights"] = None
+        return None
+
+    if show_counts:
+        counts = np.bincount(
+            dataset_builder.train_labels,
+            minlength=config["num_classes"],
+        )
+        print(f"Training class counts: {counts.tolist()}")
+    print(f"Using class weights: {np.round(weights, 3).tolist()}")
+    config["resolved_class_weights"] = weights.tolist()
+    return weights
 
 
 def build_training_components(
@@ -195,5 +228,6 @@ def run_training(
 __all__ = [
     "build_training_components",
     "configure_trainable_layers",
+    "resolve_training_class_weights",
     "run_training",
 ]

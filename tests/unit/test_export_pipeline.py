@@ -181,6 +181,19 @@ class TestExportModules(unittest.TestCase):
                 inspect.getsource(module),
             )
 
+    def test_export_pipeline_uses_registered_components(self):
+        pipeline = require_module(
+            self,
+            "wingbeat_ml.pipelines.export",
+        )
+        source = inspect.getsource(pipeline.export_from_weights)
+
+        self.assertIn("build_datasets(", source)
+        self.assertIn("build_model(", source)
+        self.assertIn("configure_training_runtime(", source)
+        self.assertNotIn("SupervisedDataset(", source)
+        self.assertNotIn("MosSongPlusModel(", source)
+
     def test_cli_exposes_export_command(self):
         result = subprocess.run(
             [

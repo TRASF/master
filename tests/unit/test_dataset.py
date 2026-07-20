@@ -61,7 +61,12 @@ class TestBuildDatasets(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def _build(self, batch_size: int = 2, split=(0.6, 0.2, 0.2)):
+    def _build(
+        self,
+        batch_size: int = 2,
+        split=(0.6, 0.2, 0.2),
+        return_builder: bool = False,
+    ):
         from wingbeat_ml.data.dataset import build_datasets
         config = {
             "reproducibility": {
@@ -82,7 +87,11 @@ class TestBuildDatasets(unittest.TestCase):
             "classes": self.fixture["classes"],
             "augment": {},
         }
-        return build_datasets(self.fixture["root"], config)
+        return build_datasets(
+            self.fixture["root"],
+            config,
+            return_builder=return_builder,
+        )
 
     def test_returns_three_datasets(self):
         if not self._tf_available:
@@ -93,6 +102,16 @@ class TestBuildDatasets(unittest.TestCase):
         self.assertEqual(len(result), 3)
         for ds in result:
             self.assertIsInstance(ds, tf.data.Dataset)
+
+    def test_can_return_builder_for_pipeline_orchestration(self):
+        from wingbeat_ml.data.dataset import SupervisedDataset
+
+        builder, train_ds, val_ds, test_ds = self._build(
+            return_builder=True,
+        )
+
+        self.assertIsInstance(builder, SupervisedDataset)
+        self.assertEqual(len((train_ds, val_ds, test_ds)), 3)
 
     def test_batch_audio_shape(self):
         if not self._tf_available:
