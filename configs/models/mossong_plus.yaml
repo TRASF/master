@@ -1,4 +1,6 @@
 model:
+  # Pretraining emits logits; classification modes may override this.
+  output_activation: null
   id: mossong_plus
   mossong_plus:
     layers:

@@ -7,3 +7,6 @@ train:
   batch_size: 2
 wandb:
   enabled: false
+augment:
+  noise_overlay:
+    p: 0.0
