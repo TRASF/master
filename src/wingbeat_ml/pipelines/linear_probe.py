@@ -85,6 +85,7 @@ def train_linear_probe(defaults_path="configs/defaults.yaml",
     from wingbeat_ml.evaluation import ModelEvaluator
     from wingbeat_ml.models import MosSongPlusModel
     from wingbeat_ml.training import LossFactory
+    from wingbeat_ml.pipelines.evaluate import evaluate_training_run
     from wingbeat_ml.pipelines.train import run_training
 
     # 4. Setup Dataset
@@ -171,49 +172,16 @@ def train_linear_probe(defaults_path="configs/defaults.yaml",
         save_path=save_path,
     )
 
-    # Final Evaluation on Test Set
-    print("\nTraining complete. Running final evaluation on test set...")
-    if os.path.exists(save_path):
-        model.load_weights(save_path)
-    test_results = evaluator.evaluate_final_test(test_ds, save_dir=results_dir, return_predictions=True)
-
-    # File-level evaluation
-    print("\nRunning file-level evaluation on test set...")
-    file_results = evaluator.evaluate_files(
-        file_paths=ds_builder.test_paths,
-        labels=ds_builder.test_labels,
-        load_fn=ds_builder.data_loader.load_file,
-        augmentor=ds_builder.augmentor,
-        batch_size=cfg["train"]["batch_size"],
-        save_dir=results_dir
-    )
-
-    print("\nRunning file-level evaluation on training set...")
-    train_file_results = evaluator.evaluate_files(
-        file_paths=ds_builder.train_paths,
-        labels=ds_builder.train_labels,
-        load_fn=ds_builder.data_loader.load_file,
-        augmentor=ds_builder.augmentor,
-        batch_size=cfg["train"]["batch_size"],
-        save_dir=results_dir,
-        filename="train_file_level_results.yaml"
-    )
-
-    # Log/Report Results
-    from wingbeat_ml.evaluation import report_results
-    report_results(
+    evaluate_training_run(
         model=model,
-        test_results=test_results,
-        file_results=file_results,
-        train_file_results=train_file_results,
-        cfg=cfg,
-        ds_builder=ds_builder,
-        save_path=save_path,
+        evaluator=evaluator,
+        dataset_builder=ds_builder,
+        config=cfg,
+        checkpoint_path=save_path,
         results_dir=results_dir,
-        artifact_name='mossongplus-linearprobe',
-        val_ds=val_ds,
-        test_ds=test_ds,
-        evaluator=evaluator
+        artifact_name="mossongplus-linearprobe",
+        validation_dataset=val_ds,
+        test_dataset=test_ds,
     )
 
 

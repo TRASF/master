@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 import tensorflow as tf
@@ -97,6 +98,69 @@ class TestCanonicalEvaluation(unittest.TestCase):
             module = importlib.import_module(name)
             source = inspect.getsource(module)
             self.assertNotIn("src.evaluation", source)
+            self.assertIn("evaluate_training_run(", source)
+            self.assertNotIn("evaluate_final_test(", source)
+
+    def test_training_run_evaluation_is_centralized(self):
+        module = require_module(
+            self,
+            "wingbeat_ml.pipelines.evaluate",
+        )
+        model = mock.Mock()
+        evaluator = mock.Mock()
+        evaluator.evaluate_final_test.return_value = {"kind": "segments"}
+        evaluator.evaluate_files.side_effect = [
+            {"kind": "test_files"},
+            {"kind": "train_files"},
+        ]
+        builder = mock.Mock()
+        builder.test_paths = ["test.wav"]
+        builder.test_labels = [1]
+        builder.train_paths = ["train.wav"]
+        builder.train_labels = [0]
+        builder.augmentor = mock.sentinel.augmentor
+        config = {"train": {"batch_size": 8}}
+        validation_dataset = object()
+        test_dataset = object()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint = os.path.join(tmpdir, "best.weights.h5")
+            open(checkpoint, "a", encoding="utf-8").close()
+
+            with mock.patch.object(module, "report_results") as report:
+                module.evaluate_training_run(
+                    model=model,
+                    evaluator=evaluator,
+                    dataset_builder=builder,
+                    config=config,
+                    checkpoint_path=checkpoint,
+                    results_dir=tmpdir,
+                    artifact_name="candidate",
+                    validation_dataset=validation_dataset,
+                    test_dataset=test_dataset,
+                )
+
+        model.load_weights.assert_called_once_with(checkpoint)
+        evaluator.evaluate_final_test.assert_called_once_with(
+            test_dataset,
+            save_dir=tmpdir,
+            return_predictions=True,
+        )
+        self.assertEqual(evaluator.evaluate_files.call_count, 2)
+        report.assert_called_once_with(
+            model=model,
+            test_results={"kind": "segments"},
+            file_results={"kind": "test_files"},
+            train_file_results={"kind": "train_files"},
+            cfg=config,
+            ds_builder=builder,
+            save_path=checkpoint,
+            results_dir=tmpdir,
+            artifact_name="candidate",
+            val_ds=validation_dataset,
+            test_ds=test_dataset,
+            evaluator=evaluator,
+        )
 
 
 class TestQualityGates(unittest.TestCase):
