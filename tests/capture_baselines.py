@@ -73,7 +73,6 @@ def capture_baselines():
     # Capture 1. File Discovery
     file_discovery = {
         "files": [os.path.basename(p) for p in sorted(train_paths)],
-        "full_paths": [str(p) for p in sorted(train_paths)],
         "labels": [int(l) for _, l in sorted(zip(train_paths, train_labels))]
     }
     with open(os.path.join(baseline_dir, "file_discovery.json"), "w") as f:

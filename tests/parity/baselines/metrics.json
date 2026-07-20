@@ -1,0 +1,15 @@
+{
+  "evaluation_metrics": [
+    "loss",
+    "accuracy",
+    "macro_f1",
+    "macro_precision",
+    "macro_recall",
+    "female_f1",
+    "female_prec",
+    "female_rec",
+    "male_f1",
+    "male_prec",
+    "male_rec"
+  ]
+}
