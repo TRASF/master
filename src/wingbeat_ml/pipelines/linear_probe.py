@@ -82,12 +82,10 @@ def train_linear_probe(defaults_path="configs/defaults.yaml",
         print(f"Reproducibility enabled. Seed: {seed}")
 
     from wingbeat_ml.data.dataset import SupervisedDataset
-    from wingbeat_ml.training import Trainer
     from wingbeat_ml.evaluation import ModelEvaluator
     from wingbeat_ml.models import MosSongPlusModel
-    from wingbeat_ml.training import OptimizerFactory
     from wingbeat_ml.training import LossFactory
-    from wingbeat_ml.training import CallbackFactory
+    from wingbeat_ml.pipelines.train import run_training
 
     # 4. Setup Dataset
     print("Setting up datasets...")
@@ -148,73 +146,30 @@ def train_linear_probe(defaults_path="configs/defaults.yaml",
     evaluator = ModelEvaluator(model, cfg["classes"], loss_fn)
 
     epochs = cfg["train"]["epochs"]
-
-    # -------------------------------------------------------------
-    # PHASE 1: LINEAR PROBING
-    # -------------------------------------------------------------
-    print(f"\n--- Linear Probing (Training Only Dense Head) ---")
-    for layer in model.layers[:-1]:
-        layer.trainable = False
-    model.layers[-1].trainable = True
-
-    optimizer = OptimizerFactory.get_optimizer(cfg)
-    trainer = Trainer(model, optimizer, loss_fn, train_ds, class_weights=class_weights if class_weights_enabled else None)
-    callbacks = CallbackFactory.get_callbacks(cfg, optimizer, model, save_path)
-
+    cfg["training_mode"] = "linear_probe"
+    print("\n--- Linear Probing (Training Only Dense Head) ---")
     print(f"Starting linear probe training for {epochs} epochs...")
 
-    import time
-    for epoch in range(epochs):
-        # --- Train ---
-        start_time = time.time()
-        train_metrics = trainer.train_epoch()
-        epoch_time = time.time() - start_time
+    def print_epoch(epoch, logs):
+        print(
+            f"Epoch {epoch + 1}/{epochs} - "
+            f"loss: {logs['train_loss']:.4f} - "
+            f"acc: {logs['train_accuracy']:.4f} | "
+            f"val_loss: {logs['val_loss']:.4f} - "
+            f"val_acc: {logs['val_accuracy']:.4f} | "
+            f"val_f1: {logs['val_macro_f1']:.3f} | "
+            f"Time: {logs['epoch_duration_seconds']:.1f}s"
+        )
 
-        # --- Eval ---
-        val_metrics = evaluator.evaluate_epoch(val_ds)
-
-        print(f"Epoch {epoch+1}/{epochs} - loss: {train_metrics['loss']:.4f} - acc: {train_metrics['accuracy']:.4f} | "
-              f"val_loss: {val_metrics['loss']:.4f} - val_acc: {val_metrics['accuracy']:.4f} | "
-              f"val_f1: {val_metrics['macro_f1']:.3f} | "
-              f"Time: {epoch_time:.1f}s")
-
-        # --- Manual Callback Execution ---
-        callback_values = {
-            "epoch": epoch,
-            "train_loss": train_metrics["loss"],
-            "train_accuracy": train_metrics["accuracy"],
-            "learning_rate": float(tf.keras.backend.get_value(optimizer.learning_rate)),
-            "epoch_duration_seconds": epoch_time,
-        }
-
-        # Populate all val_metrics dynamically
-        for k, v in val_metrics.items():
-            key = f"val_{k}" if not k.startswith("val_") else k
-            callback_values[key] = v
-
-        # Checkpoint
-        if 'model_checkpoint' in callbacks:
-            cb = callbacks['model_checkpoint']
-            if cb.save(model, callback_values):
-                print(f"  --> Saved best weights to {save_path} (val_macro_f1={callback_values['val_macro_f1']:.4f})")
-
-        # Reduce LR
-        if 'reduce_lr_on_plateau' in callbacks:
-            callbacks['reduce_lr_on_plateau'].on_epoch_end(callback_values)
-
-        # Cosine Annealing
-        if 'cosine_annealing' in callbacks:
-            callbacks['cosine_annealing'].on_epoch_end(callback_values)
-
-        # Wandb
-        if 'wandb_logger' in callbacks:
-            callbacks['wandb_logger'].on_epoch_end(callback_values)
-
-        # Early Stopping
-        if 'early_stopping' in callbacks:
-            if callbacks['early_stopping'].check(callback_values):
-                print(f"\nEarly stopping triggered after {epoch+1} epochs.")
-                break
+    run_training(
+        model,
+        train_ds,
+        cfg,
+        evaluate_epoch=lambda: evaluator.evaluate_epoch(val_ds),
+        on_epoch_end=print_epoch,
+        class_weights=(class_weights if class_weights_enabled else None),
+        save_path=save_path,
+    )
 
     # Final Evaluation on Test Set
     print("\nTraining complete. Running final evaluation on test set...")

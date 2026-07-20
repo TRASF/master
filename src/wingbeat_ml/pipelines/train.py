@@ -113,6 +113,7 @@ def run_training(
     config: Mapping[str, object],
     *,
     evaluate_epoch: Callable[[], Mapping[str, float]] | None = None,
+    on_epoch_end: Callable[[int, Mapping[str, float]], None] | None = None,
     class_weights=None,
     save_path: str | None = None,
 ) -> list[dict[str, float]]:
@@ -143,6 +144,9 @@ def run_training(
             "epoch_duration_seconds": duration,
         }
 
+        for key, value in train_metrics.items():
+            logs.setdefault(f"train_{key}", value)
+
         if evaluate_epoch is not None:
             for key, value in evaluate_epoch().items():
                 name = key if key.startswith("val_") else f"val_{key}"
@@ -150,9 +154,20 @@ def run_training(
 
         history.append(dict(logs))
 
+        if on_epoch_end is not None:
+            on_epoch_end(epoch, logs)
+
         checkpoint = callbacks.get("model_checkpoint")
         if checkpoint is not None:
-            checkpoint.save(model, logs)
+            saved = checkpoint.save(model, logs)
+            if saved and save_path:
+                monitor = getattr(checkpoint, "monitor", None)
+                monitor_name = getattr(monitor, "monitor", "val_score")
+                monitor_value = float(logs.get(monitor_name, 0.0))
+                print(
+                    f"  --> Saved best weights to {save_path} "
+                    f"({monitor_name}={monitor_value:.4f})"
+                )
 
         reduce_lr = callbacks.get("reduce_lr_on_plateau")
         if reduce_lr is not None:
@@ -171,6 +186,7 @@ def run_training(
             logs,
             epoch=epoch,
         ):
+            print(f"\nEarly stopping triggered after {epoch + 1} epochs.")
             break
 
     return history

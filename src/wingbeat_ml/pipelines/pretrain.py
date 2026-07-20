@@ -87,12 +87,10 @@ def train_supervised(defaults_path="configs/defaults.yaml",
         print(f"Failed to configure dynamic GPU memory allocation: {e}")
 
     from wingbeat_ml.data.dataset import SupervisedDataset
-    from wingbeat_ml.training import Trainer
     from wingbeat_ml.evaluation import ModelEvaluator
     from wingbeat_ml.models import MosSongPlusModel
-    from wingbeat_ml.training import OptimizerFactory
     from wingbeat_ml.training import LossFactory
-    from wingbeat_ml.training import CallbackFactory
+    from wingbeat_ml.pipelines.train import run_training
 
     # 4. Setup Dataset
     print("Setting up datasets...")
@@ -143,108 +141,52 @@ def train_supervised(defaults_path="configs/defaults.yaml",
         print("Class weights disabled.")
         cfg["resolved_class_weights"] = None
 
-    # 7. Setup Optimizer and Loss
-    optimizer = OptimizerFactory.get_optimizer(cfg)
-
-    # Ensure consistency between activation and from_logits
+    # 7. Setup Loss and Evaluation
     if cfg["model"]["output_activation"] is None:
         cfg["loss"]["from_logits"] = True
     elif cfg["model"]["output_activation"] == "softmax":
         cfg["loss"]["from_logits"] = False
 
     loss_fn = LossFactory.get_loss(cfg)
-
-    # 8. Initialize Train and Evaluator
     print(f"Output activation: {cfg['model']['output_activation']}")
-    trainer = Trainer(
-        model,
-        optimizer,
-        loss_fn,
-        train_ds,
-        class_weights=class_weights if class_weights_enabled else None,
-    )
     evaluator = ModelEvaluator(model, cfg["classes"], loss_fn)
 
-    # 9. Setup Callbacks (val_x extraction for activation logging removed)
-    callbacks = CallbackFactory.get_callbacks(cfg, optimizer, model, save_path)
-
-    # 10. Training Loop
+    # 8. Run the shared epoch loop.
     epochs = cfg["train"]["epochs"]
     print(f"\nStarting training for {epochs} epochs...")
 
-    import time
-    for epoch in range(epochs):
-        # --- Train ---
-        start_time = time.time()
-        train_metrics = trainer.train_epoch()
-        epoch_time = time.time() - start_time
+    def print_epoch(epoch, logs):
+        duration = logs["epoch_duration_seconds"]
+        examples = logs.get("train_examples", 0)
+        throughput = examples / duration if duration else 0.0
+        print(
+            f"Epoch {epoch + 1}/{epochs} - "
+            f"loss: {logs['train_loss']:.4f} - "
+            f"acc: {logs['train_accuracy']:.4f} | "
+            f"val_loss: {logs['val_loss']:.4f} - "
+            f"val_acc: {logs['val_accuracy']:.4f} | "
+            f"val_f1: {logs['val_macro_f1']:.3f} | "
+            f"Female (P:{logs.get('val_female_prec', 0.0):.2f}, "
+            f"R:{logs.get('val_female_rec', 0.0):.2f}, "
+            f"F1:{logs.get('val_female_f1', 0.0):.2f}) | "
+            f"Male (P:{logs.get('val_male_prec', 0.0):.2f}, "
+            f"R:{logs.get('val_male_rec', 0.0):.2f}, "
+            f"F1:{logs.get('val_male_f1', 0.0):.2f}) | "
+            f"Time: {duration:.2f}s | "
+            f"Batches: {logs.get('train_batches', 0)} | "
+            f"Examples: {examples} | "
+            f"Throughput: {throughput:.0f} examples/s"
+        )
 
-        # --- Eval ---
-        val_metrics = evaluator.evaluate_epoch(val_ds)
-        val_male_f1 = val_metrics.get("male_f1", 0.0)
-        val_female_f1 = val_metrics.get("female_f1", 0.0)
-
-        # Precision and Recall groups
-        val_m_prec = val_metrics.get("male_prec", 0.0)
-        val_m_rec = val_metrics.get("male_rec", 0.0)
-        val_f_prec = val_metrics.get("female_prec", 0.0)
-        val_f_rec = val_metrics.get("female_rec", 0.0)
-        examples_per_second = train_metrics["examples"] / epoch_time
-
-        # Print metrics with detailed P/R for both sexes
-        print(f"Epoch {epoch+1}/{epochs} - loss: {train_metrics['loss']:.4f} - acc: {train_metrics['accuracy']:.4f} | "
-              f"val_loss: {val_metrics['loss']:.4f} - val_acc: {val_metrics['accuracy']:.4f} | "
-              f"val_f1: {val_metrics['macro_f1']:.3f} | "
-              f"Female (P:{val_f_prec:.2f}, R:{val_f_rec:.2f}, F1:{val_female_f1:.2f}) | "
-              f"Male (P:{val_m_prec:.2f}, R:{val_m_rec:.2f}, F1:{val_male_f1:.2f}) | "
-              f"Time: {epoch_time:.2f}s | "
-              f"Batches: {train_metrics['batches']} | "
-              f"Examples: {train_metrics['examples']} | "
-              f"Throughput: {examples_per_second:.0f} examples/s")
-
-        # --- Manual Callback Execution ---
-        callback_values = {
-            "epoch": epoch,
-            "train_loss": train_metrics["loss"],
-            "train_accuracy": train_metrics["accuracy"],
-            "learning_rate": float(tf.keras.backend.get_value(optimizer.learning_rate)),
-            "epoch_duration_seconds": epoch_time,
-        }
-
-        # Populate all val_metrics dynamically
-        for k, v in val_metrics.items():
-            key = f"val_{k}" if not k.startswith("val_") else k
-            callback_values[key] = v
-
-        # Checkpoint
-        if 'model_checkpoint' in callbacks:
-            cb = callbacks['model_checkpoint']
-            if cb.save(model, callback_values):
-                if hasattr(cb, "monitor") and hasattr(cb.monitor, "monitor"):
-                    m_name = cb.monitor.monitor
-                elif hasattr(cb, "monitors"):
-                    m_name = cb.monitors[0]
-                else:
-                    m_name = "val_score"
-                print(f"  --> Saved best weights to {save_path} ({m_name}={callback_values.get(m_name, 0):.4f})")
-
-        # Reduce LR
-        if 'reduce_lr_on_plateau' in callbacks:
-            callbacks['reduce_lr_on_plateau'].on_epoch_end(callback_values)
-
-        # Cosine Annealing
-        if 'cosine_annealing' in callbacks:
-            callbacks['cosine_annealing'].on_epoch_end(callback_values)
-
-        # Wandb
-        if 'wandb_logger' in callbacks:
-            callbacks['wandb_logger'].on_epoch_end(callback_values)
-
-        # Early Stopping
-        if 'early_stopping' in callbacks:
-            if callbacks['early_stopping'].check(callback_values):
-                print(f"\nEarly stopping triggered after {epoch+1} epochs.")
-                break
+    run_training(
+        model,
+        train_ds,
+        cfg,
+        evaluate_epoch=lambda: evaluator.evaluate_epoch(val_ds),
+        on_epoch_end=print_epoch,
+        class_weights=(class_weights if class_weights_enabled else None),
+        save_path=save_path,
+    )
 
     # 11. Final Evaluation on Test Set
     print("\nTraining complete. Running final evaluation on test set...")

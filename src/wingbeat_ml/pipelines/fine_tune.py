@@ -87,7 +87,7 @@ def train_finetune(defaults_path="configs/defaults.yaml",
     from wingbeat_ml.models import MosSongPlusModel
     from wingbeat_ml.training import OptimizerFactory
     from wingbeat_ml.training import LossFactory
-    from wingbeat_ml.training import CallbackFactory
+    from wingbeat_ml.pipelines.train import run_training
 
     # 4. Setup Dataset
     print("Setting up datasets...")
@@ -217,71 +217,31 @@ def train_finetune(defaults_path="configs/defaults.yaml",
     # -------------------------------------------------------------
     # PHASE 2: FULL FINE-TUNING
     # -------------------------------------------------------------
-    print(f"\n--- PHASE 2: Full Fine-Tuning ---")
-    for layer in model.layers:
-        layer.trainable = True
-
-    # Lower the learning rate drastically for fine-tuning
+    print("\n--- PHASE 2: Full Fine-Tuning ---")
+    cfg["training_mode"] = "fine_tune"
     cfg["optimizer"]["learning_rate"] = 1e-3
-    optimizer_phase2 = OptimizerFactory.get_optimizer(cfg)
-
-    trainer_phase2 = Trainer(model, optimizer_phase2, loss_fn, train_ds, class_weights=class_weights if class_weights_enabled else None)
-    callbacks = CallbackFactory.get_callbacks(cfg, optimizer_phase2, model, save_path)
-
     print(f"Starting full fine-tuning for {epochs} epochs...")
 
-    import time
-    for epoch in range(epochs):
-        # --- Train ---
-        start_time = time.time()
-        train_metrics = trainer_phase2.train_epoch()
-        epoch_time = time.time() - start_time
+    def print_epoch(epoch, logs):
+        print(
+            f"Epoch {epoch + 1}/{epochs} - "
+            f"loss: {logs['train_loss']:.4f} - "
+            f"acc: {logs['train_accuracy']:.4f} | "
+            f"val_loss: {logs['val_loss']:.4f} - "
+            f"val_acc: {logs['val_accuracy']:.4f} | "
+            f"val_f1: {logs['val_macro_f1']:.3f} | "
+            f"Time: {logs['epoch_duration_seconds']:.1f}s"
+        )
 
-        # --- Eval ---
-        val_metrics = evaluator.evaluate_epoch(val_ds)
-
-        print(f"Epoch {epoch+1}/{epochs} - loss: {train_metrics['loss']:.4f} - acc: {train_metrics['accuracy']:.4f} | "
-              f"val_loss: {val_metrics['loss']:.4f} - val_acc: {val_metrics['accuracy']:.4f} | "
-              f"val_f1: {val_metrics['macro_f1']:.3f} | "
-              f"Time: {epoch_time:.1f}s")
-
-        # --- Manual Callback Execution ---
-        callback_values = {
-            "epoch": epoch,
-            "train_loss": train_metrics["loss"],
-            "train_accuracy": train_metrics["accuracy"],
-            "learning_rate": float(tf.keras.backend.get_value(optimizer_phase2.learning_rate)),
-            "epoch_duration_seconds": epoch_time,
-        }
-
-        # Populate all val_metrics dynamically
-        for k, v in val_metrics.items():
-            key = f"val_{k}" if not k.startswith("val_") else k
-            callback_values[key] = v
-
-        # Checkpoint
-        if 'model_checkpoint' in callbacks:
-            cb = callbacks['model_checkpoint']
-            if cb.save(model, callback_values):
-                print(f"  --> Saved best weights to {save_path} (val_macro_f1={callback_values['val_macro_f1']:.4f})")
-
-        # Reduce LR
-        if 'reduce_lr_on_plateau' in callbacks:
-            callbacks['reduce_lr_on_plateau'].on_epoch_end(callback_values)
-
-        # Cosine Annealing
-        if 'cosine_annealing' in callbacks:
-            callbacks['cosine_annealing'].on_epoch_end(callback_values)
-
-        # Wandb
-        if 'wandb_logger' in callbacks:
-            callbacks['wandb_logger'].on_epoch_end(callback_values)
-
-        # Early Stopping
-        if 'early_stopping' in callbacks:
-            if callbacks['early_stopping'].check(callback_values):
-                print(f"\nEarly stopping triggered after {epoch+1} epochs.")
-                break
+    run_training(
+        model,
+        train_ds,
+        cfg,
+        evaluate_epoch=lambda: evaluator.evaluate_epoch(val_ds),
+        on_epoch_end=print_epoch,
+        class_weights=(class_weights if class_weights_enabled else None),
+        save_path=save_path,
+    )
 
     # 11. Final Evaluation on Test Set
     print("\nTraining complete. Running final evaluation on test set...")
