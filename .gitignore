@@ -46,3 +46,6 @@ managed_components
 # Python model source belongs in the package; trained artifacts remain ignored.
 !src/wingbeat_ml/models/
 !src/wingbeat_ml/models/*.py
+/build/
+/dist/
+*.egg-info/
