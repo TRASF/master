@@ -52,3 +52,10 @@ python -m build --wheel
 
 See `ops/wandb/README.md` for W&B Launch setup. Datasets, model files,
 logs, caches, credentials, and W&B run data are not committed.
+
+## Architecture
+
+Production code is packaged exclusively from `src/wingbeat_ml`. Historical
+repository entrypoints remain as thin compatibility wrappers and are not part
+of the wheel. See [`docs/architecture.md`](docs/architecture.md) for component
+ownership, dependency rules, the MLOps execution flow, and extension guidance.

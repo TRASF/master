@@ -25,6 +25,8 @@ wingbeat-ml = "wingbeat_ml.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["wingbeat_ml*"]
+namespaces = false
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
