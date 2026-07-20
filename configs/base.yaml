@@ -1,0 +1,149 @@
+model:
+  id: mossong_plus
+training_mode: pretrain
+audio:
+  duration: 0.3
+  sample_rate: 8000
+labels:
+  No.mos: 10
+  Cx_quin_Male: 9
+  An_dirus_Male: 5
+  Cx_quin_Female: 8
+  Ae_aegypti_Male: 1
+  An_dirus_Female: 4
+  An_minimus_Male: 7
+  Ae_aegypti_Female: 0
+  An_minimus_Female: 6
+  Ae_albopictus_Male: 3
+  Ae_albopictus_Female: 2
+classes:
+  - Ae_aegypti_Female
+  - Ae_aegypti_Male
+  - Ae_albopictus_Female
+  - Ae_albopictus_Male
+  - An_dirus_Female
+  - An_dirus_Male
+  - An_minimus_Female
+  - An_minimus_Male
+  - Cx_quin_Female
+  - Cx_quin_Male
+  - No.mos
+num_classes: 11
+nomos_index: 10
+class_weights:
+  enabled: true
+  values:
+    No.Mos: 1
+    Cx_quin_Male: 1.25
+    An_dirus_Male: 1
+    Cx_quin_Female: 1
+    Ae_aegypti_Male: 1.25
+    An_dirus_Female: 1
+    An_minimus_Male: 1
+    Ae_aegypti_Female: 1
+    An_minimus_Female: 1
+    Ae_albopictus_Male: 1
+    Ae_albopictus_Female: 1
+loss:
+  name: CategoricalCrossentropy
+  reduction: none
+  from_logits: true
+train:
+  seed: 45
+  epochs: 1000
+  shuffle: true
+  batch_size: 256
+  warmup_epochs: 15
+  warmup_augment_p: 0
+optimizer:
+  name: Adam
+  learning_rate: 0.001
+callbacks:
+  early_stopping:
+    mode: max
+    monitor: val_macro_f1
+    patience: 80
+    min_delta: 0
+    restore_best_weights: true
+  model_checkpoint:
+    mode: max
+    monitor: val_macro_f1
+    min_delta: 0
+    save_best_only: true
+    save_weights_only: true
+  reduce_lr_on_plateau:
+    mode: max
+    factor: 0.5
+    min_lr: 3.0e-05
+    monitor: val_macro_f1
+    patience: 30
+    min_delta: 0.001
+    restore_best_weights: true
+preprocess:
+  dc_removal: true
+augment:
+  mixup:
+    p: 1
+    alpha: 0.4
+  rms_norm:
+    max_gain: 15
+    min_gain: 0.05
+    target_rms: 0.05
+  high_pass:
+    p: 0
+    fc: 150
+  preprocess:
+    dc_removal: true
+  time_shift:
+    p: 0
+    rate:
+      - -0.05
+      - 0.05
+  noise_banks:
+    - /app/dataset/MSB/Environmental/humbug_noises
+    - /app/dataset/MSB/Environmental/inmp_noises
+    - /app/dataset/MSB/Environmental/miru_noises
+    - /app/dataset/MSB/Environmental/noises
+    - /app/dataset/MSB/Environmental/Nomos
+  pitch_shift:
+    p: 0
+    semitones:
+      - -0.2
+      - 0.2
+  random_gain:
+    p: 0.3
+    gain_db:
+      - -3
+      - 3
+  noise_overlay:
+    p: 0.2
+    snr_db:
+      - 15
+      - 30
+    post_gain_db:
+      - -3
+      - 3
+    envelope_gain:
+      - 0.7
+      - 1
+  gaussian_noise:
+    p: 0
+    snr_db:
+      - 20
+      - 50
+  segment_overlap:
+    val: 0.5
+    train:
+      - 0
+      - 0.8
+  max_segments_per_file: 100
+reproducibility:
+  seed: 45
+  enabled: true
+  deterministic_ops: true
+  deterministic_data: true
+dataset:
+  split_ratios:
+    val: 0.1
+    test: 0.1
+    train: 0.8

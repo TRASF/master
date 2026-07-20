@@ -1,0 +1,5 @@
+training_mode: linear_probe
+
+model:
+  # Override this with the approved pretrained backbone for each run.
+  checkpoint: artifacts/checkpoints/mossong_plus/pretrain/best.keras
