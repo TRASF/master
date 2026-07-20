@@ -100,6 +100,41 @@ def main(args=None):
         help="Perform the remote W&B Registry mutation",
     )
 
+    export_parser = subparsers.add_parser(
+        "export",
+        help="Export a trained model to TFLite/TFLite Micro",
+    )
+    export_parser.add_argument(
+        "--defaults-path",
+        default="configs/defaults.yaml",
+    )
+    export_parser.add_argument(
+        "--model-config",
+        default="configs/model.yaml",
+    )
+    export_parser.add_argument("--weights", required=True)
+    export_parser.add_argument(
+        "--out-dir",
+        default="quantization_output",
+    )
+    export_parser.add_argument(
+        "--rep-samples",
+        type=int,
+        default=500,
+    )
+    export_parser.add_argument(
+        "--input-amplitude-range",
+        type=float,
+    )
+    export_parser.add_argument(
+        "--allow-dummy-calibration",
+        action="store_true",
+    )
+    export_parser.add_argument(
+        "--run-debugger",
+        action="store_true",
+    )
+
     parsed_args = parser.parse_args(args)
 
     if parsed_args.command == "version":
@@ -216,6 +251,29 @@ def main(args=None):
             sys.exit(0)
         except Exception as error:
             print(f"Promotion failed: {error}", file=sys.stderr)
+            sys.exit(1)
+    elif parsed_args.command == "export":
+        try:
+            from wingbeat_ml.pipelines.export import export_from_weights
+
+            export_from_weights(
+                defaults_path=parsed_args.defaults_path,
+                model_config_path=parsed_args.model_config,
+                weights_path=parsed_args.weights,
+                out_dir=parsed_args.out_dir,
+                rep_samples=parsed_args.rep_samples,
+                input_amplitude_range=(
+                    parsed_args.input_amplitude_range
+                ),
+                allow_dummy_calibration=(
+                    parsed_args.allow_dummy_calibration
+                ),
+                run_debugger=parsed_args.run_debugger,
+            )
+            print("TFLite export completed.")
+            sys.exit(0)
+        except Exception as error:
+            print(f"TFLite export failed: {error}", file=sys.stderr)
             sys.exit(1)
     else:
         parser.print_help()
