@@ -1,0 +1,9 @@
+dataset:
+  train_dir: tests/fixtures/audio_11class
+  val_dir: null
+  test_dir: null
+train:
+  epochs: 2
+  batch_size: 2
+wandb:
+  enabled: false

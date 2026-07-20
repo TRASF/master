@@ -38,3 +38,7 @@ managed_components
 
 # Agent hook runtime state
 .agent/hook-state/
+
+# Configuration files describe models; trained model artifacts remain ignored.
+!configs/models/
+!configs/models/*.yaml

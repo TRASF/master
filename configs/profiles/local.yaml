@@ -1,0 +1,7 @@
+dataset:
+  train_dir: /app/dataset/MSB/Indoor
+  indoor: /app/dataset/MSB/Indoor
+  outdoor: /app/dataset/MSB/Outdoor
+  mosLab: /app/dataset/Philip
+wandb:
+  enabled: false
