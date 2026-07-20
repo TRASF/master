@@ -42,3 +42,7 @@ managed_components
 # Configuration files describe models; trained model artifacts remain ignored.
 !configs/models/
 !configs/models/*.yaml
+
+# Python model source belongs in the package; trained artifacts remain ignored.
+!src/wingbeat_ml/models/
+!src/wingbeat_ml/models/*.py
