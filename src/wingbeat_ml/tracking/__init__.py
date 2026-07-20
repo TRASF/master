@@ -6,12 +6,14 @@ from wingbeat_ml.tracking.lineage import (
     write_lineage,
 )
 from wingbeat_ml.tracking.wandb import (
+    initialize_training_run,
     promote_artifact,
     registry_target,
 )
 
 __all__ = [
     "build_lineage",
+    "initialize_training_run",
     "promote_artifact",
     "registry_target",
     "sha256_file",

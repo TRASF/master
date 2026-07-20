@@ -1,11 +1,14 @@
 """Tests for the centralized training components."""
 
+import os
 import unittest
+from unittest import mock
 
 import numpy as np
 import tensorflow as tf
 
 from wingbeat_ml.models import MosSongPlusModel
+from wingbeat_ml.config import runtime as config_runtime
 from wingbeat_ml.pipelines.train import (
     build_training_components,
     configure_trainable_layers,
@@ -120,6 +123,37 @@ class TestTrainingPipeline(unittest.TestCase):
         from src.framework.supervised.train_step import Train
 
         self.assertIs(Train, Trainer)
+
+
+class TestTrainingRuntime(unittest.TestCase):
+    def test_seeds_process_and_configures_visible_gpus(self):
+        tensorflow = mock.Mock()
+        tensorflow.config.list_physical_devices.return_value = ["gpu:0"]
+        settings = {
+            "enabled": True,
+            "seed": 17,
+            "deterministic_ops": True,
+        }
+
+        with (
+            mock.patch.dict("sys.modules", {"tensorflow": tensorflow}),
+            mock.patch.dict(os.environ, {}, clear=False),
+            mock.patch("random.seed") as python_seed,
+            mock.patch("numpy.random.seed") as numpy_seed,
+        ):
+            config_runtime.configure_training_runtime(settings)
+
+            self.assertEqual(os.environ["PYTHONHASHSEED"], "17")
+            self.assertEqual(os.environ["TF_DETERMINISTIC_OPS"], "1")
+
+        python_seed.assert_called_once_with(17)
+        numpy_seed.assert_called_once_with(17)
+        tensorflow.random.set_seed.assert_called_once_with(17)
+        tensorflow.config.list_physical_devices.assert_called_once_with("GPU")
+        tensorflow.config.experimental.set_memory_growth.assert_called_once_with(
+            "gpu:0",
+            True,
+        )
 
 
 if __name__ == "__main__":

@@ -75,6 +75,19 @@ class TestTrainingEntrypoints(unittest.TestCase):
             self.assertIn("run_training(", source)
             self.assertNotIn("for epoch in range(epochs)", source)
 
+    def test_canonical_entrypoints_share_runtime_setup(self):
+        for name in (
+            "wingbeat_ml.pipelines.pretrain",
+            "wingbeat_ml.pipelines.linear_probe",
+            "wingbeat_ml.pipelines.fine_tune",
+        ):
+            source = inspect.getsource(importlib.import_module(name))
+            self.assertIn("configure_training_runtime(", source)
+            self.assertIn("initialize_training_run(", source)
+            self.assertNotIn("set_memory_growth(", source)
+            self.assertNotIn("tf.random.set_seed(", source)
+            self.assertNotIn("wandb.init(", source)
+
     def test_legacy_config_import_is_preserved(self):
         from configs import mos_config
         from wingbeat_ml.config import runtime

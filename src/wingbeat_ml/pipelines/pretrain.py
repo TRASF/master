@@ -1,9 +1,15 @@
 """Canonical pretraining pipeline."""
 
-import sys
-import random
 import numpy as np
-from wingbeat_ml.config.runtime import load_config, normalize_config, apply_reproducibility_environment, resolve_class_weights, generate_experiment_name, resolve_experiment_paths
+from wingbeat_ml.config.runtime import (
+    configure_training_runtime,
+    generate_experiment_name,
+    load_config,
+    normalize_config,
+    resolve_class_weights,
+    resolve_experiment_paths,
+)
+from wingbeat_ml.tracking import initialize_training_run
 
 
 def train_supervised(defaults_path="configs/defaults.yaml",
@@ -16,42 +22,23 @@ def train_supervised(defaults_path="configs/defaults.yaml",
     cfg = normalize_config(defaults_raw)
     model_cfg = load_config(model_cfg_path)
 
-    # 2. Handle W&B Sweeps and Configuration Merging
-    if cfg.get("wandb", {}).get("enabled", False):
-        try:
-            import wandb
-            wandb_cfg = cfg.get("wandb", {})
-            wandb.init(
-                project=wandb_cfg.get("project", "MosSongPlus"),
-                config=cfg,
-                group=wandb_cfg.get("group"),
-                tags=wandb_cfg.get("tags"),
-                job_type=wandb_cfg.get("job_type"),
-            )
-
-            # Allow W&B Sweep to overwrite config
-            for k, v in wandb.config.items():
-                if "." in k:
-                    parts = k.split(".")
-                    if len(parts) == 2 and parts[0] in cfg:
-                        cfg[parts[0]][parts[1]] = v
-                    elif len(parts) == 3 and parts[0] in cfg and parts[1] in cfg[parts[0]]:
-                        cfg[parts[0]][parts[1]][parts[2]] = v
-        except ImportError:
-            print("WandB is enabled in config but 'wandb' package is not installed.")
+    # 2. Start optional tracking and apply sweep overrides.
+    wandb_run = initialize_training_run(cfg)
 
     # 3. Dynamic Experiment Naming & Path Resolution (Run once!)
     base_exp_name = generate_experiment_name(cfg, mode="Pretrain")
-    if cfg.get("wandb", {}).get("enabled", False) and 'wandb' in sys.modules:
-        import wandb
-        if wandb.run is not None:
-            hpf_p = cfg.get("augment", {}).get("high_pass", {}).get("p", 0.0)
-            seed = cfg.get("reproducibility", {}).get("seed", cfg.get("train", {}).get("seed", "seed"))
-            task = cfg.get("wandb", {}).get("group") or f"{cfg.get('num_classes', 'n')}class"
-            exp_name = f"{task}_{base_exp_name}_hpf{hpf_p}_seed{seed}"
-            wandb.run.name = exp_name
-        else:
-            exp_name = base_exp_name
+    if wandb_run is not None:
+        hpf_p = cfg.get("augment", {}).get("high_pass", {}).get("p", 0.0)
+        seed = cfg.get("reproducibility", {}).get(
+            "seed",
+            cfg.get("train", {}).get("seed", "seed"),
+        )
+        task = (
+            cfg.get("wandb", {}).get("group")
+            or f"{cfg.get('num_classes', 'n')}class"
+        )
+        exp_name = f"{task}_{base_exp_name}_hpf{hpf_p}_seed{seed}"
+        wandb_run.name = exp_name
     else:
         exp_name = base_exp_name
 
@@ -65,25 +52,7 @@ def train_supervised(defaults_path="configs/defaults.yaml",
     print(f"Saving weights to: {save_path}")
     print(f"Saving results to: {results_dir}")
 
-    # Set seeds for reproducibility
-    apply_reproducibility_environment(cfg["reproducibility"])
-    if cfg["reproducibility"]["enabled"]:
-        seed = cfg["reproducibility"]["seed"]
-        random.seed(seed)
-        np.random.seed(seed)
-        import tensorflow as tf
-        tf.random.set_seed(seed)
-        print(f"Reproducibility enabled. Seed: {seed}")
-
-    import tensorflow as tf
-    try:
-        gpus = tf.config.list_physical_devices('GPU')
-        if gpus:
-            for gpu in gpus:
-                tf.config.experimental.set_memory_growth(gpu, True)
-            print(f"Dynamic GPU memory allocation enabled for {len(gpus)} GPU(s).")
-    except Exception as e:
-        print(f"Failed to configure dynamic GPU memory allocation: {e}")
+    configure_training_runtime(cfg["reproducibility"])
 
     from wingbeat_ml.data.dataset import SupervisedDataset
     from wingbeat_ml.evaluation import ModelEvaluator

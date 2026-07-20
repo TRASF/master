@@ -65,6 +65,7 @@ class FakeRun:
 class FakeWandb:
     def __init__(self):
         self.run = FakeRun()
+        self.config = {}
         self.init_calls = []
 
     def init(self, **kwargs):
@@ -108,6 +109,37 @@ class TestLineage(unittest.TestCase):
 
 
 class TestPromotion(unittest.TestCase):
+    def test_training_run_uses_shared_metadata_and_sweep_overrides(self):
+        tracking = require_module(
+            self,
+            "wingbeat_ml.tracking.wandb",
+        )
+        fake = FakeWandb()
+        fake.config = {
+            "optimizer.learning_rate": 0.02,
+        }
+        config = {
+            "wandb": {
+                "enabled": True,
+                "project": "MosSongPlus",
+                "group": "smoke",
+                "tags": ["ci"],
+                "job_type": "train",
+            },
+            "optimizer": {"learning_rate": 0.01},
+        }
+
+        run = tracking.initialize_training_run(
+            config,
+            wandb_module=fake,
+        )
+
+        self.assertIs(run, fake.run)
+        self.assertEqual(fake.init_calls[0]["group"], "smoke")
+        self.assertEqual(fake.init_calls[0]["tags"], ["ci"])
+        self.assertEqual(fake.init_calls[0]["job_type"], "train")
+        self.assertEqual(config["optimizer"]["learning_rate"], 0.02)
+
     def test_dry_run_does_not_initialize_wandb(self):
         promotion = require_module(
             self,
