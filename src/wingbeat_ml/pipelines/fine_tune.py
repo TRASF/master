@@ -83,7 +83,7 @@ def train_finetune(defaults_path="configs/defaults.yaml",
 
     from wingbeat_ml.data.dataset import SupervisedDataset
     from wingbeat_ml.training import Trainer
-    from src.evaluation.evaluate import ModelEvaluator
+    from wingbeat_ml.evaluation import ModelEvaluator
     from wingbeat_ml.models import MosSongPlusModel
     from wingbeat_ml.training import OptimizerFactory
     from wingbeat_ml.training import LossFactory
@@ -312,7 +312,7 @@ def train_finetune(defaults_path="configs/defaults.yaml",
     )
 
     # Log/Report Results
-    from src.evaluation.report import report_results
+    from wingbeat_ml.evaluation import report_results
     report_results(
         model=model,
         test_results=test_results,
