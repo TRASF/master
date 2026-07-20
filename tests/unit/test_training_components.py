@@ -92,6 +92,7 @@ class TestTrainingPipeline(unittest.TestCase):
 
     def test_runs_one_epoch_and_returns_history(self):
         model = make_model()
+        observed = []
         history = run_training(
             model,
             make_dataset(),
@@ -100,12 +101,20 @@ class TestTrainingPipeline(unittest.TestCase):
                 "loss": 0.5,
                 "accuracy": 0.75,
             },
+            on_epoch_end=lambda epoch, logs: observed.append(
+                (epoch, dict(logs))
+            ),
         )
 
         self.assertEqual(len(history), 1)
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0][0], 0)
         self.assertIn("train_loss", history[0])
+        self.assertEqual(history[0]["train_batches"], 2)
+        self.assertEqual(history[0]["train_examples"], 4)
         self.assertEqual(history[0]["val_loss"], 0.5)
         self.assertEqual(history[0]["val_accuracy"], 0.75)
+        self.assertEqual(observed[0][1], history[0])
 
     def test_legacy_trainer_import_is_preserved(self):
         from src.framework.supervised.train_step import Train

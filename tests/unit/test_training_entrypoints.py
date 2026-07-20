@@ -64,6 +64,17 @@ class TestTrainingEntrypoints(unittest.TestCase):
             self.assertNotIn("configs.mos_config", source)
             self.assertNotIn("src.framework", source)
 
+    def test_canonical_entrypoints_share_the_epoch_loop(self):
+        for name in (
+            "wingbeat_ml.pipelines.pretrain",
+            "wingbeat_ml.pipelines.linear_probe",
+            "wingbeat_ml.pipelines.fine_tune",
+        ):
+            module = importlib.import_module(name)
+            source = inspect.getsource(module)
+            self.assertIn("run_training(", source)
+            self.assertNotIn("for epoch in range(epochs)", source)
+
     def test_legacy_config_import_is_preserved(self):
         from configs import mos_config
         from wingbeat_ml.config import runtime
