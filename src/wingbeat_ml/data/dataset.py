@@ -5,6 +5,7 @@ from wingbeat_ml.data.loading import DataLoader
 from wingbeat_ml.augmentations.transforms import AudioAugmentor
 import numpy as np
 import os
+import uuid
 from pathlib import Path
 from typing import Mapping
 from sklearn.model_selection import train_test_split
@@ -162,7 +163,13 @@ class SupervisedDataset:
         cache_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../dataset/.tf_cache"))
         os.makedirs(cache_dir, exist_ok=True)
         cache_prefix = "train" if augment else "val_test"
-        cache_file = os.path.join(cache_dir, f"{cache_prefix}_{paths_hash}")
+        # A TensorFlow file cache supports only one active writer.
+        # Each constructed pipeline therefore receives its own cache key.
+        cache_id = uuid.uuid4().hex
+        cache_file = os.path.join(
+            cache_dir,
+            f"{cache_prefix}_{paths_hash}_{cache_id}",
+        )
 
         dataset = tf.data.Dataset.from_tensor_slices(
             (file_paths, labels)
