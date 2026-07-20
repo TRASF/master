@@ -8,7 +8,7 @@ import os
 import uuid
 from pathlib import Path
 from typing import Mapping
-from sklearn.model_selection import train_test_split
+from wingbeat_ml.data.splits import _split_paths as split_paths
 
 class SupervisedDataset:
     def __init__(
@@ -412,30 +412,14 @@ class SupervisedDataset:
             )
 
     def _split_paths(self, paths, labels, test_size, split_name):
-        try:
-            return train_test_split(
-                paths, labels,
-                test_size=test_size,
-                stratify=labels,
-                random_state=self.seed
-            )
-        except ValueError:
-            classes, counts = np.unique(labels, return_counts=True)
-            sparse_classes = classes[counts < 2]
-            if len(sparse_classes) == 0:
-                raise
-
-            print(
-                f"Warning: cannot stratify {split_name} split because classes "
-                f"{sparse_classes.tolist()} have fewer than 2 files. "
-                "Falling back to a seeded non-stratified split."
-            )
-            return train_test_split(
-                paths, labels,
-                test_size=test_size,
-                stratify=None,
-                random_state=self.seed
-            )
+        # Keep runtime datasets and standalone split tooling on one policy.
+        return split_paths(
+            np.asarray(paths),
+            np.asarray(labels),
+            test_size=test_size,
+            split_name=split_name,
+            seed=self.seed,
+        )
 
     def build(self, split=[0.8, 0.1, 0.1], batch_size=32,
             shuffle=True, one_hot=True):
