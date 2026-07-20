@@ -1,0 +1,75 @@
+"""Contract tests for canonical and legacy training entrypoints."""
+
+import importlib
+import importlib.util
+import inspect
+import unittest
+
+
+class TestTrainingEntrypoints(unittest.TestCase):
+    def test_canonical_modules_exist(self):
+        for name in (
+            "wingbeat_ml.pipelines.pretrain",
+            "wingbeat_ml.pipelines.linear_probe",
+            "wingbeat_ml.pipelines.fine_tune",
+        ):
+            self.assertIsNotNone(
+                importlib.util.find_spec(name),
+                f"canonical {name.rsplit('.', 1)[-1]} entrypoint is missing",
+            )
+
+    def test_central_mode_selector(self):
+        from wingbeat_ml.pipelines import get_training_entrypoint
+        from wingbeat_ml.pipelines.fine_tune import train_finetune
+        from wingbeat_ml.pipelines.linear_probe import train_linear_probe
+        from wingbeat_ml.pipelines.pretrain import train_supervised
+
+        self.assertIs(
+            get_training_entrypoint("pretrain"),
+            train_supervised,
+        )
+        self.assertIs(
+            get_training_entrypoint("linear-probe"),
+            train_linear_probe,
+        )
+        self.assertIs(
+            get_training_entrypoint("finetune"),
+            train_finetune,
+        )
+
+        with self.assertRaises(ValueError):
+            get_training_entrypoint("unknown")
+
+    def test_legacy_wrappers_export_canonical_functions(self):
+        from src.framework.supervised.train import train_supervised as old_pretrain
+        from src.framework.supervised.train_finetune import train_finetune as old_finetune
+        from src.framework.supervised.train_linear_probe import train_linear_probe as old_probe
+        from wingbeat_ml.pipelines.fine_tune import train_finetune
+        from wingbeat_ml.pipelines.linear_probe import train_linear_probe
+        from wingbeat_ml.pipelines.pretrain import train_supervised
+
+        self.assertIs(old_pretrain, train_supervised)
+        self.assertIs(old_probe, train_linear_probe)
+        self.assertIs(old_finetune, train_finetune)
+
+    def test_canonical_modules_do_not_import_legacy_framework(self):
+        modules = (
+            importlib.import_module("wingbeat_ml.pipelines.pretrain"),
+            importlib.import_module("wingbeat_ml.pipelines.linear_probe"),
+            importlib.import_module("wingbeat_ml.pipelines.fine_tune"),
+        )
+
+        for module in modules:
+            source = inspect.getsource(module)
+            self.assertNotIn("configs.mos_config", source)
+            self.assertNotIn("src.framework", source)
+
+    def test_legacy_config_import_is_preserved(self):
+        from configs import mos_config
+        from wingbeat_ml.config import runtime
+
+        self.assertIs(mos_config.load_config, runtime.load_config)
+
+
+if __name__ == "__main__":
+    unittest.main()
