@@ -1,5 +1,15 @@
 """Canonical pretraining pipeline."""
 
+import argparse
+from datetime import datetime
+import json
+import os
+from pathlib import Path
+
+from wingbeat_ml.config import (
+    load_config as load_layered_config,
+    write_resolved_config,
+)
 from wingbeat_ml.config.runtime import (
     configure_training_runtime,
     generate_experiment_name,
@@ -8,6 +18,89 @@ from wingbeat_ml.config.runtime import (
     resolve_experiment_paths,
 )
 from wingbeat_ml.tracking import initialize_training_run
+
+
+DEFAULT_RUNTIME_ROOT = Path(
+    "/media/miru4090s/New Volume2/wingbeat_ml"
+)
+
+
+def _find_project_root(start=None):
+    """Find a source checkout containing the canonical configuration."""
+    starting_path = Path(start or Path.cwd()).resolve()
+    candidates = (starting_path, *starting_path.parents)
+    source_root = Path(__file__).resolve().parents[3]
+
+    for candidate in (*candidates, source_root):
+        if (
+            (candidate / "configs" / "base.yaml").is_file()
+            and (
+                candidate
+                / "configs"
+                / "models"
+                / "mossong_plus.yaml"
+            ).is_file()
+        ):
+            return candidate
+
+    raise FileNotFoundError(
+        "Could not find configs/base.yaml. Run the bare command "
+        "from a MosSongPlus source checkout or provide explicit paths."
+    )
+
+
+def prepare_default_pilot(project_root=None, runtime_root=None):
+    """Resolve the safe five-epoch configuration for a bare invocation."""
+    root = _find_project_root(project_root)
+    dataset = (root / "dataset" / "MSB" / "Indoor").resolve()
+    if not dataset.is_dir():
+        raise FileNotFoundError(f"Pilot dataset not found: {dataset}")
+
+    runtime = Path(
+        runtime_root
+        or os.environ.get("WINGBEAT_RUNTIME_ROOT")
+        or DEFAULT_RUNTIME_ROOT
+    ).resolve()
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    execution_root = runtime / "pilots" / timestamp
+    config_dir = execution_root / "configs"
+    config_dir.mkdir(parents=True, exist_ok=True)
+
+    profile_path = config_dir / "profile.yaml"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "dataset": {
+                    "train_dir": str(dataset),
+                    "val_dir": None,
+                    "test_dir": None,
+                },
+                "train": {"epochs": 5, "batch_size": 256},
+                "augment": {"noise_overlay": {"p": 0.0}},
+                "wandb": {"enabled": False},
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    model_path = root / "configs" / "models" / "mossong_plus.yaml"
+    resolved = load_layered_config(
+        base_path=str(root / "configs" / "base.yaml"),
+        model_path=str(model_path),
+        experiment_path=str(
+            root / "configs" / "experiments" / "pretrain.yaml"
+        ),
+        profile_path=str(profile_path),
+    )
+    resolved_path = config_dir / "resolved.yaml"
+    write_resolved_config(resolved, str(resolved_path))
+
+    print(f"Zero-argument pilot config: {resolved_path}")
+    print(f"Pilot run directory: {execution_root}")
+    return resolved_path, model_path, execution_root
 
 
 def train_supervised(defaults_path="configs/defaults.yaml",
@@ -144,14 +237,35 @@ def train_supervised(defaults_path="configs/defaults.yaml",
     )
 
 
-if __name__ == "__main__":
-    import argparse
+def main(args=None):
+    """Run pretraining, selecting the local pilot when no paths are given."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--defaults_path", type=str, default="configs/defaults.yaml")
-    parser.add_argument("--model_cfg_path", type=str, default="configs/model.yaml")
-    args, unknown = parser.parse_known_args()
+    parser.add_argument("--defaults_path", type=str)
+    parser.add_argument("--model_cfg_path", type=str)
+    parsed_args, _ = parser.parse_known_args(args)
+
+    if (
+        parsed_args.defaults_path is None
+        and parsed_args.model_cfg_path is None
+    ):
+        defaults_path, model_cfg_path, runtime_root = (
+            prepare_default_pilot()
+        )
+        os.environ["WINGBEAT_RUNTIME_ROOT"] = str(runtime_root)
+        os.chdir(runtime_root)
+    else:
+        defaults_path = (
+            parsed_args.defaults_path or "configs/defaults.yaml"
+        )
+        model_cfg_path = (
+            parsed_args.model_cfg_path or "configs/model.yaml"
+        )
 
     train_supervised(
-        defaults_path=args.defaults_path,
-        model_cfg_path=args.model_cfg_path
+        defaults_path=defaults_path,
+        model_cfg_path=model_cfg_path,
     )
+
+
+if __name__ == "__main__":
+    main()
