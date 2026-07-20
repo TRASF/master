@@ -12,9 +12,14 @@ from wingbeat_ml.config import runtime as config_runtime
 from wingbeat_ml.pipelines.train import (
     build_training_components,
     configure_trainable_layers,
+    resolve_training_class_weights,
     run_training,
 )
-from wingbeat_ml.registry import available_models, get_model_builder
+from wingbeat_ml.registry import (
+    available_models,
+    build_model,
+    get_model_builder,
+)
 from wingbeat_ml.training import Trainer
 
 
@@ -63,6 +68,31 @@ class TestRegistry(unittest.TestCase):
     def test_unknown_model_fails_clearly(self):
         with self.assertRaises(ValueError):
             get_model_builder("unknown")
+
+    def test_build_model_uses_selected_registry_entry(self):
+        class Builder:
+            def __init__(self, architecture, model_overrides=None):
+                self.architecture = architecture
+                self.model_overrides = model_overrides
+
+            def build(self, **kwargs):
+                return kwargs
+
+        config = {
+            "model": {"id": "custom", "output_activation": "softmax"},
+            "audio": {"segment_length": 2400},
+            "num_classes": 3,
+        }
+        with mock.patch.dict(
+            "wingbeat_ml.registry._MODEL_BUILDERS",
+            {"custom": Builder},
+            clear=True,
+        ):
+            model = build_model(config, {"model": {}})
+
+        self.assertEqual(model["input_shape"], (2400, 1))
+        self.assertEqual(model["output_units"], 3)
+        self.assertEqual(model["output_activation"], "softmax")
 
 
 class TestTrainingModes(unittest.TestCase):
@@ -118,6 +148,22 @@ class TestTrainingPipeline(unittest.TestCase):
         self.assertEqual(history[0]["val_loss"], 0.5)
         self.assertEqual(history[0]["val_accuracy"], 0.75)
         self.assertEqual(observed[0][1], history[0])
+
+    def test_resolves_class_weights_from_dataset_builder(self):
+        config = {
+            "class_weights": {"enabled": True},
+            "labels": {"female": 0, "male": 1},
+            "num_classes": 2,
+        }
+        builder = mock.Mock(
+            class_weights=np.array([1.0, 2.0], dtype=np.float32),
+            train_labels=np.array([0, 1], dtype=np.int32),
+        )
+
+        weights = resolve_training_class_weights(config, builder)
+
+        np.testing.assert_array_equal(weights, [1.0, 2.0])
+        self.assertEqual(config["resolved_class_weights"], [1.0, 2.0])
 
     def test_legacy_trainer_import_is_preserved(self):
         from src.framework.supervised.train_step import Train

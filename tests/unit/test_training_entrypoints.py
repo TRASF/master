@@ -88,6 +88,19 @@ class TestTrainingEntrypoints(unittest.TestCase):
             self.assertNotIn("tf.random.set_seed(", source)
             self.assertNotIn("wandb.init(", source)
 
+    def test_canonical_entrypoints_use_component_builders(self):
+        for name in (
+            "wingbeat_ml.pipelines.pretrain",
+            "wingbeat_ml.pipelines.linear_probe",
+            "wingbeat_ml.pipelines.fine_tune",
+        ):
+            source = inspect.getsource(importlib.import_module(name))
+            self.assertIn("build_datasets(", source)
+            self.assertIn("build_model(", source)
+            self.assertIn("resolve_training_class_weights(", source)
+            self.assertNotIn("SupervisedDataset(", source)
+            self.assertNotIn("MosSongPlusModel(", source)
+
     def test_legacy_config_import_is_preserved(self):
         from configs import mos_config
         from wingbeat_ml.config import runtime

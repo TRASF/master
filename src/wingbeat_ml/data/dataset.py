@@ -499,7 +499,8 @@ def build_datasets(
     val_dir: str | Path | None = None,
     test_dir: str | Path | None = None,
     noise_dirs: list[str] | None = None,
-) -> tuple[tf.data.Dataset, tf.data.Dataset, tf.data.Dataset]:
+    return_builder: bool = False,
+):
     """Build train, validation and test tf.data.Dataset objects.
 
     Preserves all pipeline behaviour from SupervisedDataset:
@@ -517,9 +518,10 @@ def build_datasets(
         val_dir: Optional separate validation directory.
         test_dir: Optional separate test directory.
         noise_dirs: Optional list of noise audio directories.
+        return_builder: Include the configured builder before the datasets.
 
     Returns:
-        (train_ds, val_ds, test_ds) tuple of tf.data.Dataset objects.
+        Dataset tuple, optionally prefixed by the SupervisedDataset builder.
     """
     train_cfg = config.get("train", {})
     repro_cfg = config.get("reproducibility", {})
@@ -614,12 +616,15 @@ def build_datasets(
         labels_dict=labels_dict,
     )
 
-    return ds.build(
+    datasets = ds.build(
         split=split,
         batch_size=batch_size,
         shuffle=shuffle,
         one_hot=True,
     )
+    if return_builder:
+        return (ds, *datasets)
+    return datasets
 
 # Compatibility name retained for the incremental migration.
 SupervisedDatasetWrapper = SupervisedDataset

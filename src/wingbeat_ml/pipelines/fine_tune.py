@@ -1,13 +1,11 @@
 """Canonical fine-tuning pipeline."""
 
 import os
-import numpy as np
 from wingbeat_ml.config.runtime import (
     configure_training_runtime,
     generate_experiment_name,
     load_config,
     normalize_config,
-    resolve_class_weights,
     resolve_experiment_paths,
 )
 from wingbeat_ml.tracking import initialize_training_run
@@ -54,35 +52,30 @@ def train_finetune(defaults_path="configs/defaults.yaml",
 
     configure_training_runtime(cfg["reproducibility"])
 
-    from wingbeat_ml.data.dataset import SupervisedDataset
+    from wingbeat_ml.data.dataset import build_datasets
     from wingbeat_ml.training import Trainer
     from wingbeat_ml.evaluation import ModelEvaluator
-    from wingbeat_ml.models import MosSongPlusModel
+    from wingbeat_ml.registry import build_model
     from wingbeat_ml.training import OptimizerFactory
     from wingbeat_ml.training import LossFactory
     from wingbeat_ml.pipelines.evaluate import evaluate_training_run
-    from wingbeat_ml.pipelines.train import run_training
+    from wingbeat_ml.pipelines.train import (
+        resolve_training_class_weights,
+        run_training,
+    )
 
     # 4. Setup Dataset
     print("Setting up datasets...")
-    ds_builder = SupervisedDataset(
-        dataset_dir=cfg["dataset"].get("train_dir") or cfg["dataset"]["indoor"],
+    dataset_dir = (
+        cfg["dataset"].get("train_dir")
+        or cfg["dataset"]["indoor"]
+    )
+    ds_builder, train_ds, val_ds, test_ds = build_datasets(
+        dataset_dir,
+        cfg,
         val_dir=cfg["dataset"]["val_dir"],
         test_dir=cfg["dataset"]["test_dir"],
-        sample_rate=cfg["audio"]["sample_rate"],
-        segment_length=cfg["audio"]["segment_length"],
-        classes=cfg["classes"],
-        noise_dirs=cfg["augment"]["noise_banks"],
-        augment_cfg=cfg["augment"],
-        seed=cfg["reproducibility"]["seed"],
-        deterministic=cfg["reproducibility"]["deterministic_data"],
-        nomos_index=cfg["nomos_index"]
-    )
-
-    train_ds, val_ds, test_ds = ds_builder.build(
-        split=cfg["dataset"]["split_list"],
-        batch_size=cfg["train"]["batch_size"],
-        shuffle=cfg["train"]["shuffle"]
+        return_builder=True,
     )
 
     # Warmup dataset builder (with high augmentation probability)
@@ -98,34 +91,18 @@ def train_finetune(defaults_path="configs/defaults.yaml",
             warmup_augment_cfg[key]["p"] = warmup_p
 
     print(f"Setting up warmup dataset (forcing augmentation p={warmup_p})...")
-    ds_builder_warmup = SupervisedDataset(
-        dataset_dir=cfg["dataset"].get("train_dir") or cfg["dataset"]["indoor"],
+    warmup_config = copy.deepcopy(cfg)
+    warmup_config["augment"] = warmup_augment_cfg
+    train_ds_warmup, _, _ = build_datasets(
+        dataset_dir,
+        warmup_config,
         val_dir=cfg["dataset"]["val_dir"],
         test_dir=cfg["dataset"]["test_dir"],
-        sample_rate=cfg["audio"]["sample_rate"],
-        segment_length=cfg["audio"]["segment_length"],
-        classes=cfg["classes"],
-        noise_dirs=cfg["augment"]["noise_banks"],
-        augment_cfg=warmup_augment_cfg,
-        seed=cfg["reproducibility"]["seed"],
-        deterministic=cfg["reproducibility"]["deterministic_data"],
-        nomos_index=cfg["nomos_index"]
-    )
-
-    train_ds_warmup, _, _ = ds_builder_warmup.build(
-        split=cfg["dataset"]["split_list"],
-        batch_size=cfg["train"]["batch_size"],
-        shuffle=cfg["train"]["shuffle"]
     )
 
     # 5. Build Model
     print("Building model...")
-    model_builder = MosSongPlusModel(model_cfg, model_overrides=cfg.get("model"))
-    model = model_builder.build(
-        input_shape=(cfg["audio"]["segment_length"], 1),
-        output_units=cfg["num_classes"],
-        output_activation=cfg["model"]["output_activation"]
-    )
+    model = build_model(cfg, model_cfg)
 
     # LOAD PRETRAINED WEIGHTS
     if os.path.exists(pretrained_weights):
@@ -137,18 +114,7 @@ def train_finetune(defaults_path="configs/defaults.yaml",
     model.summary()
 
     # 6. Resolve Class Weights
-    class_weights_enabled, class_weights = resolve_class_weights(
-        cfg["class_weights"],
-        ds_builder.class_weights,
-        cfg["num_classes"],
-        labels_dict=cfg["labels"]
-    )
-
-    if class_weights_enabled:
-        print(f"Using class weights: {np.round(class_weights, 3).tolist()}")
-        cfg["resolved_class_weights"] = class_weights.tolist()
-    else:
-        cfg["resolved_class_weights"] = None
+    class_weights = resolve_training_class_weights(cfg, ds_builder)
 
     # 7. Setup Optimizer and Loss
     loss_fn = LossFactory.get_loss(cfg)
@@ -166,7 +132,13 @@ def train_finetune(defaults_path="configs/defaults.yaml",
     model.layers[-1].trainable = True
 
     optimizer_phase1 = OptimizerFactory.get_optimizer(cfg)
-    trainer_phase1 = Trainer(model, optimizer_phase1, loss_fn, train_ds_warmup, class_weights=class_weights if class_weights_enabled else None)
+    trainer_phase1 = Trainer(
+        model,
+        optimizer_phase1,
+        loss_fn,
+        train_ds_warmup,
+        class_weights=class_weights,
+    )
 
     for epoch in range(warmup_epochs):
         train_metrics = trainer_phase1.train_epoch()
@@ -213,7 +185,7 @@ def train_finetune(defaults_path="configs/defaults.yaml",
         cfg,
         evaluate_epoch=lambda: evaluator.evaluate_epoch(val_ds),
         on_epoch_end=print_epoch,
-        class_weights=(class_weights if class_weights_enabled else None),
+        class_weights=class_weights,
         save_path=save_path,
     )
 

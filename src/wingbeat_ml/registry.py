@@ -27,4 +27,23 @@ def get_model_builder(model_id: str):
         ) from error
 
 
-__all__ = ["available_models", "get_model_builder"]
+def build_model(config, architecture_config, **build_overrides):
+    """Build the model selected by the resolved configuration."""
+    model_config = config.get("model", {})
+    builder_class = get_model_builder(
+        str(model_config.get("id", "mossong_plus"))
+    )
+    builder = builder_class(
+        architecture_config,
+        model_overrides=model_config,
+    )
+    build_options = {
+        "input_shape": (config["audio"]["segment_length"], 1),
+        "output_units": config["num_classes"],
+        "output_activation": model_config.get("output_activation"),
+    }
+    build_options.update(build_overrides)
+    return builder.build(**build_options)
+
+
+__all__ = ["available_models", "build_model", "get_model_builder"]

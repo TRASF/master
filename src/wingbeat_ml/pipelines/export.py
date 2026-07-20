@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
-import random
 from pathlib import Path
 
 import numpy as np
@@ -235,59 +235,37 @@ def export_from_weights(
 ):
     """Build MosSongPlus, load weights and run export."""
     from wingbeat_ml.config.runtime import (
-        apply_reproducibility_environment,
+        configure_training_runtime,
         load_config,
         normalize_config,
     )
-    from wingbeat_ml.data.dataset import SupervisedDataset
-    from wingbeat_ml.models import MosSongPlusModel
+    from wingbeat_ml.data.dataset import build_datasets
+    from wingbeat_ml.registry import build_model
 
     cfg = normalize_config(load_config(defaults_path))
     model_cfg = load_config(model_config_path)
 
-    apply_reproducibility_environment(cfg["reproducibility"])
+    configure_training_runtime(cfg["reproducibility"])
     seed = cfg["reproducibility"]["seed"]
-    random.seed(seed)
-    np.random.seed(seed)
-    tf.random.set_seed(seed)
 
     try:
-        builder = SupervisedDataset(
-            dataset_dir=(
-                cfg["dataset"].get("train_dir")
-                or cfg["dataset"]["indoor"]
-            ),
+        dataset_config = copy.deepcopy(cfg)
+        dataset_config["train"]["shuffle"] = False
+        _, val_ds, test_ds = build_datasets(
+            cfg["dataset"].get("train_dir")
+            or cfg["dataset"]["indoor"],
+            dataset_config,
             val_dir=cfg["dataset"]["val_dir"],
             test_dir=cfg["dataset"]["test_dir"],
-            sample_rate=cfg["audio"]["sample_rate"],
-            segment_length=cfg["audio"]["segment_length"],
-            classes=cfg["classes"],
-            noise_dirs=cfg["augment"]["noise_banks"],
-            augment_cfg=cfg["augment"],
-            seed=seed,
-            deterministic=cfg["reproducibility"][
-                "deterministic_data"
-            ],
-            nomos_index=cfg["nomos_index"],
-            labels_dict=cfg["labels"],
-        )
-        _, val_ds, test_ds = builder.build(
-            split=cfg["dataset"]["split_list"],
-            batch_size=cfg["train"]["batch_size"],
-            shuffle=False,
         )
     except Exception:
         if not allow_dummy_calibration:
             raise
         val_ds = test_ds = None
 
-    model = MosSongPlusModel(
+    model = build_model(
+        cfg,
         model_cfg,
-        model_overrides=cfg.get("model"),
-    ).build(
-        input_shape=(cfg["audio"]["segment_length"], 1),
-        output_units=cfg["num_classes"],
-        output_activation=cfg["model"]["output_activation"],
         batch_size=1,
     )
 
