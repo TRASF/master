@@ -957,7 +957,7 @@ if __name__ == "__main__":
         sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
         from configs.mos_config import load_config, normalize_config, apply_reproducibility_environment
-        from model.mossongplus import MosSongPlusModel
+        from wingbeat_ml.models import MosSongPlusModel
         from src.framework.supervised.dataset import SupervisedDataset
     except ImportError as e:
         print(f"Error importing required modules. Make sure you run this script from the workspace root: {e}")

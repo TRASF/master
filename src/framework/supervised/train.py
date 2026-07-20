@@ -90,7 +90,7 @@ def train_supervised(defaults_path="configs/defaults.yaml",
     from src.framework.supervised.dataset import SupervisedDataset
     from src.framework.supervised.train_step import Train
     from src.evaluation.evaluate import ModelEvaluator
-    from model.mossongplus import MosSongPlusModel
+    from wingbeat_ml.models import MosSongPlusModel
     from src.framework.optimizer import OptimizerFactory
     from src.framework.loss import LossFactory
     from src.framework.callbacks import CallbackFactory

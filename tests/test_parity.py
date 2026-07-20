@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from configs.mos_config import load_config, normalize_config, apply_reproducibility_environment, resolve_experiment_paths
 from src.framework.supervised.dataset import SupervisedDataset
-from model.mossongplus import MosSongPlusModel
+from wingbeat_ml.models import MosSongPlusModel
 
 class TestMosSongPlusParity(unittest.TestCase):
     @classmethod

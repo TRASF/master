@@ -1,6 +1,6 @@
 model:
   id: mossong_plus
-  mossongplus:
+  mossong_plus:
     layers:
       # 1. Three Convolutions (ReLU)
       - type: "conv1d"

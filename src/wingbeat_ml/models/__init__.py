@@ -1,4 +1,4 @@
-"""Legacy compatibility import; use wingbeat_ml.models."""
+"""Model builders provided by Wingbeat ML."""
 
 from wingbeat_ml.models.mossong_plus import MosSongPlusModel
 
