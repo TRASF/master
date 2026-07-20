@@ -1,0 +1,21 @@
+{
+  "init_keys": [
+    "project",
+    "config",
+    "group",
+    "tags",
+    "job_type"
+  ],
+  "logged_keys": [
+    "epoch",
+    "train_loss",
+    "train_accuracy",
+    "learning_rate",
+    "epoch_duration_seconds",
+    "val_loss",
+    "val_accuracy",
+    "val_macro_f1",
+    "val_female_f1",
+    "val_male_f1"
+  ]
+}

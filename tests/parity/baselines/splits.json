@@ -1,0 +1,40 @@
+{
+  "train_paths": [
+    "an_dirus_male_sample.wav",
+    "an_minimus_male_sample.wav",
+    "ae_albopictus_male_sample.wav",
+    "cx_quin_male_sample.wav",
+    "ae_aegypti_male_sample.wav",
+    "ae_albopictus_female_sample.wav",
+    "an_dirus_female_sample.wav",
+    "no.mos_sample.wav",
+    "cx_quin_female_sample.wav",
+    "ae_albopictus_female_float32.wav"
+  ],
+  "train_labels": [
+    5,
+    7,
+    3,
+    9,
+    1,
+    2,
+    4,
+    10,
+    8,
+    2
+  ],
+  "val_paths": [
+    "ae_aegypti_female_16khz.wav"
+  ],
+  "val_labels": [
+    0
+  ],
+  "test_paths": [
+    "an_minimus_female_sample.wav",
+    "ae_aegypti_female_sample.wav"
+  ],
+  "test_labels": [
+    6,
+    0
+  ]
+}

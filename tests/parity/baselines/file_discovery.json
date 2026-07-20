@@ -1,0 +1,32 @@
+{
+  "files": [
+    "ae_aegypti_female_16khz.wav",
+    "ae_aegypti_female_sample.wav",
+    "ae_aegypti_male_sample.wav",
+    "ae_albopictus_female_float32.wav",
+    "ae_albopictus_female_sample.wav",
+    "ae_albopictus_male_sample.wav",
+    "an_dirus_female_sample.wav",
+    "an_dirus_male_sample.wav",
+    "an_minimus_female_sample.wav",
+    "an_minimus_male_sample.wav",
+    "cx_quin_female_sample.wav",
+    "cx_quin_male_sample.wav",
+    "no.mos_sample.wav"
+  ],
+  "labels": [
+    0,
+    0,
+    1,
+    2,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10
+  ]
+}

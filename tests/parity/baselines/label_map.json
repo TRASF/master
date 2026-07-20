@@ -1,0 +1,29 @@
+{
+  "classes": [
+    "Ae_aegypti_Female",
+    "Ae_aegypti_Male",
+    "Ae_albopictus_Female",
+    "Ae_albopictus_Male",
+    "An_dirus_Female",
+    "An_dirus_Male",
+    "An_minimus_Female",
+    "An_minimus_Male",
+    "Cx_quin_Female",
+    "Cx_quin_Male",
+    "No.mos"
+  ],
+  "class_to_idx": {
+    "No.mos": 10,
+    "Cx_quin_Male": 9,
+    "An_dirus_Male": 5,
+    "Cx_quin_Female": 8,
+    "Ae_aegypti_Male": 1,
+    "An_dirus_Female": 4,
+    "An_minimus_Male": 7,
+    "Ae_aegypti_Female": 0,
+    "An_minimus_Female": 6,
+    "Ae_albopictus_Male": 3,
+    "Ae_albopictus_Female": 2
+  },
+  "num_classes": 11
+}

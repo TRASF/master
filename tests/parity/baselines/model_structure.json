@@ -1,0 +1,208 @@
+{
+  "name": "MosquitoSongPlus",
+  "layers": [
+    {
+      "name": "input_layer",
+      "class": "InputLayer",
+      "output_shape": null,
+      "trainable": true,
+      "weight_shapes": []
+    },
+    {
+      "name": "conv1d",
+      "class": "Conv1D",
+      "output_shape": null,
+      "trainable": true,
+      "weight_shapes": [
+        [
+          100,
+          1,
+          32
+        ],
+        [
+          32
+        ]
+      ]
+    },
+    {
+      "name": "batch_normalization",
+      "class": "BatchNormalization",
+      "output_shape": null,
+      "trainable": true,
+      "weight_shapes": [
+        [
+          32
+        ],
+        [
+          32
+        ],
+        [
+          32
+        ],
+        [
+          32
+        ]
+      ]
+    },
+    {
+      "name": "activation",
+      "class": "Activation",
+      "output_shape": null,
+      "trainable": true,
+      "weight_shapes": []
+    },
+    {
+      "name": "conv1d_1",
+      "class": "Conv1D",
+      "output_shape": null,
+      "trainable": true,
+      "weight_shapes": [
+        [
+          64,
+          32,
+          32
+        ],
+        [
+          32
+        ]
+      ]
+    },
+    {
+      "name": "batch_normalization_1",
+      "class": "BatchNormalization",
+      "output_shape": null,
+      "trainable": true,
+      "weight_shapes": [
+        [
+          32
+        ],
+        [
+          32
+        ],
+        [
+          32
+        ],
+        [
+          32
+        ]
+      ]
+    },
+    {
+      "name": "activation_1",
+      "class": "Activation",
+      "output_shape": null,
+      "trainable": true,
+      "weight_shapes": []
+    },
+    {
+      "name": "conv1d_2",
+      "class": "Conv1D",
+      "output_shape": null,
+      "trainable": true,
+      "weight_shapes": [
+        [
+          64,
+          32,
+          64
+        ],
+        [
+          64
+        ]
+      ]
+    },
+    {
+      "name": "batch_normalization_2",
+      "class": "BatchNormalization",
+      "output_shape": null,
+      "trainable": true,
+      "weight_shapes": [
+        [
+          64
+        ],
+        [
+          64
+        ],
+        [
+          64
+        ],
+        [
+          64
+        ]
+      ]
+    },
+    {
+      "name": "activation_2",
+      "class": "Activation",
+      "output_shape": null,
+      "trainable": true,
+      "weight_shapes": []
+    },
+    {
+      "name": "max_pooling1d",
+      "class": "MaxPooling1D",
+      "output_shape": null,
+      "trainable": true,
+      "weight_shapes": []
+    },
+    {
+      "name": "flatten",
+      "class": "Flatten",
+      "output_shape": null,
+      "trainable": true,
+      "weight_shapes": []
+    },
+    {
+      "name": "dropout",
+      "class": "Dropout",
+      "output_shape": null,
+      "trainable": true,
+      "weight_shapes": []
+    },
+    {
+      "name": "dense",
+      "class": "Dense",
+      "output_shape": null,
+      "trainable": true,
+      "weight_shapes": [
+        [
+          448,
+          256
+        ],
+        [
+          256
+        ]
+      ]
+    },
+    {
+      "name": "dense_1",
+      "class": "Dense",
+      "output_shape": null,
+      "trainable": true,
+      "weight_shapes": [
+        [
+          256,
+          128
+        ],
+        [
+          128
+        ]
+      ]
+    },
+    {
+      "name": "dense_2",
+      "class": "Dense",
+      "output_shape": null,
+      "trainable": true,
+      "weight_shapes": [
+        [
+          128,
+          11
+        ],
+        [
+          11
+        ]
+      ]
+    }
+  ],
+  "total_params": 349451
+}

@@ -1,0 +1,17 @@
+{
+  "pretrain": {
+    "save_dir": "models/experiments/Pretrain_test_exp",
+    "results_dir": "models/experiments/Pretrain_test_exp/results",
+    "save_path": "models/experiments/Pretrain_test_exp/best_model.weights.h5"
+  },
+  "linear_probe": {
+    "save_dir": "models/experiments/LP_test_exp",
+    "results_dir": "models/experiments/LP_test_exp/results",
+    "save_path": "models/experiments/LP_test_exp/best_model.weights.h5"
+  },
+  "fine_tune": {
+    "save_dir": "models/experiments/FT_test_exp",
+    "results_dir": "models/experiments/FT_test_exp/results",
+    "save_path": "models/experiments/FT_test_exp/best_model.weights.h5"
+  }
+}
