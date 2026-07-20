@@ -1,8 +1,10 @@
 """Runtime configuration helpers used by training pipelines."""
 
-import yaml
 import os
+import random
+
 import numpy as np
+import yaml
 
 
 def load_config(path):
@@ -36,6 +38,32 @@ def apply_reproducibility_environment(settings):
             os.environ["TF_CUDNN_DETERMINISTIC"] = "1"
             os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
             os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
+
+def configure_training_runtime(settings):
+    """Configure reproducibility and TensorFlow devices for training."""
+    apply_reproducibility_environment(settings)
+
+    import tensorflow as tf
+
+    if settings.get("enabled"):
+        seed = settings.get("seed", 42)
+        random.seed(seed)
+        np.random.seed(seed)
+        tf.random.set_seed(seed)
+        print(f"Reproducibility enabled. Seed: {seed}")
+
+    try:
+        gpus = tf.config.list_physical_devices("GPU")
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        if gpus:
+            print(
+                "Dynamic GPU memory allocation enabled for "
+                f"{len(gpus)} GPU(s)."
+            )
+    except Exception as error:
+        print(f"Failed to configure dynamic GPU memory allocation: {error}")
 
 
 def resolve_class_weights(config_weights, fallback_weights, num_classes, labels_dict=None):

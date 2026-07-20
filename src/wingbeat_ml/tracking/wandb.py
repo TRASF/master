@@ -26,6 +26,43 @@ def _artifact_name(model_path):
     return name or "wingbeat-model"
 
 
+def initialize_training_run(config, *, wandb_module=None):
+    """Start one training run and apply W&B sweep overrides."""
+    settings = config.get("wandb", {})
+    if not settings.get("enabled", False):
+        return None
+
+    if wandb_module is None:
+        try:
+            import wandb as wandb_module
+        except ImportError:
+            print(
+                "W&B is enabled in config but the wandb package "
+                "is not installed."
+            )
+            return None
+
+    run = wandb_module.init(
+        project=settings.get("project", "MosSongPlus"),
+        config=config,
+        group=settings.get("group"),
+        tags=settings.get("tags"),
+        job_type=settings.get("job_type"),
+    )
+
+    for dotted_key, value in wandb_module.config.items():
+        parts = dotted_key.split(".")
+        target = config
+        for part in parts[:-1]:
+            target = target.get(part)
+            if not isinstance(target, dict):
+                break
+        else:
+            target[parts[-1]] = value
+
+    return run
+
+
 def promote_artifact(
     *,
     registry,
@@ -103,4 +140,8 @@ def promote_artifact(
     }
 
 
-__all__ = ["promote_artifact", "registry_target"]
+__all__ = [
+    "initialize_training_run",
+    "promote_artifact",
+    "registry_target",
+]
