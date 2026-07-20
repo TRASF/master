@@ -66,6 +66,40 @@ def main(args=None):
         help="Optional JSON quality-report output path",
     )
 
+    promote_parser = subparsers.add_parser(
+        "promote",
+        help="Quality-gate and promote a model to W&B Registry",
+    )
+    source = promote_parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--model", help="Local model file")
+    source.add_argument(
+        "--artifact-ref",
+        help="Existing W&B artifact reference",
+    )
+    promote_parser.add_argument("--metrics", required=True)
+    promote_parser.add_argument(
+        "--minimum",
+        action="append",
+        required=True,
+        help="Required minimum in metric=value format",
+    )
+    promote_parser.add_argument("--registry", required=True)
+    promote_parser.add_argument("--collection", required=True)
+    promote_parser.add_argument("--entity")
+    promote_parser.add_argument("--project")
+    promote_parser.add_argument("--artifact-name")
+    promote_parser.add_argument("--alias", action="append")
+    promote_parser.add_argument("--config-sha256")
+    promote_parser.add_argument("--dataset-sha256")
+    promote_parser.add_argument("--git-commit")
+    promote_parser.add_argument("--quality-output")
+    promote_parser.add_argument("--lineage-output")
+    promote_parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Perform the remote W&B Registry mutation",
+    )
+
     parsed_args = parser.parse_args(args)
 
     if parsed_args.command == "version":
@@ -133,6 +167,55 @@ def main(args=None):
                 f"Quality validation failed: {error}",
                 file=sys.stderr,
             )
+            sys.exit(1)
+    elif parsed_args.command == "promote":
+        try:
+            import json
+
+            from wingbeat_ml.pipelines.promote import promote_candidate
+            from wingbeat_ml.pipelines.validate import (
+                load_metrics,
+                parse_minimums,
+            )
+
+            result = promote_candidate(
+                metrics=load_metrics(parsed_args.metrics),
+                minimums=parse_minimums(parsed_args.minimum),
+                registry=parsed_args.registry,
+                collection=parsed_args.collection,
+                model_path=parsed_args.model,
+                artifact_ref=parsed_args.artifact_ref,
+                aliases=parsed_args.alias,
+                artifact_name=parsed_args.artifact_name,
+                config_sha256=parsed_args.config_sha256,
+                dataset_sha256=parsed_args.dataset_sha256,
+                git_commit=parsed_args.git_commit,
+                entity=parsed_args.entity,
+                project=parsed_args.project,
+                quality_output=parsed_args.quality_output,
+                lineage_output=parsed_args.lineage_output,
+                execute=parsed_args.execute,
+            )
+
+            print(json.dumps(result, indent=2, sort_keys=True))
+
+            if not result["quality"]["passed"]:
+                print(
+                    "Promotion blocked by quality gates.",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+
+            if result["promoted"]:
+                print("Model promoted successfully.")
+            else:
+                print(
+                    "Promotion dry run passed. "
+                    "Use --execute for remote promotion."
+                )
+            sys.exit(0)
+        except Exception as error:
+            print(f"Promotion failed: {error}", file=sys.stderr)
             sys.exit(1)
     else:
         parser.print_help()
