@@ -38,6 +38,34 @@ def main(args=None):
     validate_parser.add_argument("--profile", help="Path to profile configuration file")
     validate_parser.add_argument("--set", action="append", help="Overrides in key.path=value format")
 
+    quality_parser = subparsers.add_parser(
+        "quality",
+        help="Validate model metrics against quality gates",
+    )
+    quality_subparsers = quality_parser.add_subparsers(
+        dest="subcommand",
+        help="Quality commands",
+    )
+    quality_validate = quality_subparsers.add_parser(
+        "validate",
+        help="Validate metrics from a JSON result",
+    )
+    quality_validate.add_argument(
+        "--metrics",
+        required=True,
+        help="Path to a JSON metrics or evaluation-result file",
+    )
+    quality_validate.add_argument(
+        "--minimum",
+        action="append",
+        required=True,
+        help="Required minimum in metric=value format",
+    )
+    quality_validate.add_argument(
+        "--output",
+        help="Optional JSON quality-report output path",
+    )
+
     parsed_args = parser.parse_args(args)
 
     if parsed_args.command == "version":
@@ -73,6 +101,38 @@ def main(args=None):
             sys.exit(0)
         except Exception as e:
             print(f"Configuration validation failed: {e}", file=sys.stderr)
+            sys.exit(1)
+    elif parsed_args.command == "quality" and parsed_args.subcommand == "validate":
+        try:
+            from wingbeat_ml.pipelines.validate import (
+                load_metrics,
+                parse_minimums,
+                validate_metrics,
+            )
+
+            metrics = load_metrics(parsed_args.metrics)
+            minimums = parse_minimums(parsed_args.minimum)
+            report = validate_metrics(
+                metrics,
+                minimums,
+                output_path=parsed_args.output,
+            )
+
+            if report["passed"]:
+                print("Quality gates passed.")
+                sys.exit(0)
+
+            print(
+                "Quality gates failed: "
+                + ", ".join(report["failed"]),
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        except Exception as error:
+            print(
+                f"Quality validation failed: {error}",
+                file=sys.stderr,
+            )
             sys.exit(1)
     else:
         parser.print_help()
