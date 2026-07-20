@@ -1,0 +1,5 @@
+max_jobs: 1
+queues:
+  - wingbeat-training
+builder:
+  type: docker
