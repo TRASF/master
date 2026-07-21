@@ -1,11 +1,13 @@
 import tensorflow as tf
 
-class OptimizerFactory:
-    @staticmethod
-    def get_optimizer(config: dict):
-        opt_cfg = config.get('optimizer', {}).copy()
-        name = opt_cfg.pop('name', 'Adam')
-        return tf.keras.optimizers.get({"class_name": name, "config": opt_cfg})
+
+def build_optimizer(config=None):
+    """Build one Keras optimizer from its configuration section."""
+    optimizer_config = dict(config or {})
+    name = optimizer_config.pop("name", "Adam")
+    return tf.keras.optimizers.get(
+        {"class_name": name, "config": optimizer_config}
+    )
 
 
-__all__ = ["OptimizerFactory"]
+__all__ = ["build_optimizer"]

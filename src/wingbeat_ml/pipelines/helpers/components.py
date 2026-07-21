@@ -56,7 +56,7 @@ def build_supervised_components(
     """Build the common dataset, model, loss, and evaluation stack."""
     from wingbeat_ml.evaluation import ModelEvaluator
     from wingbeat_ml.pipelines.train import resolve_training_class_weights
-    from wingbeat_ml.training import LossFactory
+    from wingbeat_ml.training import build_loss
 
     console = str(config.get("logging", {}).get("console", "normal"))
     if console != "quiet":
@@ -88,7 +88,7 @@ def build_supervised_components(
         show_counts=show_class_counts,
     )
     _synchronize_loss_activation(config)
-    loss_fn = LossFactory.get_loss(config)
+    loss_fn = build_loss(config["loss"])
     evaluator = ModelEvaluator(model, config["classes"], loss_fn)
 
     if config.get("wandb", {}).get("enabled", False):

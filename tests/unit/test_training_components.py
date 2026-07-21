@@ -20,7 +20,13 @@ from wingbeat_ml.registry import (
     build_model,
     get_model_builder,
 )
-from wingbeat_ml.training import Trainer
+from wingbeat_ml.training import (
+    Trainer,
+    build_callbacks,
+    build_loss,
+    build_optimizer,
+)
+from wingbeat_ml.training.callbacks import WandbLogger
 
 
 def make_model():
@@ -113,6 +119,25 @@ class TestTrainingModes(unittest.TestCase):
 
 
 class TestTrainingPipeline(unittest.TestCase):
+    def test_simple_initializer_functions(self):
+        config = make_config()
+        optimizer = build_optimizer(config["optimizer"])
+        loss = build_loss(config["loss"])
+        callbacks = build_callbacks(
+            config,
+            optimizer,
+            make_model(),
+            model_save_path=None,
+        )
+
+        self.assertIsInstance(optimizer, tf.keras.optimizers.SGD)
+        self.assertIsInstance(
+            loss,
+            tf.keras.losses.CategoricalCrossentropy,
+        )
+        self.assertEqual(callbacks, {})
+        self.assertEqual(WandbLogger().aggregate_plot_freq, 25)
+
     def test_builds_canonical_trainer(self):
         trainer, _, _, _, mode = build_training_components(
             make_model(),
