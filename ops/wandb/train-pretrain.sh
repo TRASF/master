@@ -4,8 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-RUNTIME_ROOT="${WINGBEAT_RUNTIME_ROOT:-/media/miru4090s/New Volume2/wingbeat_ml}"
-DATASET_DIR="${WINGBEAT_DATASET_DIR:-/app/dataset/MSB/Indoor}"
+RUNTIME_ROOT="${WINGBEAT_RUNTIME_ROOT:-$REPO_ROOT/runtime}"
+DATASET_DIR="${WINGBEAT_DATASET_DIR:-$REPO_ROOT/dataset/MSB/Indoor}"
 PROFILE="${WINGBEAT_PROFILE:-$REPO_ROOT/configs/profiles/local.yaml}"
 ENABLE_WANDB="${WINGBEAT_ENABLE_WANDB:-true}"
 

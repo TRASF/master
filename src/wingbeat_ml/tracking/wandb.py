@@ -28,8 +28,8 @@ def _artifact_name(model_path):
 
 def initialize_training_run(config, *, wandb_module=None):
     """Start one training run and apply W&B sweep overrides."""
-    settings = config.get("wandb", {})
-    if not settings.get("enabled", False):
+    settings = config["wandb"]
+    if not settings["enabled"]:
         return None
 
     if wandb_module is None:
@@ -43,11 +43,11 @@ def initialize_training_run(config, *, wandb_module=None):
             return None
 
     run = wandb_module.init(
-        project=settings.get("project", "MosSongPlus"),
+        project=settings["project"],
         config=config,
-        group=settings.get("group"),
-        tags=settings.get("tags"),
-        job_type=settings.get("job_type"),
+        group=settings["group"],
+        tags=settings["tags"],
+        job_type=settings["job_type"],
     )
 
     for dotted_key, value in wandb_module.config.items():

@@ -1,7 +1,14 @@
 dataset:
-  train_dir: /app/dataset/MSB/Indoor
-  indoor: /app/dataset/MSB/Indoor
-  outdoor: /app/dataset/MSB/Outdoor
-  mosLab: /app/dataset/Philip
+  train_dir: dataset/MSB/Indoor
+  indoor: dataset/MSB/Indoor
+  outdoor: dataset/MSB/Outdoor
+  mosLab: dataset/Philip
+augment:
+  noise_banks:
+    - dataset/MSB/Environmental/humbug_noises
+    - dataset/MSB/Environmental/inmp_noises
+    - dataset/MSB/Environmental/miru_noises
+    - dataset/MSB/Environmental/noises
+    - dataset/MSB/Environmental/Nomos
 wandb:
   enabled: false

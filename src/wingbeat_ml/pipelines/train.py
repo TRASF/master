@@ -96,7 +96,7 @@ def build_training_components(
     """Build the shared trainer, optimizer, loss and callbacks."""
     mode = configure_trainable_layers(
         model,
-        str(config.get("training_mode", "pretrain")),
+        str(config["training_mode"]),
     )
 
     resolved = copy.deepcopy(dict(config))
@@ -159,7 +159,7 @@ def run_training(
         save_path=save_path,
     )
 
-    epochs = int(config.get("train", {}).get("epochs", 1))
+    epochs = int(config["train"]["epochs"])
     history: list[dict[str, float]] = []
 
     for epoch in range(epochs):

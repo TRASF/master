@@ -199,11 +199,14 @@ def load_config(
             key_path, value = parse_override(expr)
             if key_path in LEGACY_MAPPINGS:
                 canonical = LEGACY_MAPPINGS[key_path]
-                warnings.warn(
-                    f"Legacy override '{key_path}' is deprecated. Use '{canonical}' instead. Compatibility behavior preserved.",
-                    DeprecationWarning,
-                    stacklevel=2
-                )
+                if canonical != key_path:
+                    warnings.warn(
+                        f"Legacy override '{key_path}' is deprecated. "
+                        f"Use '{canonical}' instead. Compatibility "
+                        "behavior preserved.",
+                        DeprecationWarning,
+                        stacklevel=2,
+                    )
                 key_path = canonical
             # Keep override values parsed by yaml.safe_load
             # Convert back to a yaml string component for compatibility with apply_overrides if needed

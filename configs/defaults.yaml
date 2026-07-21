@@ -15,6 +15,7 @@ model:
   bn_dense1: false
   bn_dense2: false
   output_activation: null
+  pretrained_weights: models/supervised_mossongplus/best_model.weights.h5
 
 train:
   seed: 45
@@ -25,6 +26,7 @@ train:
   warmup_augment_p: 0
 
 wandb:
+  project: MosSongPlus
   tags:
     - 11class
     - nomos
@@ -72,11 +74,11 @@ augment:
       - -0.05
       - 0.05
   noise_banks:
-    - /app/dataset/MSB/Environmental/humbug_noises
-    - /app/dataset/MSB/Environmental/inmp_noises
-    - /app/dataset/MSB/Environmental/miru_noises
-    - /app/dataset/MSB/Environmental/noises
-    - /app/dataset/MSB/Environmental/Nomos
+    - dataset/MSB/Environmental/humbug_noises
+    - dataset/MSB/Environmental/inmp_noises
+    - dataset/MSB/Environmental/miru_noises
+    - dataset/MSB/Environmental/noises
+    - dataset/MSB/Environmental/Nomos
   pitch_shift:
     p: 0
     semitones:
@@ -124,12 +126,12 @@ classes:
   - No.mos
 
 dataset:
-  indoor: /app/dataset/MSB/Indoor
-  mosLab: /app/dataset/Philip
-  outdoor: /app/dataset/MSB/Outdoor
+  indoor: dataset/MSB/Indoor
+  mosLab: dataset/Philip
+  outdoor: dataset/MSB/Outdoor
   val_dir: null
   test_dir: null
-  train_dir: /app/dataset/MSB/Indoor
+  train_dir: dataset/MSB/Indoor
   split_list:
     - 0.8
     - 0.1
@@ -138,6 +140,17 @@ dataset:
     val: 0.1
     test: 0.1
     train: 0.8
+
+runtime:
+  root: runtime
+  experiments_dir: models/experiments
+
+export:
+  out_dir: quantization_output
+  representative_samples: 500
+  input_amplitude_range: 0.03
+  allow_dummy_calibration: false
+  run_debugger: false
 
 callbacks:
   early_stopping:
@@ -219,12 +232,12 @@ wandb.aggregate_plot_freq: 0
 wandb.log_prediction_audio: false
 wandb.prediction_table_max_rows: 0
 
-dataset.indoor: /app/dataset/MSB/Indoor
-dataset.mosLab: /app/dataset/Philip
-dataset.outdoor: /app/dataset/MSB/Outdoor
+dataset.indoor: dataset/MSB/Indoor
+dataset.mosLab: dataset/Philip
+dataset.outdoor: dataset/MSB/Outdoor
 dataset.val_dir: null
 dataset.test_dir: null
-dataset.train_dir: /app/dataset/MSB/Indoor
+dataset.train_dir: dataset/MSB/Indoor
 
 augment.mixup.p: 1
 augment.mixup.alpha: 0.4

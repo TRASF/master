@@ -1,5 +1,6 @@
 model:
   id: mossong_plus
+  pretrained_weights: null
 training_mode: pretrain
 audio:
   duration: 0.3
@@ -58,6 +59,12 @@ train:
 optimizer:
   name: Adam
   learning_rate: 0.001
+wandb:
+  enabled: false
+  project: MosSongPlus
+  group: null
+  tags: []
+  job_type: train
 callbacks:
   early_stopping:
     mode: max
@@ -99,12 +106,7 @@ augment:
     rate:
       - -0.05
       - 0.05
-  noise_banks:
-    - /app/dataset/MSB/Environmental/humbug_noises
-    - /app/dataset/MSB/Environmental/inmp_noises
-    - /app/dataset/MSB/Environmental/miru_noises
-    - /app/dataset/MSB/Environmental/noises
-    - /app/dataset/MSB/Environmental/Nomos
+  noise_banks: []
   pitch_shift:
     p: 0
     semitones:
@@ -143,7 +145,19 @@ reproducibility:
   deterministic_ops: true
   deterministic_data: true
 dataset:
+  train_dir: null
+  val_dir: null
+  test_dir: null
   split_ratios:
     val: 0.1
     test: 0.1
     train: 0.8
+runtime:
+  root: runtime
+  experiments_dir: models/experiments
+export:
+  out_dir: quantization_output
+  representative_samples: 500
+  input_amplitude_range: 0.03
+  allow_dummy_calibration: false
+  run_debugger: false
