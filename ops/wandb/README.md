@@ -39,6 +39,10 @@ The dataset mount must contain `dataset-manifest.json`. The runtime mount must
 be writable. These paths may be bind mounts backed by different physical disks
 on the two computers.
 
+Each job writes to an isolated `runs/<run-id>` directory. On exit, including a
+failed training exit, it writes checksums and publishes `.artifact-ready.json`
+last. The shared cache remains outside run directories and is not archived.
+
 ## Per-GPU Launch agents
 
 1. Authenticate once without committing the API key:
@@ -98,3 +102,40 @@ TensorFlow to that agent's one GPU.
 
 `WANDB_API_KEY` belongs in the machine credential store or secret manager,
 never in Git, the Docker image, or YAML.
+
+## Central artifact owner
+
+miru4090s is the permanent artifact owner. Compute-only machines use local
+staging during training, then transfer only finalized run directories. The
+source receives `.artifact-synced.json` only after miru4090s independently
+verifies every file checksum.
+
+On miru4090s, bind `/srv/wingbeat/runtime` directly to the permanent experiment
+disk, set `WINGBEAT_ARTIFACT_DESTINATION=/srv/wingbeat/runtime`, and leave
+`WINGBEAT_ARTIFACT_OWNER` blank. On every compute-only machine, bind the same
+standard path to fast local scratch and set:
+
+```bash
+WINGBEAT_ARTIFACT_OWNER=your-ssh-user@miru4090s
+WINGBEAT_ARTIFACT_DESTINATION=/media/miru4090s/New Volume1/MosSongPlus_experiments
+```
+
+Passwordless SSH and `rsync` are required on compute-only machines. Verify the
+connection before enabling the service:
+
+```bash
+ssh "$WINGBEAT_ARTIFACT_OWNER" hostname
+rsync --version
+```
+
+Install the non-destructive synchronization service on both machines:
+
+```bash
+cp ops/wandb/wingbeat-artifact-sync.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now wingbeat-artifact-sync.service
+```
+
+The service never deletes staging data. After a run has both the source
+`.artifact-synced.json` marker and the owner `.artifact-verified.json` marker,
+cleanup remains an explicit operator action.

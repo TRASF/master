@@ -1,0 +1,14 @@
+[Unit]
+Description=Verify and centralize Wingbeat training artifacts
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/wingbeat/agents.env
+ExecStart=/usr/bin/env bash -lc 'cd "$WINGBEAT_REPO" && exec bash ops/wandb/start-artifact-sync.sh'
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=default.target
