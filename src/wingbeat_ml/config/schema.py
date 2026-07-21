@@ -135,6 +135,86 @@ def validate_config(cfg: dict) -> None:
         if not isinstance(batch_size, int) or batch_size <= 0:
             raise ValueError(f"Invalid train.batch_size: must be positive integer, got {repr(batch_size)}")
 
+    performance = cfg.get("performance", {})
+    if performance:
+        precision = performance.get("precision", "auto")
+        if precision not in {"auto", "float32", "mixed_float16"}:
+            raise ValueError(
+                "performance.precision must be auto, float32, or mixed_float16"
+            )
+        steps_per_call = performance.get("steps_per_call", 20)
+        if not isinstance(steps_per_call, int) or steps_per_call <= 0:
+            raise ValueError("performance.steps_per_call must be a positive integer")
+        if not isinstance(performance.get("jit_compile", False), bool):
+            raise ValueError("performance.jit_compile must be a boolean")
+        profiler = performance.get("profiler", {})
+        if not isinstance(profiler.get("enabled", False), bool):
+            raise ValueError("performance.profiler.enabled must be a boolean")
+        for key in ("start_step", "num_steps"):
+            value = profiler.get(key, 10)
+            if not isinstance(value, int) or value <= 0:
+                raise ValueError(f"performance.profiler.{key} must be positive")
+
+    logging = cfg.get("logging", {})
+    if logging:
+        if logging.get("console", "normal") not in {"quiet", "normal", "verbose"}:
+            raise ValueError("logging.console must be quiet, normal, or verbose")
+        interval = logging.get("epoch_interval", 1)
+        if not isinstance(interval, int) or interval <= 0:
+            raise ValueError("logging.epoch_interval must be a positive integer")
+        for key in ("model_summary", "jsonl"):
+            if not isinstance(logging.get(key, False), bool):
+                raise ValueError(f"logging.{key} must be a boolean")
+        report_target = logging.get("classification_report", "file")
+        if report_target not in {"file", "console", "off"}:
+            raise ValueError(
+                "logging.classification_report must be file, console, or off"
+            )
+
+    class_weights = cfg.get("class_weights", {})
+    if class_weights:
+        mode = class_weights.get("mode")
+        if mode is not None and mode not in {"auto", "manual", "off"}:
+            raise ValueError("class_weights.mode must be auto, manual, or off")
+        if mode == "manual":
+            values = class_weights.get("values")
+            if not isinstance(values, (dict, list, tuple)):
+                raise ValueError("manual class_weights.values are required")
+            if isinstance(values, dict) and labels:
+                canonical = {
+                    str(name).casefold(): int(index)
+                    for name, index in labels.items()
+                }
+                assigned = set()
+                for name in values:
+                    index = canonical.get(str(name).casefold())
+                    if index is None:
+                        raise ValueError(f"Unknown class weight name: {name!r}")
+                    if index in assigned:
+                        raise ValueError(
+                            f"Duplicate class weight for index {index}"
+                        )
+                    assigned.add(index)
+                expected = set(range(num_classes or len(canonical)))
+                if assigned != expected:
+                    raise ValueError(
+                        "Manual class weights must define every class exactly once"
+                    )
+
+    evaluation = cfg.get("evaluation", {})
+    for level in ("sample_level", "file_level"):
+        settings = evaluation.get(level, {})
+        if settings and not isinstance(settings.get("enabled", True), bool):
+            raise ValueError(f"evaluation.{level}.enabled must be a boolean")
+
+    cache = cfg.get("cache", {})
+    if cache:
+        if not isinstance(cache.get("enabled", True), bool):
+            raise ValueError("cache.enabled must be a boolean")
+        schema_version = cache.get("schema_version", 1)
+        if not isinstance(schema_version, int) or schema_version <= 0:
+            raise ValueError("cache.schema_version must be a positive integer")
+
     opt_section = cfg.get("optimizer", {})
     if isinstance(opt_section, dict):
         lr = opt_section.get("learning_rate")

@@ -33,7 +33,8 @@ class MosSongPlusModel:
         # Output Layer
         x = keras.layers.Dense(
             units=output_units,
-            activation=output_activation
+            activation=output_activation,
+            dtype="float32",
         )(x)
 
         return keras.Model(inputs=inputs, outputs=x, name="MosquitoSongPlus")

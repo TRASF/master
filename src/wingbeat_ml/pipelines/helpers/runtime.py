@@ -8,6 +8,7 @@ from wingbeat_ml.config.runtime import (
     resolve_experiment_paths,
 )
 from wingbeat_ml.tracking import initialize_training_run
+from wingbeat_ml.config.schema import validate_config
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,14 @@ def prepare_training_run(
 ):
     """Initialize tracking, artifact paths, and deterministic runtime."""
     tracking_run = initialize_training_run(config)
+    try:
+        validate_config(config)
+    except Exception:
+        if tracking_run is not None:
+            finish = getattr(tracking_run, "finish", None)
+            if callable(finish):
+                finish(exit_code=1)
+        raise
     base_name = generate_experiment_name(config, mode=mode)
     experiment_name = (
         _pretrain_tracking_name(config, base_name)
@@ -51,11 +60,23 @@ def prepare_training_run(
     paths = resolve_experiment_paths(config, experiment_name)
     save_path = save_path or paths["save_path"]
     results_dir = results_dir or paths["results_dir"]
+    config["resolved_run"] = {
+        "experiment_name": experiment_name,
+        "save_path": str(save_path),
+        "results_dir": str(results_dir),
+    }
 
-    print(f"Experiment Name: {experiment_name}")
-    print(f"Saving weights to: {save_path}")
-    print(f"Saving results to: {results_dir}")
-    configure_training_runtime(config["reproducibility"])
+    console = str(config.get("logging", {}).get("console", "normal"))
+    if console != "quiet":
+        print(f"Experiment Name: {experiment_name}")
+        print(f"Saving weights to: {save_path}")
+        print(f"Saving results to: {results_dir}")
+    runtime_info = configure_training_runtime(
+        config["reproducibility"],
+        performance=config.get("performance", {}),
+        logging=config.get("logging", {}),
+    )
+    config["resolved_runtime"] = runtime_info
 
     return TrainingRunContext(
         experiment_name=experiment_name,

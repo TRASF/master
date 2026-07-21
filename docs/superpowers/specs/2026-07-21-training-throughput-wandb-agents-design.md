@@ -65,8 +65,16 @@ Each lab computer runs a host supervisor. At startup it:
 
 Each agent has `max_jobs: 1`, listens to the same queue, and receives one
 exclusive `CUDA_VISIBLE_DEVICES` value. The Docker queue passes that existing
-environment value into each job. The container may see the host's NVIDIA
-runtime, but TensorFlow sees only the assigned logical GPU.
+environment value, plus `NVIDIA_VISIBLE_DEVICES`, into each job. The queue uses
+`--gpus all` to enable the NVIDIA runtime, but TensorFlow sees only the GPU UUID
+assigned to that agent.
+
+A shared Docker queue has one static bind-mount configuration. Both computers
+therefore expose their different local disks through the same host mount
+points: `/srv/wingbeat/dataset` and `/srv/wingbeat/runtime`. Containers receive
+those mounts as `/data` and `/runtime`; agent-provided environment variables
+use the container paths. This preserves local-disk performance while keeping
+one queue usable by both machines.
 
 The host supervisor reconciles desired and running agents. Restarting it after
 installing another GPU creates the additional worker slot without source-code
@@ -84,9 +92,10 @@ Each computer trains from a local dataset copy. A canonical manifest records
 relative paths, sizes, and content hashes. Every run logs the manifest checksum
 and refuses to start when the local copy does not match the approved manifest.
 
-The dataset path is host configuration supplied through
-`WINGBEAT_DATASET_DIR`; it is not written into source code, Docker images, or
-experiment YAML.
+The physical dataset path is host configuration. The shared Docker queue binds
+its standardized host view at `/data`, which is supplied to jobs through
+`WINGBEAT_DATASET_DIR`; physical disk paths are not written into source code,
+Docker images, or experiment YAML.
 
 The cache root is host configuration. Cache keys are stable and derived from:
 

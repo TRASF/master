@@ -1,0 +1,18 @@
+{
+  "env": [
+    "CUDA_VISIBLE_DEVICES",
+    "NVIDIA_VISIBLE_DEVICES",
+    "WINGBEAT_AGENT_GPU_UUID",
+    "WINGBEAT_DATASET_DIR",
+    "WINGBEAT_RUNTIME_ROOT",
+    "WINGBEAT_CACHE_DIR",
+    "WINGBEAT_DATASET_MANIFEST",
+    "WINGBEAT_DATASET_MANIFEST_SHA256"
+  ],
+  "volume": [
+    "/srv/wingbeat/dataset:/data:ro",
+    "/srv/wingbeat/runtime:/runtime"
+  ],
+  "gpus": "all",
+  "rm": true
+}

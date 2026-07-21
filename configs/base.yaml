@@ -32,19 +32,7 @@ classes:
 num_classes: 11
 nomos_index: 10
 class_weights:
-  enabled: true
-  values:
-    No.Mos: 1
-    Cx_quin_Male: 1.25
-    An_dirus_Male: 1
-    Cx_quin_Female: 1
-    Ae_aegypti_Male: 1.25
-    An_dirus_Female: 1
-    An_minimus_Male: 1
-    Ae_aegypti_Female: 1
-    An_minimus_Female: 1
-    Ae_albopictus_Male: 1
-    Ae_albopictus_Female: 1
+  mode: auto
 loss:
   name: CategoricalCrossentropy
   reduction: none
@@ -54,8 +42,33 @@ train:
   epochs: 1000
   shuffle: true
   batch_size: 256
-  warmup_epochs: 15
-  warmup_augment_p: 0
+
+performance:
+  precision: float32
+  steps_per_call: 20
+  jit_compile: false
+  profiler:
+    enabled: false
+    start_step: 10
+    num_steps: 10
+
+logging:
+  console: normal
+  epoch_interval: 1
+  model_summary: false
+  classification_report: file
+  jsonl: true
+
+evaluation:
+  sample_level:
+    enabled: true
+  file_level:
+    enabled: false
+
+cache:
+  enabled: true
+  schema_version: 1
+  root: null
 optimizer:
   name: Adam
   learning_rate: 0.001
@@ -148,6 +161,7 @@ dataset:
   train_dir: null
   val_dir: null
   test_dir: null
+  manifest_sha256: null
   split_ratios:
     val: 0.1
     test: 0.1

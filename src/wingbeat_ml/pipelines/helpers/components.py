@@ -1,6 +1,9 @@
 """Assembly of existing domain components for canonical pipelines."""
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
+import time
 
 
 @dataclass(frozen=True)
@@ -55,15 +58,29 @@ def build_supervised_components(
     from wingbeat_ml.pipelines.train import resolve_training_class_weights
     from wingbeat_ml.training import LossFactory
 
-    print("Setting up datasets...")
+    console = str(config.get("logging", {}).get("console", "normal"))
+    if console != "quiet":
+        print("Setting up datasets...")
+    dataset_started = time.perf_counter()
     builder, train, validation, test = build_dataset_bundle(
         config,
         return_builder=True,
     )
+    from wingbeat_ml.data.cache import consume_cache_events
+    config.setdefault("resolved_timing", {})[
+        "dataset_setup_seconds"
+    ] = time.perf_counter() - dataset_started
+    config["resolved_cache_events"] = consume_cache_events()
 
-    print("Building model...")
+    if console != "quiet":
+        print("Building model...")
+    model_started = time.perf_counter()
     model = build_model_component(config, model_config)
-    model.summary()
+    config.setdefault("resolved_timing", {})[
+        "model_build_seconds"
+    ] = time.perf_counter() - model_started
+    if config.get("logging", {}).get("model_summary", False):
+        model.summary()
 
     class_weights = resolve_training_class_weights(
         config,
@@ -73,6 +90,32 @@ def build_supervised_components(
     _synchronize_loss_activation(config)
     loss_fn = LossFactory.get_loss(config)
     evaluator = ModelEvaluator(model, config["classes"], loss_fn)
+
+    if config.get("wandb", {}).get("enabled", False):
+        try:
+            import wandb
+            if wandb.run is not None:
+                wandb.config.update(
+                    {
+                        "resolved_timing": config["resolved_timing"],
+                        "resolved_cache_events": config["resolved_cache_events"],
+                    },
+                    allow_val_change=True,
+                )
+        except ImportError:
+            pass
+
+    resolved_run = config.get("resolved_run", {})
+    save_path = resolved_run.get("save_path")
+    if save_path:
+        metadata_path = Path(save_path).parent / "run_metadata.json"
+        metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = metadata_path.with_suffix(".json.tmp")
+        temporary.write_text(
+            json.dumps(config, indent=2, sort_keys=True, default=str) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(metadata_path)
 
     return SupervisedComponents(
         dataset_builder=builder,

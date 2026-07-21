@@ -1,0 +1,14 @@
+[Unit]
+Description=Wingbeat W&B Launch agents (one per GPU)
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/wingbeat/agents.env
+ExecStart=/usr/bin/env bash -lc 'cd "$WINGBEAT_REPO" && exec bash ops/wandb/start-gpu-agents.sh'
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

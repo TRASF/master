@@ -131,6 +131,10 @@ def prepare_default_pilot(project_root=None, runtime_root=None):
         overrides=[
             _override("dataset.train_dir", str(dataset)),
             _override("runtime.root", str(execution_root)),
+            _override(
+                "cache.root",
+                str(runtime / "dataset" / ".tf_cache"),
+            ),
         ],
     )
     resolved_path = config_dir / "resolved.yaml"
