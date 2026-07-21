@@ -227,43 +227,54 @@ def export_from_weights(
     defaults_path,
     model_config_path,
     weights_path,
-    out_dir,
-    rep_samples=500,
+    out_dir=None,
+    rep_samples=None,
     input_amplitude_range=None,
-    allow_dummy_calibration=False,
-    run_debugger=False,
+    allow_dummy_calibration=None,
+    run_debugger=None,
 ):
     """Build MosSongPlus, load weights and run export."""
-    from wingbeat_ml.config.runtime import (
-        configure_training_runtime,
-        load_config,
-        normalize_config,
+    from wingbeat_ml.pipelines.helpers import (
+        build_dataset_bundle,
+        build_model_component,
+        load_pipeline_configuration,
+        prepare_export_runtime,
     )
-    from wingbeat_ml.data.dataset import build_datasets
-    from wingbeat_ml.registry import build_model
 
-    cfg = normalize_config(load_config(defaults_path))
-    model_cfg = load_config(model_config_path)
+    cfg, model_cfg = load_pipeline_configuration(
+        defaults_path,
+        model_config_path,
+    )
+    export_config = cfg["export"]
+    out_dir = out_dir or export_config["out_dir"]
+    rep_samples = (
+        rep_samples
+        if rep_samples is not None
+        else export_config["representative_samples"]
+    )
+    allow_dummy_calibration = (
+        allow_dummy_calibration
+        if allow_dummy_calibration is not None
+        else export_config["allow_dummy_calibration"]
+    )
+    run_debugger = (
+        run_debugger
+        if run_debugger is not None
+        else export_config["run_debugger"]
+    )
 
-    configure_training_runtime(cfg["reproducibility"])
-    seed = cfg["reproducibility"]["seed"]
+    seed = prepare_export_runtime(cfg)
 
     try:
         dataset_config = copy.deepcopy(cfg)
         dataset_config["train"]["shuffle"] = False
-        _, val_ds, test_ds = build_datasets(
-            cfg["dataset"].get("train_dir")
-            or cfg["dataset"]["indoor"],
-            dataset_config,
-            val_dir=cfg["dataset"]["val_dir"],
-            test_dir=cfg["dataset"]["test_dir"],
-        )
+        _, val_ds, test_ds = build_dataset_bundle(dataset_config)
     except Exception:
         if not allow_dummy_calibration:
             raise
         val_ds = test_ds = None
 
-    model = build_model(
+    model = build_model_component(
         cfg,
         model_cfg,
         batch_size=1,
@@ -276,11 +287,10 @@ def export_from_weights(
         )
     model.load_weights(weights_path)
 
-    quantization = cfg.get("quantization", {})
     amplitude = (
         input_amplitude_range
         if input_amplitude_range is not None
-        else quantization.get("input_amplitude_range", 0.03)
+        else export_config["input_amplitude_range"]
     )
 
     return run_basic_quantization_suite(
@@ -312,15 +322,19 @@ def main(args=None):
     parser.add_argument("--weights", required=True)
     parser.add_argument(
         "--out-dir",
-        default="quantization_output",
     )
-    parser.add_argument("--rep-samples", type=int, default=500)
+    parser.add_argument("--rep-samples", type=int)
     parser.add_argument("--input-amplitude-range", type=float)
     parser.add_argument(
         "--allow-dummy-calibration",
         action="store_true",
+        default=None,
     )
-    parser.add_argument("--run-debugger", action="store_true")
+    parser.add_argument(
+        "--run-debugger",
+        action="store_true",
+        default=None,
+    )
     parsed = parser.parse_args(args)
 
     return export_from_weights(

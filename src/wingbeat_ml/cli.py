@@ -115,12 +115,10 @@ def main(args=None):
     export_parser.add_argument("--weights", required=True)
     export_parser.add_argument(
         "--out-dir",
-        default="quantization_output",
     )
     export_parser.add_argument(
         "--rep-samples",
         type=int,
-        default=500,
     )
     export_parser.add_argument(
         "--input-amplitude-range",
@@ -129,10 +127,12 @@ def main(args=None):
     export_parser.add_argument(
         "--allow-dummy-calibration",
         action="store_true",
+        default=None,
     )
     export_parser.add_argument(
         "--run-debugger",
         action="store_true",
+        default=None,
     )
 
     parsed_args = parser.parse_args(args)

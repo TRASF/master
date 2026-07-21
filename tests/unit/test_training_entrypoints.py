@@ -75,29 +75,32 @@ class TestTrainingEntrypoints(unittest.TestCase):
             self.assertIn("run_training(", source)
             self.assertNotIn("for epoch in range(epochs)", source)
 
-    def test_canonical_entrypoints_share_runtime_setup(self):
+    def test_canonical_entrypoints_use_pipeline_helpers(self):
         for name in (
             "wingbeat_ml.pipelines.pretrain",
             "wingbeat_ml.pipelines.linear_probe",
             "wingbeat_ml.pipelines.fine_tune",
         ):
             source = inspect.getsource(importlib.import_module(name))
-            self.assertIn("configure_training_runtime(", source)
-            self.assertIn("initialize_training_run(", source)
+            self.assertIn("prepare_training_run(", source)
+            self.assertIn("build_supervised_components(", source)
+            self.assertIn("wingbeat_ml.pipelines.helpers", source)
+            self.assertNotIn("configure_training_runtime(", source)
+            self.assertNotIn("initialize_training_run(", source)
             self.assertNotIn("set_memory_growth(", source)
             self.assertNotIn("tf.random.set_seed(", source)
             self.assertNotIn("wandb.init(", source)
 
-    def test_canonical_entrypoints_use_component_builders(self):
+    def test_component_assembly_is_not_repeated_in_entrypoints(self):
         for name in (
             "wingbeat_ml.pipelines.pretrain",
             "wingbeat_ml.pipelines.linear_probe",
             "wingbeat_ml.pipelines.fine_tune",
         ):
             source = inspect.getsource(importlib.import_module(name))
-            self.assertIn("build_datasets(", source)
-            self.assertIn("build_model(", source)
-            self.assertIn("resolve_training_class_weights(", source)
+            self.assertNotIn("build_datasets(", source)
+            self.assertNotIn("build_model(", source)
+            self.assertNotIn("resolve_training_class_weights(", source)
             self.assertNotIn("SupervisedDataset(", source)
             self.assertNotIn("MosSongPlusModel(", source)
 

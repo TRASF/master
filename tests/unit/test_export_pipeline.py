@@ -181,16 +181,19 @@ class TestExportModules(unittest.TestCase):
                 inspect.getsource(module),
             )
 
-    def test_export_pipeline_uses_registered_components(self):
+    def test_export_pipeline_uses_pipeline_helpers(self):
         pipeline = require_module(
             self,
             "wingbeat_ml.pipelines.export",
         )
         source = inspect.getsource(pipeline.export_from_weights)
 
-        self.assertIn("build_datasets(", source)
-        self.assertIn("build_model(", source)
-        self.assertIn("configure_training_runtime(", source)
+        self.assertIn("build_dataset_bundle(", source)
+        self.assertIn("build_model_component(", source)
+        self.assertIn("prepare_export_runtime(", source)
+        self.assertNotIn("build_datasets(", source)
+        self.assertNotIn("build_model(", source)
+        self.assertNotIn("configure_training_runtime(", source)
         self.assertNotIn("SupervisedDataset(", source)
         self.assertNotIn("MosSongPlusModel(", source)
 

@@ -1,1 +1,4 @@
 training_mode: fine_tune
+
+model:
+  checkpoint: artifacts/checkpoints/mossong_plus/pretrain/best.keras

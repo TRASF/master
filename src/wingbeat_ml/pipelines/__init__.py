@@ -1,10 +1,18 @@
 """High-level Wingbeat ML pipelines."""
 
-from wingbeat_ml.pipelines.train import (
-    build_training_components,
-    configure_trainable_layers,
-    run_training,
-)
+
+_TRAIN_EXPORTS = {
+    "build_training_components",
+    "configure_trainable_layers",
+    "run_training",
+}
+
+
+def __getattr__(name):
+    if name in _TRAIN_EXPORTS:
+        from wingbeat_ml.pipelines import train
+        return getattr(train, name)
+    raise AttributeError(name)
 
 
 def get_training_entrypoint(mode: str):

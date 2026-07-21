@@ -1,0 +1,13 @@
+dataset:
+  train_dir: dataset/MSB/Indoor
+  val_dir: null
+  test_dir: null
+train:
+  epochs: 5
+  batch_size: 256
+augment:
+  noise_banks: []
+  noise_overlay:
+    p: 0.0
+wandb:
+  enabled: false

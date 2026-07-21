@@ -104,7 +104,7 @@ class TestCanonicalEvaluation(unittest.TestCase):
     def test_training_run_evaluation_is_centralized(self):
         module = require_module(
             self,
-            "wingbeat_ml.pipelines.evaluate",
+            "wingbeat_ml.pipelines.helpers.reporting",
         )
         model = mock.Mock()
         evaluator = mock.Mock()
@@ -127,7 +127,9 @@ class TestCanonicalEvaluation(unittest.TestCase):
             checkpoint = os.path.join(tmpdir, "best.weights.h5")
             open(checkpoint, "a", encoding="utf-8").close()
 
-            with mock.patch.object(module, "report_results") as report:
+            with mock.patch(
+                "wingbeat_ml.evaluation.report_results"
+            ) as report:
                 module.evaluate_training_run(
                     model=model,
                     evaluator=evaluator,

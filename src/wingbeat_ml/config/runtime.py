@@ -31,7 +31,7 @@ def recursive_merge(default, override):
 def apply_reproducibility_environment(settings):
     """Apply environment variables for reproducibility based on settings."""
     if settings.get("enabled"):
-        seed = settings.get("seed", 42)
+        seed = settings["seed"]
         os.environ["PYTHONHASHSEED"] = str(seed)
         if settings.get("deterministic_ops"):
             os.environ["TF_DETERMINISTIC_OPS"] = "1"
@@ -47,7 +47,7 @@ def configure_training_runtime(settings):
     import tensorflow as tf
 
     if settings.get("enabled"):
-        seed = settings.get("seed", 42)
+        seed = settings["seed"]
         random.seed(seed)
         np.random.seed(seed)
         tf.random.set_seed(seed)
@@ -122,25 +122,25 @@ def normalize_config(defaults):
     cfg = recursive_merge(base_defaults, defaults or {})
 
     # 3. Handle derived properties and conversions
-    sample_rate = int(cfg["audio"].get("sample_rate", 8000))
-    duration = float(cfg["audio"].get("duration", 0.3))
+    sample_rate = int(cfg["audio"]["sample_rate"])
+    duration = float(cfg["audio"]["duration"])
     cfg["audio"]["segment_length"] = int(duration * sample_rate)
     cfg["segment_length"] = cfg["audio"]["segment_length"]
 
-    cfg["preprocess"] = cfg.get("preprocess", {})
-    cfg["preprocess"]["dc_removal"] = bool(cfg["preprocess"].get("dc_removal", True))
-    cfg["augment"] = cfg.get("augment", {})
+    cfg["preprocess"]["dc_removal"] = bool(
+        cfg["preprocess"]["dc_removal"]
+    )
     cfg["augment"]["preprocess"] = cfg["preprocess"]
 
-    split_ratios = cfg["dataset"].get("split_ratios", {"train": 0.8, "val": 0.1, "test": 0.1})
+    split_ratios = cfg["dataset"]["split_ratios"]
     cfg["dataset"]["split_list"] = [
-        float(split_ratios.get("train", 0.8)),
-        float(split_ratios.get("val", 0.1)),
-        float(split_ratios.get("test", 0.1))
+        float(split_ratios["train"]),
+        float(split_ratios["val"]),
+        float(split_ratios["test"]),
     ]
 
     # Resolve classes list and number of classes
-    labels_dict = cfg.get("labels", {})
+    labels_dict = cfg["labels"]
     if labels_dict:
         num_classes = max(labels_dict.values()) + 1
         classes_list = [""] * num_classes
@@ -190,7 +190,7 @@ def generate_experiment_name(cfg, mode="Pretrain"):
     else:
         ds_str = "ds-unknown"
 
-    loss_name = cfg.get("loss", {}).get("name", "CE")
+    loss_name = cfg["loss"]["name"]
     if "focal" in loss_name.lower():
         loss_str = "loss-Focal"
     elif "crossentropy" in loss_name.lower():
@@ -198,7 +198,7 @@ def generate_experiment_name(cfg, mode="Pretrain"):
     else:
         loss_str = f"loss-{loss_name}"
 
-    cw_enabled = cfg.get("class_weights", {}).get("enabled", False)
+    cw_enabled = cfg["class_weights"]["enabled"]
     cw_str = "cw" if cw_enabled else "nocw"
 
     augment_cfg = cfg.get("augment", {})
@@ -209,10 +209,10 @@ def generate_experiment_name(cfg, mode="Pretrain"):
             active_augs.append(short_name)
 
     aug_str = "aug-" + "-".join(sorted(active_augs)) if active_augs else "noaug"
-    opt_name = cfg.get("optimizer", {}).get("name", "Adam")
-    lr = cfg.get("optimizer", {}).get("learning_rate", 0.001)
+    opt_name = cfg["optimizer"]["name"]
+    lr = cfg["optimizer"]["learning_rate"]
     opt_str = f"{opt_name}-lr{lr}"
-    bz = cfg.get("train", {}).get("batch_size", 32)
+    bz = cfg["train"]["batch_size"]
     bz_str = f"bz{bz}"
 
     return f"{mode}_{ds_str}_{loss_str}_{cw_str}_{aug_str}_{opt_str}_{bz_str}"
@@ -224,7 +224,10 @@ def resolve_experiment_paths(cfg, experiment_name):
     Automatically creates the directories if they don't exist.
     """
     import os
-    base_dir = os.path.join("models", "experiments", experiment_name)
+    base_dir = os.path.join(
+        cfg["runtime"]["experiments_dir"],
+        experiment_name,
+    )
     results_dir = os.path.join(base_dir, "results")
     save_path = os.path.join(base_dir, "best_model.weights.h5")
 
