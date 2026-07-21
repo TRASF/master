@@ -48,6 +48,11 @@ Two lab computers share a network and internet access:
 The target capacity is three concurrent experiments now and four after the
 second GPU is installed in Machine A.
 
+miru4090s is the only permanent local artifact owner. Other computers may use
+fast local staging while a job is active, but checkpoints, resolved configs,
+metrics, plots, exports, and W&B run files are not considered archived until
+miru4090s verifies their checksums.
+
 ## W&B Control Plane
 
 The canonical training container is published as a versioned W&B Job. Normal
@@ -274,6 +279,13 @@ epoch metrics, and preserves the latest recoverable checkpoint. Only the job
 that owns a GPU writes to its unique runtime directory. Credentials are kept in
 host environment/credential storage and are never committed.
 
+Every terminal job publishes an atomic ready marker after writing a content
+manifest. Compute-only hosts transfer ready runs with resumable rsync, then
+miru4090s independently recomputes all hashes. A source-side synced marker is
+written only after that verification succeeds. Staging cleanup is never
+automatic; failed transfers remain retryable and failed training runs are also
+archived for diagnosis.
+
 ## Verification
 
 Unit and contract tests cover:
@@ -285,8 +297,9 @@ Unit and contract tests cover:
 - stable cache keys and concurrent cache publication;
 - precision selection, loss scaling, and FP32 outputs;
 - global-step and `steps_per_call` accounting;
-- GPU discovery and unique per-GPU agent generation; and
-- dataset-manifest mismatch rejection.
+- GPU discovery and unique per-GPU agent generation;
+- dataset-manifest mismatch rejection; and
+- atomic artifact finalization, checksum rejection, and non-destructive retry.
 
 Integration checks cover:
 
@@ -317,7 +330,9 @@ The phase passes when:
 - steady-state throughput is preserved or improved;
 - normal console logging has no per-batch output and negligible measured
   overhead; and
-- unrelated repository and runtime files remain untouched.
+- unrelated repository and runtime files remain untouched; and
+- all terminal run artifacts are checksum-verified on miru4090s before remote
+  staging is eligible for manual cleanup.
 
 ## Non-Goals
 
