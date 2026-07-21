@@ -251,18 +251,34 @@ def report_results(model, test_results, file_results, train_file_results, cfg, d
     # Print metrics to stdout
     print(f"Final Test Accuracy: {test_results['metrics']['accuracy']:.4f}")
     print(f"Final Test Macro F1: {test_results['metrics']['macro_f1']:.4f}")
-    print(f"Confusion Matrix: Test Accuracy: {test_results['metrics']['accuracy']:.4f} | Macro F1: {test_results['metrics']['macro_f1']:.4f}")
-    print(np.array(test_results["confusion_matrix"]))
+    console = str(cfg.get("logging", {}).get("console", "normal"))
+    report_target = str(
+        cfg.get("logging", {}).get("classification_report", "file")
+    )
+    if console == "verbose":
+        print(
+            "Confusion Matrix: Test Accuracy: "
+            f"{test_results['metrics']['accuracy']:.4f} | Macro F1: "
+            f"{test_results['metrics']['macro_f1']:.4f}"
+        )
+        print(np.array(test_results["confusion_matrix"]))
 
-    print("\nClassification Report:")
-    for label, metrics in test_results["report"].items():
-        if label in cfg["classes"]:
-            print(f"Class {label:20} - Precision: {metrics['precision']:.4f}, Recall: {metrics['recall']:.4f}, F1-Score: {metrics['f1-score']:.4f}")
+    if report_target == "console" or console == "verbose":
+        print("\nClassification Report:")
+        for label, metrics in test_results["report"].items():
+            if label in cfg["classes"]:
+                print(
+                    f"Class {label:20} - Precision: "
+                    f"{metrics['precision']:.4f}, Recall: "
+                    f"{metrics['recall']:.4f}, F1-Score: "
+                    f"{metrics['f1-score']:.4f}"
+                )
 
-    print(f"Final File-level Test Accuracy: {file_results['metrics']['accuracy']:.4f}")
-    print(f"Final File-level Test Macro F1: {file_results['metrics']['macro_f1']:.4f}")
-    print(f"Final File-level Train Accuracy: {train_file_results['metrics']['accuracy']:.4f}")
-    print(f"Final File-level Train Macro F1: {train_file_results['metrics']['macro_f1']:.4f}")
+    if file_results is not None and train_file_results is not None:
+        print(f"Final File-level Test Accuracy: {file_results['metrics']['accuracy']:.4f}")
+        print(f"Final File-level Test Macro F1: {file_results['metrics']['macro_f1']:.4f}")
+        print(f"Final File-level Train Accuracy: {train_file_results['metrics']['accuracy']:.4f}")
+        print(f"Final File-level Train Macro F1: {train_file_results['metrics']['macro_f1']:.4f}")
 
     # W&B Logging
     if cfg.get("wandb", {}).get("enabled", False):
@@ -283,7 +299,12 @@ def report_results(model, test_results, file_results, train_file_results, cfg, d
                     log_class_support_tables(wandb, ds_builder, cfg["classes"])
 
                     # Log file-level diagnostics tables
-                    for label_prefix, results_dict in [("test", file_results), ("train", train_file_results)]:
+                    for label_prefix, results_dict in [
+                        ("test", file_results),
+                        ("train", train_file_results),
+                    ]:
+                        if results_dict is None:
+                            continue
                         try:
                             if "file_diagnostics" in results_dict:
                                 diags = results_dict["file_diagnostics"]

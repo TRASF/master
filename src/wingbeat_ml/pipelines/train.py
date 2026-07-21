@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from pathlib import Path
 import time
 from collections.abc import Callable, Mapping
 
@@ -16,6 +17,13 @@ from wingbeat_ml.training import (
     OptimizerFactory,
     Trainer,
 )
+
+
+def _optimizer_learning_rate(optimizer):
+    learning_rate = getattr(optimizer, "learning_rate", None)
+    if learning_rate is not None:
+        return learning_rate
+    return optimizer.inner_optimizer.learning_rate
 
 
 def _normalize_mode(mode: str) -> str:
@@ -68,20 +76,40 @@ def resolve_training_class_weights(
         labels_dict=config["labels"],
     )
 
+    console = str(config.get("logging", {}).get("console", "normal"))
     if not enabled:
-        if show_counts:
+        if show_counts and console != "quiet":
             print("Class weights disabled.")
         config["resolved_class_weights"] = None
         return None
 
-    if show_counts:
+    estimated_counts = getattr(dataset_builder, "class_counts", None)
+    if isinstance(estimated_counts, (list, tuple, np.ndarray)):
+        counts = np.asarray(estimated_counts, dtype=np.float32)
+    else:
         counts = np.bincount(
             dataset_builder.train_labels,
             minlength=config["num_classes"],
         )
+    if show_counts and console != "quiet":
         print(f"Training class counts: {counts.tolist()}")
-    print(f"Using class weights: {np.round(weights, 3).tolist()}")
+    if console != "quiet":
+        print(f"Using class weights: {np.round(weights, 3).tolist()}")
+    config["resolved_class_counts"] = counts.tolist()
     config["resolved_class_weights"] = weights.tolist()
+    if config.get("wandb", {}).get("enabled", False):
+        try:
+            import wandb
+            if wandb.run is not None:
+                wandb.config.update(
+                    {
+                        "resolved_class_counts": counts.tolist(),
+                        "resolved_class_weights": weights.tolist(),
+                    },
+                    allow_val_change=True,
+                )
+        except ImportError:
+            pass
     return weights
 
 
@@ -109,6 +137,8 @@ def build_training_components(
         loss_cfg["from_logits"] = True
 
     optimizer = OptimizerFactory.get_optimizer(resolved)
+    if tf.keras.mixed_precision.global_policy().compute_dtype == "float16":
+        optimizer = tf.keras.mixed_precision.LossScaleOptimizer(optimizer)
     loss_fn = LossFactory.get_loss(resolved)
     trainer = Trainer(
         model,
@@ -116,6 +146,18 @@ def build_training_components(
         loss_fn,
         train_dataset,
         class_weights=class_weights,
+        steps_per_call=int(
+            resolved.get("performance", {}).get("steps_per_call", 20)
+        ),
+        jit_compile=bool(
+            resolved.get("performance", {}).get("jit_compile", False)
+        ),
+        profiler=resolved.get("performance", {}).get("profiler", {}),
+        profiler_logdir=(
+            Path(save_path).parent / "profiler"
+            if save_path
+            else None
+        ),
     )
 
     callback_cfg = resolved.get("callbacks", {})
@@ -161,35 +203,50 @@ def run_training(
 
     epochs = int(config["train"]["epochs"])
     history: list[dict[str, float]] = []
+    console = str(config.get("logging", {}).get("console", "normal"))
+    jsonl_logger = None
+    if config.get("logging", {}).get("jsonl", True) and save_path:
+        from wingbeat_ml.pipelines.helpers.reporting import JsonlMetricLogger
+        jsonl_logger = JsonlMetricLogger(
+            Path(save_path).parent / "metrics.jsonl"
+        )
 
     for epoch in range(epochs):
         started = time.perf_counter()
         train_metrics = trainer.train_epoch()
-        duration = time.perf_counter() - started
+        train_duration = time.perf_counter() - started
 
         logs = {
             "epoch": epoch,
             "train_loss": train_metrics["loss"],
             "train_accuracy": train_metrics["accuracy"],
             "learning_rate": float(
-                tf.keras.backend.get_value(optimizer.learning_rate)
+                tf.keras.backend.get_value(
+                    _optimizer_learning_rate(optimizer)
+                )
             ),
-            "epoch_duration_seconds": duration,
+            "epoch_duration_seconds": train_duration,
+            "train_duration_seconds": train_duration,
+            "global_step": train_metrics["global_step"],
+            "steps_per_epoch": train_metrics["batches"],
+            "steps_per_call": trainer.steps_per_call,
         }
 
         for key, value in train_metrics.items():
             logs.setdefault(f"train_{key}", value)
 
         if evaluate_epoch is not None:
-            for key, value in evaluate_epoch().items():
+            validation_started = time.perf_counter()
+            validation_values = evaluate_epoch()
+            logs["validation_duration_seconds"] = (
+                time.perf_counter() - validation_started
+            )
+            for key, value in validation_values.items():
                 name = key if key.startswith("val_") else f"val_{key}"
                 logs[name] = value
 
-        history.append(dict(logs))
-
-        if on_epoch_end is not None:
-            on_epoch_end(epoch, logs)
-
+        callback_started = time.perf_counter()
+        checkpoint_started = time.perf_counter()
         checkpoint = callbacks.get("model_checkpoint")
         if checkpoint is not None:
             saved = checkpoint.save(model, logs)
@@ -197,10 +254,14 @@ def run_training(
                 monitor = getattr(checkpoint, "monitor", None)
                 monitor_name = getattr(monitor, "monitor", "val_score")
                 monitor_value = float(logs.get(monitor_name, 0.0))
-                print(
-                    f"  --> Saved best weights to {save_path} "
-                    f"({monitor_name}={monitor_value:.4f})"
-                )
+                if console != "quiet":
+                    print(
+                        f"  --> Saved best weights to {save_path} "
+                        f"({monitor_name}={monitor_value:.4f})"
+                    )
+        logs["checkpoint_duration_seconds"] = (
+            time.perf_counter() - checkpoint_started
+        )
 
         reduce_lr = callbacks.get("reduce_lr_on_plateau")
         if reduce_lr is not None:
@@ -211,15 +272,33 @@ def run_training(
             cosine.on_epoch_end(logs)
 
         wandb_logger = callbacks.get("wandb_logger")
+        logging_started = time.perf_counter()
         if wandb_logger is not None:
             wandb_logger.on_epoch_end(logs)
+        logs["tracking_duration_seconds"] = (
+            time.perf_counter() - logging_started
+        )
+        logs["callback_duration_seconds"] = (
+            time.perf_counter() - callback_started
+        )
+        logs["epoch_total_duration_seconds"] = (
+            time.perf_counter() - started
+        )
+
+        if jsonl_logger is not None:
+            jsonl_logger.log(logs)
+        history.append(dict(logs))
+
+        if on_epoch_end is not None:
+            on_epoch_end(epoch, logs)
 
         early_stopping = callbacks.get("early_stopping")
         if early_stopping is not None and early_stopping.check(
             logs,
             epoch=epoch,
         ):
-            print(f"\nEarly stopping triggered after {epoch + 1} epochs.")
+            if console != "quiet":
+                print(f"\nEarly stopping triggered after {epoch + 1} epochs.")
             break
 
     return history

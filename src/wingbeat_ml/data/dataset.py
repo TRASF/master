@@ -5,9 +5,12 @@ from wingbeat_ml.data.loading import DataLoader
 from wingbeat_ml.augmentations.transforms import AudioAugmentor
 import numpy as np
 import os
-import uuid
 from pathlib import Path
 from typing import Mapping
+from wingbeat_ml.data.cache import (
+    materialize_tensorflow_cache,
+    stable_cache_key,
+)
 from wingbeat_ml.data.splits import _split_paths as split_paths
 
 class SupervisedDataset:
@@ -25,6 +28,7 @@ class SupervisedDataset:
         deterministic: bool = False,
         nomos_index: int = None,
         labels_dict: dict = None,
+        cache_cfg: dict = None,
     ):
         self.dataset_dir = dataset_dir
         self.val_dir = val_dir
@@ -42,6 +46,7 @@ class SupervisedDataset:
         self.noise_dirs = noise_dirs
         self.seed = seed
         self.deterministic = deterministic
+        self.cache_cfg = cache_cfg or {}
 
         self.pure_parallel_calls = tf.data.AUTOTUNE
 
@@ -77,6 +82,7 @@ class SupervisedDataset:
         self.test_paths = None
         self.test_labels = None
         self.class_weights = None
+        self.class_counts = None
 
     def _compute_balanced_class_weights(self, file_paths, labels):
         import wave
@@ -123,6 +129,7 @@ class SupervisedDataset:
         nonzero = counts > 0
         weights = np.ones_like(counts, dtype=np.float32)
         weights[nonzero] = np.sum(counts[nonzero]) / (np.sum(nonzero) * counts[nonzero])
+        self.class_counts = counts
         return weights
 
     def _load_file_py(self, file_path_str):
@@ -152,24 +159,42 @@ class SupervisedDataset:
         shuffle,
         one_hot,
     ):
-        import hashlib
-        import os
-
-        # Calculate paths hash
-        paths_str = "".join(sorted(str(p) for p in file_paths))
-        paths_hash = hashlib.md5(paths_str.encode()).hexdigest()
-
-        # Cache directory under dataset/.tf_cache
-        cache_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../dataset/.tf_cache"))
-        os.makedirs(cache_dir, exist_ok=True)
-        cache_prefix = "train" if augment else "val_test"
-        # A TensorFlow file cache supports only one active writer.
-        # Each constructed pipeline therefore receives its own cache key.
-        cache_id = uuid.uuid4().hex
-        cache_file = os.path.join(
-            cache_dir,
-            f"{cache_prefix}_{paths_hash}_{cache_id}",
+        cache_root = (
+            os.environ.get("WINGBEAT_CACHE_DIR")
+            or self.cache_cfg.get("root")
+            or os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "../../../dataset/.tf_cache")
+            )
         )
+        relative_paths = []
+        dataset_root = Path(self.dataset_dir).resolve()
+        for path, label in zip(file_paths, labels):
+            resolved = Path(str(path)).resolve()
+            try:
+                relative = str(resolved.relative_to(dataset_root))
+            except ValueError:
+                relative = str(resolved)
+            relative_paths.append(f"{relative}|label={int(label)}")
+        preprocessing = {
+            "sample_rate": self.sample_rate,
+            "segment_length": self.segment_length,
+            "dc_removal": bool(
+                self.augmentor.cfg.get("preprocess", {}).get("dc_removal", True)
+            ),
+            "stage": "audio" if augment else "segments",
+        }
+        cache_key = stable_cache_key(
+            relative_paths,
+            preprocessing,
+            manifest_sha256=self.cache_cfg.get("manifest_sha256", ""),
+            schema_version=self.cache_cfg.get("schema_version", 1),
+        )
+        cache_prefix = "train" if augment else "val_test"
+        cache_file = os.path.join(
+            cache_root,
+            f"{cache_prefix}_{cache_key}",
+        )
+        cache_enabled = bool(self.cache_cfg.get("enabled", True))
 
         dataset = tf.data.Dataset.from_tensor_slices(
             (file_paths, labels)
@@ -195,8 +220,8 @@ class SupervisedDataset:
         )
 
         # Cache audio for training dataset
-        if augment:
-            dataset = dataset.cache(cache_file)
+        if augment and cache_enabled:
+            dataset = materialize_tensorflow_cache(dataset, cache_file)
 
         # Zip or assign seeds
         if augment:
@@ -317,8 +342,8 @@ class SupervisedDataset:
             )
 
         # Cache validation and test datasets at the end
-        if not augment:
-            dataset = dataset.cache(cache_file)
+        if not augment and cache_enabled:
+            dataset = materialize_tensorflow_cache(dataset, cache_file)
 
         dataset = dataset.batch(batch_size)
 
@@ -614,6 +639,10 @@ def build_datasets(
         deterministic=deterministic,
         nomos_index=nomos_index,
         labels_dict=labels_dict,
+        cache_cfg={
+            **(config.get("cache", {}) or {}),
+            "manifest_sha256": dataset_cfg.get("manifest_sha256", ""),
+        },
     )
 
     datasets = ds.build(

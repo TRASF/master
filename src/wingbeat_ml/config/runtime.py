@@ -40,9 +40,56 @@ def apply_reproducibility_environment(settings):
             os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
 
-def configure_training_runtime(settings):
-    """Configure reproducibility and TensorFlow devices for training."""
+def _supports_mixed_float16(tf, gpu):
+    """Return whether a GPU has Tensor Core-era compute capability."""
+    try:
+        details = tf.config.experimental.get_device_details(gpu)
+        capability = details.get("compute_capability")
+        return bool(
+            isinstance(capability, (tuple, list))
+            and len(capability) >= 2
+            and tuple(capability[:2]) >= (7, 0)
+        )
+    except Exception:
+        return False
+
+
+def configure_compute_policy(settings, *, tf_module=None, gpus=None):
+    """Select a safe global precision policy and return its name."""
+    tf = tf_module
+    if tf is None:
+        import tensorflow as tf
+
+    requested = str(settings.get("precision", "auto")).casefold()
+    if gpus is None:
+        gpus = tf.config.list_physical_devices("GPU")
+    if requested == "auto":
+        policy = (
+            "mixed_float16"
+            if gpus and all(_supports_mixed_float16(tf, gpu) for gpu in gpus)
+            else "float32"
+        )
+    elif requested in {"float32", "mixed_float16"}:
+        policy = requested
+    else:
+        raise ValueError(
+            "performance.precision must be auto, float32, or mixed_float16"
+        )
+
+    if policy == "mixed_float16" and not gpus:
+        raise RuntimeError("mixed_float16 requires a visible supported GPU")
+
+    tf.keras.mixed_precision.set_global_policy(policy)
+    return policy
+
+
+def configure_training_runtime(settings, performance=None, logging=None):
+    """Configure reproducibility, devices, console noise, and precision."""
     apply_reproducibility_environment(settings)
+
+    console = str((logging or {}).get("console", "normal")).casefold()
+    if console != "verbose":
+        os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "1")
 
     import tensorflow as tf
 
@@ -51,49 +98,101 @@ def configure_training_runtime(settings):
         random.seed(seed)
         np.random.seed(seed)
         tf.random.set_seed(seed)
-        print(f"Reproducibility enabled. Seed: {seed}")
+        if console == "verbose":
+            print(f"Reproducibility enabled. Seed: {seed}")
 
     try:
         gpus = tf.config.list_physical_devices("GPU")
         for gpu in gpus:
             tf.config.experimental.set_memory_growth(gpu, True)
-        if gpus:
+        if gpus and console == "verbose":
             print(
                 "Dynamic GPU memory allocation enabled for "
                 f"{len(gpus)} GPU(s)."
             )
     except Exception as error:
-        print(f"Failed to configure dynamic GPU memory allocation: {error}")
+        if console != "quiet":
+            print(f"Failed to configure dynamic GPU memory allocation: {error}")
+
+    policy = configure_compute_policy(
+        performance or {},
+        tf_module=tf,
+        gpus=gpus,
+    )
+    return {
+        "gpu_count": len(gpus),
+        "precision_policy": policy,
+    }
 
 
 def resolve_class_weights(config_weights, fallback_weights, num_classes, labels_dict=None):
-    """Resolve class weights from config or fallback values."""
-    if config_weights is None:
-        return True, fallback_weights
+    """Resolve explicit auto/manual/off class-weight policy."""
+    config_weights = config_weights or {"mode": "auto"}
+    if not isinstance(config_weights, dict):
+        config_weights = {"mode": "manual", "values": config_weights}
 
-    enabled = True
-    values = config_weights
+    mode = config_weights.get("mode")
+    if mode is None:
+        if not bool(config_weights.get("enabled", True)):
+            mode = "off"
+        elif config_weights.get("values") is None:
+            mode = "auto"
+        else:
+            mode = "manual"
+    mode = str(mode).casefold()
 
-    if isinstance(config_weights, dict) and any(
-        key in config_weights for key in ("enabled", "values")
-    ):
-        enabled = bool(config_weights.get("enabled", True))
-        values = config_weights.get("values")
-
-    if not enabled:
+    if mode == "off":
         return False, None
-
-    if values is None:
-        resolved_weights = fallback_weights
-    elif isinstance(values, dict):
-        resolved_weights = np.array(
-            [float(values.get(i, values.get(str(i), 1.0))) for i in range(num_classes)],
-            dtype=np.float32,
-        )
-    elif len(values) != num_classes:
-        raise ValueError(f"class_weights must contain {num_classes} values, got {len(values)}")
+    if mode == "auto":
+        if fallback_weights is None:
+            raise ValueError("Automatic class weights require training class counts")
+        resolved_weights = np.asarray(fallback_weights, dtype=np.float32)
+    elif mode == "manual":
+        values = config_weights.get("values")
+        if isinstance(values, dict):
+            if not labels_dict:
+                raise ValueError("Manual class weights require the canonical label map")
+            canonical_names = {
+                str(name).casefold(): (str(name), int(index))
+                for name, index in labels_dict.items()
+            }
+            resolved_weights = np.empty(num_classes, dtype=np.float32)
+            assigned = set()
+            for supplied_name, weight in values.items():
+                match = canonical_names.get(str(supplied_name).casefold())
+                if match is None:
+                    raise ValueError(
+                        f"Unknown class weight name: {supplied_name!r}"
+                    )
+                _, class_index = match
+                if class_index in assigned:
+                    raise ValueError(
+                        f"Duplicate class weight for index {class_index}"
+                    )
+                assigned.add(class_index)
+                resolved_weights[class_index] = float(weight)
+            missing = sorted(set(range(num_classes)) - assigned)
+            if missing:
+                raise ValueError(
+                    f"Manual class weights are missing class indices: {missing}"
+                )
+        elif values is None or len(values) != num_classes:
+            size = 0 if values is None else len(values)
+            raise ValueError(
+                f"class_weights must contain {num_classes} values, got {size}"
+            )
+        else:
+            resolved_weights = np.asarray(values, dtype=np.float32)
     else:
-        resolved_weights = np.array(values, dtype=np.float32)
+        raise ValueError("class_weights.mode must be auto, manual, or off")
+
+    if resolved_weights.shape != (num_classes,):
+        raise ValueError(
+            f"class_weights must contain {num_classes} values, "
+            f"got {resolved_weights.size}"
+        )
+    if not np.all(np.isfinite(resolved_weights)) or np.any(resolved_weights <= 0):
+        raise ValueError("class_weights values must be finite and greater than zero")
 
     # Apply overrides if present (e.g. from W&B Sweep)
     if isinstance(config_weights, dict) and "override" in config_weights:
@@ -198,7 +297,12 @@ def generate_experiment_name(cfg, mode="Pretrain"):
     else:
         loss_str = f"loss-{loss_name}"
 
-    cw_enabled = cfg["class_weights"]["enabled"]
+    cw_mode = cfg["class_weights"].get("mode")
+    cw_enabled = (
+        str(cw_mode).casefold() != "off"
+        if cw_mode is not None
+        else bool(cfg["class_weights"].get("enabled", True))
+    )
     cw_str = "cw" if cw_enabled else "nocw"
 
     augment_cfg = cfg.get("augment", {})

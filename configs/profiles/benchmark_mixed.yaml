@@ -1,0 +1,38 @@
+train:
+  epochs: 5
+  batch_size: 256
+
+augment:
+  noise_overlay:
+    p: 0
+
+performance:
+  precision: mixed_float16
+  steps_per_call: 20
+  jit_compile: false
+  profiler:
+    enabled: false
+    start_step: 10
+    num_steps: 10
+
+reproducibility:
+  seed: 45
+  enabled: true
+  deterministic_ops: true
+  deterministic_data: true
+
+logging:
+  console: quiet
+  epoch_interval: 1
+  model_summary: false
+  classification_report: file
+  jsonl: true
+
+evaluation:
+  sample_level:
+    enabled: true
+  file_level:
+    enabled: false
+
+wandb:
+  enabled: false

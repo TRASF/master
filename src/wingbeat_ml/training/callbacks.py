@@ -2,6 +2,16 @@ import os
 import tensorflow as tf
 
 
+def _learning_rate(optimizer):
+    value = getattr(optimizer, "learning_rate", None)
+    if value is not None:
+        return value
+    inner = getattr(optimizer, "inner_optimizer", None)
+    if inner is None:
+        raise AttributeError("optimizer does not expose a learning rate")
+    return inner.learning_rate
+
+
 class MetricMonitor:
     def __init__(self, monitor="val_loss", mode="min", min_delta=0.0):
         self.monitor, self.mode, self.min_delta = monitor, mode, min_delta
@@ -66,10 +76,11 @@ class ReduceLROnPlateau:
             return
         self.wait += 1
         if self.wait >= self.patience:
-            old_lr = float(tf.keras.backend.get_value(self.optimizer.learning_rate))
+            learning_rate = _learning_rate(self.optimizer)
+            old_lr = float(tf.keras.backend.get_value(learning_rate))
             new_lr = max(old_lr * self.factor, self.min_lr)
             if new_lr < old_lr:
-                self.optimizer.learning_rate.assign(new_lr)
+                learning_rate.assign(new_lr)
                 print(f"\nLearning rate reduced from {old_lr:.8f} to {new_lr:.8f}")
                 if self.restore_best_weights and self.model and self.checkpoint_path and os.path.exists(self.checkpoint_path):
                     self.model.load_weights(self.checkpoint_path)
@@ -81,14 +92,14 @@ class CosineAnnealing:
     def __init__(self, optimizer, t_max=100, eta_min=1e-6):
         import math
         self.optimizer, self.t_max, self.eta_min = optimizer, t_max, eta_min
-        self.initial_lr = float(tf.keras.backend.get_value(self.optimizer.learning_rate))
+        self.initial_lr = float(tf.keras.backend.get_value(_learning_rate(self.optimizer)))
         self.current_epoch = 0
 
     def on_epoch_end(self, logs=None):
         import math
         self.current_epoch += 1
         new_lr = self.eta_min if self.current_epoch > self.t_max else self.eta_min + (self.initial_lr - self.eta_min) * (0.5 * (1 + math.cos(math.pi * self.current_epoch / self.t_max)))
-        self.optimizer.learning_rate.assign(new_lr)
+        _learning_rate(self.optimizer).assign(new_lr)
 
 
 

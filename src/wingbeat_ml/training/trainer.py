@@ -2,12 +2,36 @@ import tensorflow as tf
 
 
 class Trainer:
-    def __init__(self, model, optimizer, loss_fn, train_ds, class_weights=None):
+    def __init__(
+        self,
+        model,
+        optimizer,
+        loss_fn,
+        train_ds,
+        class_weights=None,
+        *,
+        steps_per_call=20,
+        jit_compile=False,
+        profiler=None,
+        profiler_logdir=None,
+    ):
         self.model = model
         self.optimizer = optimizer
         self.loss_fn = loss_fn
         self.train_ds = train_ds
         self.is_contrastive = "contrastive" in getattr(loss_fn, "name", "").lower()
+        self.steps_per_call = int(steps_per_call)
+        if self.steps_per_call <= 0:
+            raise ValueError("steps_per_call must be greater than zero")
+        self.global_step = 0
+        self.profiler = profiler or {}
+        self.profiler_logdir = profiler_logdir
+        self._profiler_active = False
+        self._profiler_finished = False
+        self._compiled_train_steps = tf.function(
+            self._train_steps,
+            jit_compile=bool(jit_compile),
+        )
 
         if class_weights is not None:
             if isinstance(class_weights, dict):
@@ -68,7 +92,15 @@ class Trainer:
             if len(loss.shape) > 0:
                 loss = tf.reduce_mean(loss)
 
-        gradients = tape.gradient(loss, self.model.trainable_variables)
+            scaled_loss = loss
+            if hasattr(self.optimizer, "scale_loss"):
+                scaled_loss = self.optimizer.scale_loss(loss)
+            elif hasattr(self.optimizer, "get_scaled_loss"):
+                scaled_loss = self.optimizer.get_scaled_loss(loss)
+
+        gradients = tape.gradient(scaled_loss, self.model.trainable_variables)
+        if hasattr(self.optimizer, "get_unscaled_gradients"):
+            gradients = self.optimizer.get_unscaled_gradients(gradients)
 
         self.optimizer.apply_gradients(
             zip(gradients, self.model.trainable_variables)
@@ -81,8 +113,7 @@ class Trainer:
 
         return loss
 
-    @tf.function
-    def _train_steps_tf(self, iterator, num_steps):
+    def _train_steps(self, iterator, num_steps):
         batches = tf.constant(0, dtype=tf.int32)
         examples = tf.constant(0, dtype=tf.int32)
 
@@ -104,20 +135,55 @@ class Trainer:
         batches = 0
         examples = 0
         iterator = iter(self.train_ds)
-        steps_per_call = tf.constant(20, dtype=tf.int32)
-
         while True:
-            b, e = self._train_steps_tf(iterator, steps_per_call)
+            call_steps = self.steps_per_call
+            current_step = self.global_step + batches
+            if self.profiler.get("enabled") and not self._profiler_finished:
+                start_step = int(self.profiler.get("start_step", 10))
+                end_step = start_step + int(self.profiler.get("num_steps", 10))
+                if not self._profiler_active and current_step >= start_step:
+                    if not self.profiler_logdir:
+                        raise ValueError(
+                            "profiler_logdir is required when profiler is enabled"
+                        )
+                    tf.profiler.experimental.start(str(self.profiler_logdir))
+                    self._profiler_active = True
+                if current_step < start_step:
+                    call_steps = min(call_steps, start_step - current_step)
+                elif self._profiler_active:
+                    call_steps = min(call_steps, end_step - current_step)
+
+            b, e = self._compiled_train_steps(
+                iterator,
+                tf.constant(call_steps, dtype=tf.int32),
+            )
             if b == 0:
                 break
             batches += int(b)
             examples += int(e)
+
+            current_step = self.global_step + batches
+            if self._profiler_active:
+                start_step = int(self.profiler.get("start_step", 10))
+                end_step = start_step + int(self.profiler.get("num_steps", 10))
+                if current_step >= end_step:
+                    tf.profiler.experimental.stop()
+                    self._profiler_active = False
+                    self._profiler_finished = True
+
+        if self._profiler_active:
+            tf.profiler.experimental.stop()
+            self._profiler_active = False
+            self._profiler_finished = True
+
+        self.global_step += batches
 
         return {
             "loss": float(self.train_loss_metric.result()),
             "accuracy": float(self.train_acc_metric.result()),
             "batches": batches,
             "examples": examples,
+            "global_step": self.global_step,
         }
 
 # Compatibility name retained for older callers.
