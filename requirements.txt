@@ -1,6 +1,7 @@
 tensorflow[and-cuda]==2.21.0
 numpy==1.26.4
 librosa==0.11.0
+resampy==0.4.3
 soundfile==0.12.1
 scikit-learn==1.7.2
 matplotlib==3.10.7
