@@ -62,4 +62,6 @@ jobs:
           "$RUNNER_TEMP/wheel-venv/bin/python" -m wingbeat_ml --version
 
       - name: Run CPU smoke training
+        env:
+          WINGBEAT_DATASET_DIR: ${{ github.workspace }}/tests/fixtures/audio_11class
         run: bash ops/wandb/train-pretrain.sh
