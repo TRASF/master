@@ -1,15 +1,15 @@
 """Reusable Wingbeat ML training components."""
 
-from wingbeat_ml.training.callbacks import CallbackFactory
-from wingbeat_ml.training.losses import LossFactory, SupervisedContrastiveLoss
-from wingbeat_ml.training.optimizers import OptimizerFactory
+from wingbeat_ml.training.callbacks import build_callbacks
+from wingbeat_ml.training.losses import SupervisedContrastiveLoss, build_loss
+from wingbeat_ml.training.optimizers import build_optimizer
 from wingbeat_ml.training.trainer import Train, Trainer
 
 __all__ = [
-    "CallbackFactory",
-    "LossFactory",
-    "OptimizerFactory",
     "SupervisedContrastiveLoss",
     "Train",
     "Trainer",
+    "build_callbacks",
+    "build_loss",
+    "build_optimizer",
 ]

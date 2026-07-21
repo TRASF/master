@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 from pathlib import Path
 import time
 from collections.abc import Callable, Mapping
@@ -12,10 +11,10 @@ import tensorflow as tf
 
 from wingbeat_ml.config.runtime import resolve_class_weights
 from wingbeat_ml.training import (
-    CallbackFactory,
-    LossFactory,
-    OptimizerFactory,
     Trainer,
+    build_callbacks,
+    build_loss,
+    build_optimizer,
 )
 
 
@@ -127,19 +126,19 @@ def build_training_components(
         str(config["training_mode"]),
     )
 
-    resolved = copy.deepcopy(dict(config))
-    model_cfg = resolved.get("model", {})
-    loss_cfg = resolved.setdefault("loss", {})
+    model_config = config["model"]
+    loss_config = dict(config["loss"])
 
-    if model_cfg.get("output_activation") == "softmax":
-        loss_cfg["from_logits"] = False
-    elif model_cfg.get("output_activation") is None:
-        loss_cfg["from_logits"] = True
+    if model_config.get("output_activation") == "softmax":
+        loss_config["from_logits"] = False
+    elif model_config.get("output_activation") is None:
+        loss_config["from_logits"] = True
 
-    optimizer = OptimizerFactory.get_optimizer(resolved)
+    optimizer = build_optimizer(config["optimizer"])
     if tf.keras.mixed_precision.global_policy().compute_dtype == "float16":
         optimizer = tf.keras.mixed_precision.LossScaleOptimizer(optimizer)
-    loss_fn = LossFactory.get_loss(resolved)
+    loss_fn = build_loss(loss_config)
+    performance = config.get("performance", {})
     trainer = Trainer(
         model,
         optimizer,
@@ -147,12 +146,12 @@ def build_training_components(
         train_dataset,
         class_weights=class_weights,
         steps_per_call=int(
-            resolved.get("performance", {}).get("steps_per_call", 20)
+            performance.get("steps_per_call", 20)
         ),
         jit_compile=bool(
-            resolved.get("performance", {}).get("jit_compile", False)
+            performance.get("jit_compile", False)
         ),
-        profiler=resolved.get("performance", {}).get("profiler", {}),
+        profiler=performance.get("profiler", {}),
         profiler_logdir=(
             Path(save_path).parent / "profiler"
             if save_path
@@ -160,7 +159,7 @@ def build_training_components(
         ),
     )
 
-    callback_cfg = resolved.get("callbacks", {})
+    callback_cfg = config.get("callbacks", {})
     needs_checkpoint_path = bool(
         callback_cfg.get("model_checkpoint")
         or (
@@ -172,8 +171,8 @@ def build_training_components(
             "save_path is required when checkpoint callbacks are enabled"
         )
 
-    callbacks = CallbackFactory.get_callbacks(
-        resolved,
+    callbacks = build_callbacks(
+        config,
         optimizer,
         model,
         save_path,

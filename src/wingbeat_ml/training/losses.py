@@ -42,28 +42,34 @@ class SupervisedContrastiveLoss(tf.keras.losses.Loss):
 
         return -mean_log_prob_pos
 
-class LossFactory:
-    @staticmethod
-    def get_loss(config: dict = None):
-        config = config or {}
-        loss_cfg = config.get("loss", {}).copy()
-        name = loss_cfg.pop("name", "CategoricalCrossentropy")
+def build_loss(config=None):
+    """Build one Keras loss from its configuration section."""
+    loss_config = dict(config or {})
+    name = loss_config.pop("name", "CategoricalCrossentropy")
 
-        aliases = {
-            "CategoricalFocalLoss": "CategoricalFocalCrossentropy",
-            "FocalLoss": "CategoricalFocalCrossentropy",
+    aliases = {
+        "CategoricalFocalLoss": "CategoricalFocalCrossentropy",
+        "FocalLoss": "CategoricalFocalCrossentropy",
+    }
+    name = aliases.get(name, name)
+
+    if name == "SupervisedContrastiveLoss":
+        allowed_keys = {"temperature", "from_logits", "reduction", "name"}
+        loss_config = {
+            key: value
+            for key, value in loss_config.items()
+            if key in allowed_keys
         }
-        name = aliases.get(name, name)
+        return SupervisedContrastiveLoss(**loss_config)
 
-        if name == "SupervisedContrastiveLoss":
-            allowed_keys = {"temperature", "from_logits", "reduction", "name"}
-            loss_params = {k: v for k, v in loss_cfg.items() if k in allowed_keys}
-            return SupervisedContrastiveLoss(**loss_params)
+    try:
+        return tf.keras.losses.get(
+            {"class_name": name, "config": loss_config}
+        )
+    except Exception as error:
+        raise ValueError(
+            f"Loss function {name!r} not found in tf.keras.losses: {error}"
+        ) from error
 
-        try:
-            return tf.keras.losses.get({"class_name": name, "config": loss_cfg})
-        except Exception as e:
-            raise ValueError(f"Loss function '{name}' not found in tf.keras.losses: {e}")
 
-
-__all__ = ["LossFactory", "SupervisedContrastiveLoss"]
+__all__ = ["SupervisedContrastiveLoss", "build_loss"]
