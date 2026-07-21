@@ -24,3 +24,11 @@ COPY . .
 # Install the package normally
 RUN pip install --no-cache-dir .
 
+# Register CUDA libraries installed by tensorflow[and-cuda].
+RUN set -eux; \
+    SITE_PACKAGES="$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"; \
+    find "$SITE_PACKAGES/nvidia" -type d -name lib -print \
+        | sort > /etc/ld.so.conf.d/python-nvidia.conf; \
+    test -s /etc/ld.so.conf.d/python-nvidia.conf; \
+    ldconfig
+
