@@ -18,7 +18,6 @@ jobs:
       WANDB_MODE: disabled
       WINGBEAT_ENABLE_WANDB: "false"
       WINGBEAT_PROFILE: ${{ github.workspace }}/configs/profiles/ci.yaml
-      WINGBEAT_DATASET_DIR: ${{ github.workspace }}/tests/fixtures/audio_11class
 
     steps:
       - name: Check out repository

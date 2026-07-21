@@ -1,10 +1,13 @@
 """Tests for the zero-argument pretraining pilot."""
-
+import os
 from pathlib import Path
 from shutil import copytree
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import patch
+
+test_env = os.environ.copy()
+test_env.pop("WINGBEAT_DATASET_DIR", None)
 
 import yaml
 
