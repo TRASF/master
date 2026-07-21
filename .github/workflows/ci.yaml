@@ -17,13 +17,20 @@ jobs:
       TF_CPP_MIN_LOG_LEVEL: "2"
       WANDB_MODE: disabled
       WINGBEAT_ENABLE_WANDB: "false"
-      WINGBEAT_RUNTIME_ROOT: ${{ runner.temp }}/wingbeat_ml
       WINGBEAT_PROFILE: ${{ github.workspace }}/configs/profiles/ci.yaml
       WINGBEAT_DATASET_DIR: ${{ github.workspace }}/tests/fixtures/audio_11class
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Configure runtime directory
+        shell: bash
+        run: |
+          runtime_root="${RUNNER_TEMP}/wingbeat_ml"
+          mkdir -p "$runtime_root"
+          echo "WINGBEAT_RUNTIME_ROOT=$runtime_root" >> "$GITHUB_ENV"
+          echo "Runtime root: $runtime_root"
 
       - name: Set up Python
         uses: actions/setup-python@v5
