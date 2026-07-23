@@ -36,6 +36,7 @@ Sorting key for determinism: (split, label, path)
 from __future__ import annotations
 
 import hashlib
+import re
 import json
 import wave
 from dataclasses import dataclass, field
@@ -96,21 +97,17 @@ def _file_sample_rate(path: str | Path) -> int:
         return 0
 
 
-def _source_recording_id(path: str | Path, dataset_root: str | Path) -> str:
-    """Derive a stable source-recording ID from the relative path parent.
+def source_recording_id(path: str | Path, dataset_root: str | Path) -> str:
+    """Derive a stable source ID for nested or pre-segmented flat datasets."""
+    rel = Path(path).resolve().relative_to(Path(dataset_root).resolve())
+    if len(rel.parts) >= 3:
+        return "/".join(rel.parts[:2])
 
-    Uses the parent directory name relative to the class directory as the
-    source identifier.  Falls back to the file stem when the structure is flat.
-    """
-    rel = Path(path).relative_to(Path(dataset_root))
-    parts = rel.parts
-
-    # Nested layout: <class>/<recording>/<file>.
-    if len(parts) >= 3:
-        return "/".join(parts[:2])
-
-    # Flat layout: <class>/<file>.
-    return rel.stem
+    name = rel.name
+    while Path(name).suffix:
+        name = Path(name).stem
+    name = re.sub(r"-\d+$", "", name)
+    return f"{rel.parent}/{name}"
 
 
 def _sort_key(rec: FileRecord) -> tuple[str, str, str]:
@@ -219,7 +216,7 @@ def generate_manifest(
 
         size_bytes = abs_path.stat().st_size
         sha256 = _sha256_file(abs_path) if full_hash else ""
-        src_rec = _source_recording_id(abs_path, root)
+        src_rec = source_recording_id(abs_path, root)
         file_sr = _file_sample_rate(abs_path) if abs_path.suffix.casefold() == ".wav" else 0
 
         records.append(FileRecord(

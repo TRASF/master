@@ -16,7 +16,11 @@ import unittest
 
 import numpy as np
 
-from wingbeat_ml.data.splits import DatasetSplits, split_files
+from wingbeat_ml.data.splits import (
+    DatasetSplits,
+    source_recording_ids,
+    split_files,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +71,40 @@ class TestSplitFilesReproducibility(unittest.TestCase):
         s = split_files(self.paths, self.labels, seed=42)
         total = len(s.train) + len(s.validation) + len(s.test)
         self.assertEqual(total, len(self.paths))
+
+    def test_source_recordings_do_not_cross_splits(self):
+        paths, labels, recordings = [], [], []
+        for label in range(2):
+            for recording in range(10):
+                source = f"class{label}/recording{recording}"
+                for segment in range(3):
+                    paths.append(f"/data/{source}/segment{segment}.wav")
+                    labels.append(label)
+                    recordings.append(source)
+
+        splits = split_files(paths, labels, seed=42, source_recordings=recordings)
+        path_to_source = dict(zip(paths, recordings))
+        grouped = [
+            {path_to_source[path] for path in part}
+            for part in (splits.train, splits.validation, splits.test)
+        ]
+        self.assertTrue(grouped[0].isdisjoint(grouped[1]))
+        self.assertTrue(grouped[0].isdisjoint(grouped[2]))
+        self.assertTrue(grouped[1].isdisjoint(grouped[2]))
+
+
+class TestSourceRecordingIds(unittest.TestCase):
+    def test_flat_segment_names_share_source(self):
+        root = "/data"
+        paths = [
+            "/data/class0/recording-cut-01.wav.wav",
+            "/data/class0/recording-cut-02.wav.wav",
+            "/data/class0/other-cut-01.wav.wav",
+        ]
+        self.assertEqual(
+            source_recording_ids(paths, root).tolist(),
+            ["class0/recording-cut", "class0/recording-cut", "class0/other-cut"],
+        )
 
 
 class TestSplitRatios(unittest.TestCase):

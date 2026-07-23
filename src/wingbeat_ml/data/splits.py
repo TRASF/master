@@ -1,14 +1,4 @@
-"""Reproducible source-file splitting for the wingbeat dataset.
-
-Preserves the exact behaviour of SupervisedDataset._split_paths():
-  - sklearn.model_selection.train_test_split with random_state=seed
-  - stratify=labels (falls back to non-stratified if class count too small)
-  - File-level splitting (not recording-level); source-recording leakage is
-    a known issue (see docs/known-issues.md).
-
-The split unit is individual files (str paths), matching the legacy
-implementation.
-"""
+"""Reproducible file and source-recording dataset splitting."""
 
 from __future__ import annotations
 
@@ -19,6 +9,8 @@ from typing import Sequence
 
 import numpy as np
 from sklearn.model_selection import train_test_split
+
+from wingbeat_ml.data.manifest import source_recording_id
 
 
 @dataclass(frozen=True)
@@ -37,24 +29,42 @@ class DatasetSplits:
     test_labels: tuple[int, ...]
 
 
+def source_recording_ids(
+    paths: Sequence[str], dataset_root: str | Path
+) -> np.ndarray:
+    """Derive the same source IDs used by dataset manifests."""
+    return np.asarray(
+        [source_recording_id(path, dataset_root) for path in paths],
+        dtype=object,
+    )
+
+
 def _split_paths(
     paths: np.ndarray,
     labels: np.ndarray,
     test_size: float,
     split_name: str,
     seed: int,
+    groups: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Split paths/labels into two parts.
+    """Split paths/labels, keeping optional source-recording groups intact."""
+    split_paths = paths
+    split_labels = labels
+    if groups is not None:
+        unique_groups, first_indices = np.unique(groups, return_index=True)
+        group_labels = labels[first_indices]
+        for group, label in zip(unique_groups, group_labels):
+            if np.any(labels[groups == group] != label):
+                raise ValueError(f"Source recording {group!r} has multiple labels.")
+        split_paths = unique_groups
+        split_labels = group_labels
 
-    Attempts stratified split; falls back to seeded non-stratified split when
-    any class has fewer than 2 samples (matching legacy behaviour exactly).
-    """
     try:
-        return train_test_split(
-            paths,
-            labels,
+        left, right, left_labels, right_labels = train_test_split(
+            split_paths,
+            split_labels,
             test_size=test_size,
-            stratify=labels,
+            stratify=split_labels,
             random_state=seed,
         )
     except ValueError:
@@ -63,12 +73,17 @@ def _split_paths(
             "have too few examples. "
             "Falling back to a seeded non-stratified split."
         )
-        return train_test_split(
-            paths,
-            labels,
+        left, right, left_labels, right_labels = train_test_split(
+            split_paths,
+            split_labels,
             test_size=test_size,
             random_state=seed,
         )
+
+    if groups is None:
+        return left, right, left_labels, right_labels
+    left_mask = np.isin(groups, left)
+    return paths[left_mask], paths[~left_mask], labels[left_mask], labels[~left_mask]
 
 
 def split_files(
@@ -76,6 +91,7 @@ def split_files(
     labels: Sequence[int],
     split: tuple[float, float, float] = (0.8, 0.1, 0.1),
     seed: int = 42,
+    source_recordings: Sequence[str] | None = None,
 ) -> DatasetSplits:
     """Split file paths into train / validation / test sets.
 
@@ -88,17 +104,16 @@ def split_files(
         labels: Corresponding integer class indices (same length).
         split: (train_ratio, val_ratio, test_ratio).  Must sum to 1.0.
         seed: Random seed for sklearn train_test_split (random_state=seed).
+        source_recordings: Optional source ID per file. IDs never cross splits.
 
     Returns:
         DatasetSplits with train/validation/test paths and labels.
-
-    KNOWN ISSUE: splitting is at the file level, not the source-recording level.
-    A single source recording may contribute files to both train and test
-    (source-leakage).  See docs/known-issues.md.
     """
-    if len(file_paths) != len(labels):
+    if len(file_paths) != len(labels) or (
+        source_recordings is not None and len(file_paths) != len(source_recordings)
+    ):
         raise ValueError(
-            "file_paths and labels must contain the same number of values."
+            "file_paths, labels and source_recordings must have matching lengths."
         )
     if len(split) != 3:
         raise ValueError("split must contain train, validation and test ratios.")
@@ -112,6 +127,11 @@ def split_files(
     split = ratios
     paths_arr = np.array(file_paths, dtype=object)
     labels_arr = np.array(labels, dtype=np.int32)
+    groups_arr = (
+        np.array(source_recordings, dtype=object)
+        if source_recordings is not None
+        else None
+    )
 
     if len(paths_arr) == 0:
         empty: tuple[str, ...] = ()
@@ -131,16 +151,23 @@ def split_files(
         test_size=val_test_size,
         split_name="train/eval",
         seed=seed,
+        groups=groups_arr,
     )
 
     # Stage 2: split eval pool into validation and test
     val_ratio = split[1] / val_test_size if val_test_size > 0 else 0.5
+    eval_groups = (
+        groups_arr[np.isin(paths_arr, eval_paths)]
+        if groups_arr is not None
+        else None
+    )
     val_paths, test_paths, val_labels, test_labels = _split_paths(
         eval_paths,
         eval_labels,
         test_size=1.0 - val_ratio,
         split_name="validation/test",
         seed=seed,
+        groups=eval_groups,
     )
 
     return DatasetSplits(
