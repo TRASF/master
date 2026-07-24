@@ -1,11 +1,51 @@
+loss:
+  name: CategoricalCrossentropy
+  reduction: none
+  from_logits: true
+
+audio:
+  duration: 0.3
+  sample_rate: 8000
+  segment_length: 2400
+
 model:
   id: mossong_plus
   pretrained_weights: null
   output_activation: null
+  bn_conv1: true
+  bn_conv2: true
+  bn_conv3: true
+  bn_dense1: false
+  bn_dense2: false
+
 training_mode: pretrain
-audio:
-  duration: 0.3
-  sample_rate: 8000
+train:
+  seed: 48
+  epochs: 1000
+  shuffle: true
+  batch_size: 128
+
+wandb:
+  project: MosSongPlus
+  tags:
+    - 11class
+    - nomos
+    - indoor
+    - bestaug
+    - indoor_best_observed
+    - seed48
+    - batch128
+    - overlay022
+    - mixup04
+  group: 11class-indoor-best-observed
+  notes: "Best observed 11-class Indoor pretrain config from W&B: batch128 lr1e-3 seed48 mixup alpha0.4 overlay0.22 random_gain0.3."
+  enabled: false
+  job_type: train
+  log_weights_freq: 0
+  aggregate_plot_freq: 0
+  log_prediction_audio: false
+  prediction_table_max_rows: 0
+
 labels:
   No.mos: 10
   Cx_quin_Male: 9
@@ -18,6 +58,76 @@ labels:
   An_minimus_Female: 6
   Ae_albopictus_Male: 3
   Ae_albopictus_Female: 2
+
+augment:
+  mixup:
+    p: 1
+    alpha: 0.4
+
+  rms_norm:
+    p: 0
+    max_gain: 15
+    min_gain: 0.05
+    target_rms: 0.05
+
+  high_pass:
+    p: 0
+    fc: 150
+
+  preprocess:
+    dc_removal: true
+
+  time_shift:
+    p: 0
+    rate:
+      - -0.05
+      - 0.05
+
+  noise_banks:
+    - dataset/MSB/Environmental/humbug_noises
+    - dataset/MSB/Environmental/inmp_noises
+    - dataset/MSB/Environmental/miru_noises
+    - dataset/MSB/Environmental/noises
+    - dataset/MSB/Environmental/Nomos
+
+  pitch_shift:
+    p: 0
+    semitones:
+      - -0.2
+      - 0.2
+
+  random_gain:
+    p: 0.3
+    gain_db:
+      - -3
+      - 3
+
+  noise_overlay:
+    p: 0.22
+    snr_db:
+      - 15
+      - 30
+    post_gain_db:
+      - -3
+      - 3
+    envelope_gain:
+      - 0.7
+      - 1
+
+  gaussian_noise:
+    p: 0
+    snr_db:
+      - 20
+      - 50
+
+  segment_overlap:
+    val: 0.5
+    train:
+      - 0
+      - 0.8
+
+  max_segments_per_file: 100
+
 classes:
   - Ae_aegypti_Female
   - Ae_aegypti_Male
@@ -30,19 +140,72 @@ classes:
   - Cx_quin_Female
   - Cx_quin_Male
   - No.mos
-num_classes: 11
+
+dataset:
+  indoor: dataset/MSB/Indoor
+  mosLab: dataset/Philip
+  outdoor: dataset/MSB/Outdoor
+  val_dir: null
+  test_dir: null
+  train_dir: dataset/MSB/Indoor
+  manifest_sha256: null
+  split_list:
+    - 0.8
+    - 0.1
+    - 0.1
+  split_ratios:
+    val: 0.1
+    test: 0.1
+    train: 0.8
+
+runtime:
+  root: runtime
+  experiments_dir: models/experiments
+
+export:
+  out_dir: quantization_output
+  representative_samples: 500
+  input_amplitude_range: 0.03
+  allow_dummy_calibration: false
+  run_debugger: false
+
+callbacks:
+  early_stopping:
+    mode: max
+    monitor: val_macro_f1
+    patience: 80
+    min_delta: 0
+    restore_best_weights: true
+
+  model_checkpoint:
+    mode: max
+    monitor: val_macro_f1
+    min_delta: 0
+    save_best_only: true
+    save_weights_only: true
+
+  reduce_lr_on_plateau:
+    mode: max
+    factor: 0.5
+    min_lr: 3.0e-05
+    monitor: val_macro_f1
+    patience: 30
+    min_delta: 0.001
+    restore_best_weights: true
+
+optimizer:
+  name: Adam
+  learning_rate: 0.001
+
+preprocess:
+  dc_removal: true
+
 nomos_index: 10
+num_classes: 11
+segment_length: 2400
+
 class_weights:
   mode: auto
-loss:
-  name: CategoricalCrossentropy
-  reduction: none
-  from_logits: true
-train:
-  seed: 45
-  epochs: 1000
-  shuffle: true
-  batch_size: 256
 
 performance:
   precision: float32
@@ -70,118 +233,9 @@ cache:
   enabled: true
   schema_version: 1
   root: null
-optimizer:
-  name: Adam
-  learning_rate: 0.001
-wandb:
-  enabled: false
-  project: MosSongPlus
-  group: null
-  tags: []
-  job_type: train
-callbacks:
-  early_stopping:
-    mode: max
-    monitor: val_macro_f1
-    patience: 80
-    min_delta: 0
-    restore_best_weights: true
-  model_checkpoint:
-    mode: max
-    monitor: val_macro_f1
-    min_delta: 0
-    save_best_only: true
-    save_weights_only: true
-  reduce_lr_on_plateau:
-    mode: max
-    factor: 0.5
-    min_lr: 3.0e-05
-    monitor: val_macro_f1
-    patience: 30
-    min_delta: 0.001
-    restore_best_weights: true
-preprocess:
-  dc_removal: true
-augment:
-  mixup:
-    p: 1
-    alpha: 0.4
-  rms_norm:
-    max_gain: 15
-    min_gain: 0.05
-    target_rms: 0.05
-  high_pass:
-    p: 0
-    fc: 150
-  preprocess:
-    dc_removal: true
-  time_shift:
-    p: 0
-    rate:
-      - -0.05
-      - 0.05
-  noise_banks: [
-    "dataset/MSB/Environmental/cat_noise",
-    "dataset/MSB/Environmental/noises",
-    "dataset/MSB/Environmental/inmp_noises/Val_Test",
-    "dataset/MSB/Environmental/inmp_noises/Train",
-    "dataset/MSB/Environmental/humbug_noises/Train",
-    "dataset/MSB/Environmental/humbug_noises/Val_Test",
-    "dataset/MSB/Environmental/miru_noises/Train",
-    "dataset/MSB/Environmental/miru_noises/Val_Test"
-  ]
-  pitch_shift:
-    p: 0
-    semitones:
-      - -0.2
-      - 0.2
-  random_gain:
-    p: 0.3
-    gain_db:
-      - -3
-      - 3
-  noise_overlay:
-    p: 0.2
-    snr_db:
-      - 15
-      - 30
-    post_gain_db:
-      - -3
-      - 3
-    envelope_gain:
-      - 0.7
-      - 1
-  gaussian_noise:
-    p: 0
-    snr_db:
-      - 20
-      - 50
-  segment_overlap:
-    val: 0.5
-    train:
-      - 0
-      - 0.8
-  max_segments_per_file: 100
+
 reproducibility:
-  seed: 45
+  seed: 48
   enabled: true
   deterministic_ops: true
   deterministic_data: true
-dataset:
-  train_dir: "dataset/MSB/Indoor"
-  val_dir: null
-  test_dir: null
-  manifest_sha256: null
-  split_ratios:
-    val: 0.1
-    test: 0.1
-    train: 0.8
-runtime:
-  root: runtime
-  experiments_dir: models/experiments
-export:
-  out_dir: quantization_output
-  representative_samples: 500
-  input_amplitude_range: 0.03
-  allow_dummy_calibration: false
-  run_debugger: false
