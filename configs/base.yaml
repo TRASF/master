@@ -1,6 +1,7 @@
 model:
   id: mossong_plus
   pretrained_weights: null
+  output_activation: null
 training_mode: pretrain
 audio:
   duration: 0.3
@@ -119,7 +120,16 @@ augment:
     rate:
       - -0.05
       - 0.05
-  noise_banks: []
+  noise_banks: [
+    "dataset/MSB/Environmental/cat_noise",
+    "dataset/MSB/Environmental/noises",
+    "dataset/MSB/Environmental/inmp_noises/Val_Test",
+    "dataset/MSB/Environmental/inmp_noises/Train",
+    "dataset/MSB/Environmental/humbug_noises/Train",
+    "dataset/MSB/Environmental/humbug_noises/Val_Test",
+    "dataset/MSB/Environmental/miru_noises/Train",
+    "dataset/MSB/Environmental/miru_noises/Val_Test"
+  ]
   pitch_shift:
     p: 0
     semitones:
@@ -158,7 +168,7 @@ reproducibility:
   deterministic_ops: true
   deterministic_data: true
 dataset:
-  train_dir: null
+  train_dir: "dataset/MSB/Indoor"
   val_dir: null
   test_dir: null
   manifest_sha256: null
