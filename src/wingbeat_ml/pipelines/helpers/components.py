@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import time
 
+from wingbeat_ml.data.bundle import DatasetBundle
+
 
 @dataclass(frozen=True)
 class SupervisedComponents:
@@ -16,6 +18,7 @@ class SupervisedComponents:
     loss_fn: object
     evaluator: object
     class_weights: object
+    bundle: DatasetBundle | None = None
 
 
 def build_dataset_bundle(config, *, return_builder=False):
@@ -117,6 +120,11 @@ def build_supervised_components(
         )
         temporary.replace(metadata_path)
 
+    bundle = DatasetBundle(
+        train=train,
+        validation=validation,
+        test=test,
+    )
     return SupervisedComponents(
         dataset_builder=builder,
         train_dataset=train,
@@ -126,10 +134,12 @@ def build_supervised_components(
         loss_fn=loss_fn,
         evaluator=evaluator,
         class_weights=class_weights,
+        bundle=bundle,
     )
 
 
 __all__ = [
+    "DatasetBundle",
     "SupervisedComponents",
     "build_dataset_bundle",
     "build_model_component",

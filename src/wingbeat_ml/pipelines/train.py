@@ -15,7 +15,9 @@ from wingbeat_ml.training import (
     build_callbacks,
     build_loss,
     build_optimizer,
+    build_strategy,
 )
+from wingbeat_ml.training.strategies.supervised import SupervisedStrategy
 
 
 def _optimizer_learning_rate(optimizer):
@@ -199,6 +201,11 @@ def run_training(
         class_weights=class_weights,
         save_path=save_path,
     )
+    strategy = SupervisedStrategy(
+        None, None, None, None,
+        _trainer=trainer,
+        evaluate_fn=evaluate_epoch,
+    )
 
     epochs = int(config["train"]["epochs"])
     history: list[dict[str, float]] = []
@@ -212,7 +219,7 @@ def run_training(
 
     for epoch in range(epochs):
         started = time.perf_counter()
-        train_metrics = trainer.train_epoch()
+        train_metrics = strategy.train_epoch(None, epoch=epoch)
         train_duration = time.perf_counter() - started
 
         logs = {
@@ -236,7 +243,7 @@ def run_training(
 
         if evaluate_epoch is not None:
             validation_started = time.perf_counter()
-            validation_values = evaluate_epoch()
+            validation_values = strategy.validate_epoch(None, epoch=epoch)
             logs["validation_duration_seconds"] = (
                 time.perf_counter() - validation_started
             )
@@ -304,6 +311,7 @@ def run_training(
 
 
 __all__ = [
+    "build_strategy",
     "build_training_components",
     "configure_trainable_layers",
     "resolve_training_class_weights",

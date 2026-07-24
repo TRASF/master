@@ -25,6 +25,8 @@ from wingbeat_ml.training import (
     build_callbacks,
     build_loss,
     build_optimizer,
+    build_strategy,
+    SupervisedStrategy,
 )
 from wingbeat_ml.training.callbacks import WandbLogger
 
@@ -119,6 +121,30 @@ class TestTrainingModes(unittest.TestCase):
 
 
 class TestTrainingPipeline(unittest.TestCase):
+    def test_build_strategy_supervised(self):
+        model = make_model()
+        config = make_config()
+        optimizer = build_optimizer(config["optimizer"])
+        loss_fn = build_loss(config["loss"])
+        dataset = make_dataset()
+
+        strategy = build_strategy(
+            "supervised",
+            model=model,
+            optimizer=optimizer,
+            loss_fn=loss_fn,
+            config=config,
+            train_dataset=dataset,
+        )
+
+        self.assertIsInstance(strategy, SupervisedStrategy)
+
+    def test_build_strategy_unknown_raises(self):
+        with self.assertRaises(ValueError) as ctx:
+            build_strategy("no_such_strategy", model=None, optimizer=None, loss_fn=None, config={})
+        self.assertIn("no_such_strategy", str(ctx.exception))
+        self.assertIn("supervised", str(ctx.exception))
+
     def test_simple_initializer_functions(self):
         config = make_config()
         optimizer = build_optimizer(config["optimizer"])
