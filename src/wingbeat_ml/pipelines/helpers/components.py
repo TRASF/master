@@ -45,6 +45,19 @@ def build_model_component(config, model_config, *, batch_size=None):
     return build_model(config, model_config, **arguments)
 
 
+def build_warmup_dataset(builder, config):
+    """Build a no-augmentation train dataset for warmup epochs."""
+    train_cfg = config["train"]
+    return builder._create_pipeline(
+        builder.train_paths,
+        builder.train_labels,
+        augment=False,
+        batch_size=int(train_cfg["batch_size"]),
+        shuffle=bool(train_cfg.get("shuffle", True)),
+        one_hot=True,
+    )
+
+
 def _synchronize_loss_activation(config):
     activation = config["model"]["output_activation"]
     config["loss"]["from_logits"] = activation is None
@@ -139,6 +152,7 @@ def build_supervised_components(
 
 
 __all__ = [
+    "build_warmup_dataset",
     "DatasetBundle",
     "SupervisedComponents",
     "build_dataset_bundle",
