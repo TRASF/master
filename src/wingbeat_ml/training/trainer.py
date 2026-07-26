@@ -77,34 +77,20 @@ class Trainer:
 
         return tf.reduce_sum(y * self.class_weights, axis=-1)
 
+    @tf.function
     def train_step(self, x, y):
         sample_weight = self._get_sample_weights(y)
 
         with tf.GradientTape() as tape:
             predictions = self.model(x, training=True)
 
-            loss = self.loss_fn(
-                y,
-                predictions,
-                sample_weight=sample_weight,
-            )
+            loss = self.loss_fn(y, predictions, sample_weight=sample_weight)
 
             if len(loss.shape) > 0:
                 loss = tf.reduce_mean(loss)
 
-            scaled_loss = loss
-            if hasattr(self.optimizer, "scale_loss"):
-                scaled_loss = self.optimizer.scale_loss(loss)
-            elif hasattr(self.optimizer, "get_scaled_loss"):
-                scaled_loss = self.optimizer.get_scaled_loss(loss)
-
-        gradients = tape.gradient(scaled_loss, self.model.trainable_variables)
-        if hasattr(self.optimizer, "get_unscaled_gradients"):
-            gradients = self.optimizer.get_unscaled_gradients(gradients)
-
-        self.optimizer.apply_gradients(
-            zip(gradients, self.model.trainable_variables)
-        )
+        gradients = tape.gradient(loss, self.model.trainable_variables)
+        self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
 
         self.train_loss_metric.update_state(loss)
 
@@ -113,18 +99,21 @@ class Trainer:
 
         return loss
 
+    @tf.function
     def _train_steps(self, iterator, num_steps):
-        batches = tf.constant(0, dtype=tf.int32)
-        examples = tf.constant(0, dtype=tf.int32)
+        batches = tf.zeros((), dtype=tf.int32)
+        examples = tf.zeros((), dtype=tf.int32)
 
         for _ in tf.range(num_steps):
             optional_element = iterator.get_next_as_optional()
             if not optional_element.has_value():
                 break
+
             x, y = optional_element.get_value()
             self.train_step(x, y)
-            batches += 1
-            examples += tf.shape(x)[0]
+
+            batches = tf.add(batches, tf.constant(1, dtype=tf.int32))
+            examples = tf.add(examples, tf.cast(tf.shape(x)[0], tf.int32))
 
         return batches, examples
 
