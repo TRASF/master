@@ -238,8 +238,9 @@ class TestTrainingRuntime(unittest.TestCase):
             mock.patch("random.seed") as python_seed,
             mock.patch("numpy.random.seed") as numpy_seed,
         ):
-            config_runtime.configure_training_runtime(settings)
+            runtime = config_runtime.configure_training_runtime(settings)
 
+            self.assertEqual(runtime["seed"], 17)
             self.assertEqual(os.environ["PYTHONHASHSEED"], "17")
             self.assertEqual(os.environ["TF_DETERMINISTIC_OPS"], "1")
 

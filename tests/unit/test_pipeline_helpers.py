@@ -100,6 +100,21 @@ class TestPipelineHelperBoundary(unittest.TestCase):
             )
         )
 
+    def test_pretrain_run_name_uses_resolved_seed(self):
+        runtime = importlib.import_module(
+            "wingbeat_ml.pipelines.helpers.runtime"
+        )
+        config = {
+            "augment": {"high_pass": {"p": 0.25}},
+            "reproducibility": {"seed": 52},
+            "wandb": {"group": "seed-check"},
+            "num_classes": 11,
+        }
+
+        name = runtime._pretrain_tracking_name(config, "pretrain")
+
+        self.assertEqual(name, "seed-check_pretrain_hpf0.25_seed52")
+
     def test_missing_operational_setting_fails_before_runtime(self):
         configuration = importlib.import_module(
             "wingbeat_ml.pipelines.helpers.configuration"

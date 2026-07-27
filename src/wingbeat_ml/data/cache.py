@@ -9,7 +9,8 @@ from pathlib import Path
 import time
 
 
-CACHE_SCHEMA_VERSION = 1
+CACHE_SCHEMA_VERSION = 4
+CACHE_IMPLEMENTATION_VERSION = "audio-loader-v4-sample-hash"
 _CACHE_EVENTS = []
 
 
@@ -23,6 +24,7 @@ def stable_cache_key(
     """Hash deterministic cache inputs without filesystem timestamps."""
     identity = {
         "schema_version": int(schema_version),
+        "implementation_version": CACHE_IMPLEMENTATION_VERSION,
         "manifest_sha256": str(manifest_sha256 or ""),
         "paths": sorted(str(path) for path in file_paths),
         "preprocessing": preprocessing,
@@ -110,6 +112,7 @@ def consume_cache_events():
 
 
 __all__ = [
+    "CACHE_IMPLEMENTATION_VERSION",
     "CACHE_SCHEMA_VERSION",
     "consume_cache_events",
     "exclusive_cache_lock",

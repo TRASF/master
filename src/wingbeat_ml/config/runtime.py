@@ -120,6 +120,7 @@ def configure_training_runtime(settings, performance=None, logging=None):
         gpus=gpus,
     )
     return {
+        "seed": int(settings["seed"]),
         "gpu_count": len(gpus),
         "precision_policy": policy,
     }

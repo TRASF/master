@@ -117,6 +117,7 @@ class TestPromotion(unittest.TestCase):
         fake = FakeWandb()
         fake.config = {
             "optimizer.learning_rate": 0.02,
+            "reproducibility.seed": 52,
         }
         config = {
             "wandb": {
@@ -127,6 +128,7 @@ class TestPromotion(unittest.TestCase):
                 "job_type": "train",
             },
             "optimizer": {"learning_rate": 0.01},
+            "reproducibility": {"seed": 11},
         }
 
         run = tracking.initialize_training_run(
@@ -139,6 +141,26 @@ class TestPromotion(unittest.TestCase):
         self.assertEqual(fake.init_calls[0]["tags"], ["ci"])
         self.assertEqual(fake.init_calls[0]["job_type"], "train")
         self.assertEqual(config["optimizer"]["learning_rate"], 0.02)
+        self.assertEqual(config["reproducibility"]["seed"], 52)
+        self.assertEqual(config["resolved_launch_seed"], 52)
+
+    def test_top_level_wandb_seed_is_rejected(self):
+        tracking = require_module(self, "wingbeat_ml.tracking.wandb")
+        fake = FakeWandb()
+        fake.config = {"seed": 52}
+        config = {
+            "wandb": {
+                "enabled": True,
+                "project": "MosSongPlus",
+                "group": None,
+                "tags": [],
+                "job_type": "train",
+            },
+            "reproducibility": {"seed": 11},
+        }
+
+        with self.assertRaisesRegex(RuntimeError, "reproducibility.seed"):
+            tracking.initialize_training_run(config, wandb_module=fake)
 
     def test_dry_run_does_not_initialize_wandb(self):
         promotion = require_module(

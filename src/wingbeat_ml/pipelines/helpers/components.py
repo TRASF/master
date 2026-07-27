@@ -87,6 +87,14 @@ def build_supervised_components(
         "dataset_setup_seconds"
     ] = time.perf_counter() - dataset_started
     config["resolved_cache_events"] = consume_cache_events()
+    cache_identities = sorted(
+        {event["key"] for event in config["resolved_cache_events"]}
+    )
+    config.setdefault("resolved_provenance", {})[
+        "cache_identity"
+    ] = cache_identities
+    if console != "quiet":
+        print(f"Resolved cache identity: {cache_identities}")
 
     if console != "quiet":
         print("Building model...")
@@ -115,6 +123,7 @@ def build_supervised_components(
                     {
                         "resolved_timing": config["resolved_timing"],
                         "resolved_cache_events": config["resolved_cache_events"],
+                        "resolved.cache_identity": cache_identities,
                     },
                     allow_val_change=True,
                 )
