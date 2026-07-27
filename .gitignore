@@ -49,3 +49,7 @@ managed_components
 /build/
 /dist/
 *.egg-info/
+.cave/
+.serena/
+runtime/
+wandb/

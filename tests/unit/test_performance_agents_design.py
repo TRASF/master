@@ -249,6 +249,21 @@ class TestCacheAndGpuAgents(unittest.TestCase):
             first,
             stable_cache_key(["a.wav", "b.wav"], settings, manifest_sha256="def"),
         )
+        changed = dict(settings, sample_rate=16000)
+        self.assertNotEqual(
+            first,
+            stable_cache_key(["a.wav", "b.wav"], changed, manifest_sha256="abc"),
+        )
+
+    def test_audio_cache_precedes_seed_dependent_shuffle(self):
+        source = (
+            ROOT / "src/wingbeat_ml/data/dataset.py"
+        ).read_text(encoding="utf-8")
+        cache = source.index("materialize_tensorflow_cache(dataset, cache_file)")
+        shuffle = source.index("dataset = dataset.shuffle(", cache)
+        random_seed = source.index("tf.data.Dataset.random(", shuffle)
+        self.assertLess(cache, shuffle)
+        self.assertLess(shuffle, random_seed)
 
     def test_gpu_discovery_and_specs_are_unique(self):
         self.assertTrue((ROOT / "src/wingbeat_ml/ops/gpu_agents.py").is_file())

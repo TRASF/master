@@ -8,10 +8,39 @@ import os
 from pathlib import Path
 from typing import Mapping
 from wingbeat_ml.data.cache import (
+    CACHE_SCHEMA_VERSION,
     materialize_tensorflow_cache,
     stable_cache_key,
 )
 from wingbeat_ml.data.splits import _split_paths as split_paths
+
+def derive_sample_seed(sample_id_or_hash, global_seed, iteration_rnd=0, stage_id=0):
+    """Stateless seed derivation from sample identity, global seed, epoch component, and stage ID."""
+    if isinstance(sample_id_or_hash, (int, np.integer)):
+        id_hash = tf.constant(int(sample_id_or_hash), dtype=tf.int64)
+    elif isinstance(sample_id_or_hash, tf.Tensor) and sample_id_or_hash.dtype in (tf.int64, tf.int32):
+        id_hash = tf.cast(sample_id_or_hash, tf.int64)
+    else:
+        sample_id_1d = tf.reshape(tf.cast(sample_id_or_hash, tf.string), [1])
+        fp_bytes = tf.fingerprint(sample_id_1d)
+        id_hash = tf.reshape(tf.bitcast(fp_bytes, tf.int64), [])
+
+    g_seed = (
+        tf.cast(global_seed, tf.int64)
+        if global_seed is not None
+        else tf.constant(0, dtype=tf.int64)
+    )
+    iter_comp = tf.cast(iteration_rnd, tf.int64)
+    stage_comp = tf.cast(stage_id, tf.int64)
+
+    c1 = tf.constant(-7046029254386353131, dtype=tf.int64)
+    c2 = tf.constant(-4658826500735392327, dtype=tf.int64)
+
+    s0 = id_hash ^ g_seed ^ (stage_comp * c1) ^ iter_comp
+    s1 = (id_hash * c1 + iter_comp * c2) ^ g_seed ^ (stage_comp * c2)
+
+    return tf.stack([s0, s1], axis=0)
+
 
 class SupervisedDataset:
     def __init__(
@@ -167,27 +196,39 @@ class SupervisedDataset:
             )
         )
         relative_paths = []
+        sample_ids = []
+        sample_hashes = []
         dataset_root = Path(self.dataset_dir).resolve()
         for path, label in zip(file_paths, labels):
             resolved = Path(str(path)).resolve()
             try:
-                relative = str(resolved.relative_to(dataset_root))
+                relative = str(resolved.relative_to(dataset_root).as_posix())
             except ValueError:
-                relative = str(resolved)
+                relative = str(resolved.as_posix())
             relative_paths.append(f"{relative}|label={int(label)}")
+            sample_ids.append(relative)
+            import hashlib
+            h = int.from_bytes(
+                hashlib.sha256(relative.encode("utf-8")).digest()[:8],
+                "big",
+                signed=True,
+            )
+            sample_hashes.append(h)
+
         preprocessing = {
             "sample_rate": self.sample_rate,
             "segment_length": self.segment_length,
-            "dc_removal": bool(
-                self.augmentor.cfg.get("preprocess", {}).get("dc_removal", True)
-            ),
+            "file_extensions": self.data_loader.file_exts,
+            "augment": self.augmentor.cfg,
             "stage": "audio" if augment else "segments",
         }
         cache_key = stable_cache_key(
             relative_paths,
             preprocessing,
             manifest_sha256=self.cache_cfg.get("manifest_sha256", ""),
-            schema_version=self.cache_cfg.get("schema_version", 1),
+            schema_version=self.cache_cfg.get(
+                "schema_version", CACHE_SCHEMA_VERSION
+            ),
         )
         cache_prefix = "train" if augment else "val_test"
         cache_file = os.path.join(
@@ -197,56 +238,79 @@ class SupervisedDataset:
         cache_enabled = bool(self.cache_cfg.get("enabled", True))
 
         dataset = tf.data.Dataset.from_tensor_slices(
-            (file_paths, labels)
+            (file_paths, labels, sample_ids, sample_hashes)
         )
         dataset = self._with_deterministic_options(dataset)
+
+        # Map to load audio
+        dataset = dataset.map(
+            lambda path, label, sample_id, sample_hash: (
+                self._tf_load_full_audio(path),
+                label,
+                sample_id,
+                sample_hash,
+            ),
+            num_parallel_calls=self.pure_parallel_calls,
+            deterministic=self.deterministic,
+        )
+
+        # Cache audio for training dataset (loaded audio + label + sample_id + sample_hash)
+        if augment and cache_enabled:
+            dataset = materialize_tensorflow_cache(dataset, cache_file)
 
         if shuffle:
             shuffle_seed = self.seed if self.deterministic else None
             dataset = dataset.shuffle(
                 buffer_size=max(
                     1,
-                    int(np.ceil(len(file_paths) / 4)),
+                    10000,
                 ),
                 seed=shuffle_seed,
                 reshuffle_each_iteration=True,
             )
 
-        # Map to load audio
-        dataset = dataset.map(
-            lambda path, label: (self._tf_load_full_audio(path), label),
-            num_parallel_calls=self.pure_parallel_calls,
-            deterministic=self.deterministic,
-        )
-
-        # Cache audio for training dataset
-        if augment and cache_enabled:
-            dataset = materialize_tensorflow_cache(dataset, cache_file)
-
         # Zip or assign seeds
+        global_seed = self.seed if self.seed is not None else 42
         if augment:
-            seed_ds = tf.data.Dataset.random(seed=self.seed, rerandomize_each_iteration=True)
+            seed_ds = tf.data.Dataset.random(
+                seed=global_seed, rerandomize_each_iteration=True
+            )
             dataset = tf.data.Dataset.zip((dataset, seed_ds))
             dataset = dataset.map(
-                lambda audio_label, seed: (audio_label[0], audio_label[1], seed),
+                lambda item, rnd: (
+                    item[0],
+                    item[1],
+                    item[2],
+                    item[3],
+                    rnd,
+                ),
                 num_parallel_calls=self.pure_parallel_calls,
                 deterministic=self.deterministic,
             )
         else:
             dataset = dataset.map(
-                lambda audio, label: (audio, label, tf.constant(0, dtype=tf.int64)),
+                lambda audio, label, sample_id, sample_hash: (
+                    audio,
+                    label,
+                    sample_id,
+                    sample_hash,
+                    tf.constant(0, dtype=tf.int64),
+                ),
                 num_parallel_calls=self.pure_parallel_calls,
                 deterministic=self.deterministic,
             )
 
         # Interleave segments
-        segment_parallel_calls = self.random_parallel_calls if augment else self.pure_parallel_calls
+        segment_parallel_calls = (
+            self.random_parallel_calls if augment else self.pure_parallel_calls
+        )
         dataset = dataset.interleave(
-            lambda audio, label, seed: self.augmentor.create_segments(
+            lambda audio, label, sample_id, sample_hash, rnd: self.augmentor.create_segments(
                 audio,
                 label,
-                seed,
+                seed=derive_sample_seed(sample_hash, global_seed, rnd, stage_id=1),
                 training=augment,
+                sample_id=sample_id,
             ),
             num_parallel_calls=segment_parallel_calls,
             deterministic=self.deterministic,
@@ -285,11 +349,11 @@ class SupervisedDataset:
             dataset = tf.data.Dataset.zip((dataset, noise_ds))
 
             dataset = dataset.map(
-                lambda element_noise, noise: (
+                lambda item, noise: (
                     self.augmentor.apply_post_processing(
-                        element_noise[0],
-                        element_noise[1],
-                        element_noise[2],
+                        item[0],
+                        item[1],
+                        item[2],
                         noise=noise,
                         augment=True,
                     )
@@ -299,9 +363,9 @@ class SupervisedDataset:
             )
         else:
             dataset = dataset.map(
-                lambda audio, label, seed: (
+                lambda frame, label, seed, sample_id: (
                     self.augmentor.apply_post_processing(
-                        audio,
+                        frame,
                         label,
                         seed,
                         augment=augment,
@@ -324,7 +388,7 @@ class SupervisedDataset:
                 lambda audio, label: (
                     tf.expand_dims(audio, -1),
                     tf.one_hot(
-                        label,
+                        tf.cast(label, tf.int32),
                         self.data_loader.num_classes,
                     ),
                 ),

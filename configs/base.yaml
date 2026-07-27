@@ -73,7 +73,7 @@ augment:
     target_rms: 0.05
 
   high_pass:
-    p: 0.1
+    p: 0
     fc: 150
 
   time_shift:
@@ -184,7 +184,7 @@ performance:
 
 cache:
   enabled: true
-  schema_version: 1
+  schema_version: 2
   root: null
 
 reproducibility:

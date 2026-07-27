@@ -1,6 +1,8 @@
 """Runtime and artifact preparation shared by training pipelines."""
 
 from dataclasses import dataclass
+import os
+import subprocess
 
 from wingbeat_ml.config.runtime import (
     configure_training_runtime,
@@ -19,6 +21,21 @@ class TrainingRunContext:
     save_path: str
     results_dir: str
     tracking_run: object | None
+
+
+def _git_revision():
+    revision = os.environ.get("GIT_SHA") or os.environ.get("WANDB_GIT_COMMIT")
+    if revision:
+        return revision
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
 
 
 def _pretrain_tracking_name(config, base_name):
@@ -54,6 +71,9 @@ def prepare_training_run(
         if tracking_run is not None and mode.casefold() == "pretrain"
         else base_name
     )
+    seed = int(config["reproducibility"]["seed"])
+    if f"seed{seed}" not in experiment_name:
+        experiment_name = f"{experiment_name}_seed{seed}"
     if tracking_run is not None:
         tracking_run.name = experiment_name
 
@@ -77,6 +97,35 @@ def prepare_training_run(
         logging=config.get("logging", {}),
     )
     config["resolved_runtime"] = runtime_info
+
+    launch_seed = int(config.get("resolved_launch_seed", seed))
+    runtime_seed = int(runtime_info["seed"])
+    if launch_seed != seed or runtime_seed != seed or f"seed{seed}" not in experiment_name:
+        raise RuntimeError(
+            "Seed mismatch: "
+            f"W&B={launch_seed}, resolved={seed}, runtime={runtime_seed}, "
+            f"run_name={experiment_name!r}"
+        )
+
+    resolved = {
+        "seed": seed,
+        "profile": config.get(
+            "resolved_profile",
+            config.get("profile", os.environ.get("WINGBEAT_PROFILE", "unknown")),
+        ),
+        "git_revision": _git_revision(),
+        "image_revision": os.environ.get("WINGBEAT_IMAGE_REVISION", "unknown"),
+        "cache_schema": config.get("cache", {}).get("schema_version"),
+    }
+    config["resolved_provenance"] = resolved
+    if console != "quiet":
+        print(f"Resolved runtime: {resolved}")
+    if tracking_run is not None:
+        import wandb
+        wandb.config.update(
+            {f"resolved.{key}": value for key, value in resolved.items()},
+            allow_val_change=True,
+        )
 
     return TrainingRunContext(
         experiment_name=experiment_name,

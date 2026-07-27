@@ -50,7 +50,18 @@ def initialize_training_run(config, *, wandb_module=None):
         job_type=settings["job_type"],
     )
 
-    for dotted_key, value in wandb_module.config.items():
+    launch_config = dict(wandb_module.config.items())
+    if "seed" in launch_config:
+        raise RuntimeError(
+            "Unsupported W&B override 'seed'; use 'reproducibility.seed'"
+        )
+
+    requested_seed = launch_config.get("reproducibility.seed")
+    nested_reproducibility = launch_config.get("reproducibility")
+    if requested_seed is None and isinstance(nested_reproducibility, dict):
+        requested_seed = nested_reproducibility.get("seed")
+
+    for dotted_key, value in launch_config.items():
         parts = dotted_key.split(".")
         target = config
         for part in parts[:-1]:
@@ -59,6 +70,15 @@ def initialize_training_run(config, *, wandb_module=None):
                 break
         else:
             target[parts[-1]] = value
+
+    if requested_seed is None:
+        raise RuntimeError("W&B Launch did not provide reproducibility.seed")
+    config["resolved_launch_seed"] = int(requested_seed)
+    resolved_seed = int(config["reproducibility"]["seed"])
+    if resolved_seed != config["resolved_launch_seed"]:
+        raise RuntimeError(
+            f"Seed mismatch: W&B={requested_seed}, resolved={resolved_seed}"
+        )
 
     return run
 
