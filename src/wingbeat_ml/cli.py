@@ -30,6 +30,10 @@ def main(args=None):
     resolve_parser.add_argument("--set", action="append", help="Overrides in key.path=value format")
     resolve_parser.add_argument("--output", required=True, help="Path to save the resolved configuration")
 
+    # config schema parser
+    schema_parser = config_subparsers.add_parser("schema", help="Generate JSON Schema from AppConfig model")
+    schema_parser.add_argument("--output", help="Optional path to save JSON schema output")
+
     # config validate parser
     validate_parser = config_subparsers.add_parser("validate", help="Validate configuration")
     validate_parser.add_argument("--base", default="configs/base.yaml", help="Path to base configuration file")
@@ -140,6 +144,23 @@ def main(args=None):
     if parsed_args.command == "version":
         print(f"wingbeat_ml version {__version__}")
         sys.exit(0)
+    elif parsed_args.command == "config" and parsed_args.subcommand == "schema":
+        try:
+            import json
+            from wingbeat_ml.config import generate_json_schema
+
+            schema = generate_json_schema()
+            output_json = json.dumps(schema, indent=2)
+            if getattr(parsed_args, "output", None):
+                with open(parsed_args.output, "w", encoding="utf-8") as f:
+                    f.write(output_json + "\n")
+                print(f"JSON Schema written to {parsed_args.output}")
+            else:
+                print(output_json)
+            sys.exit(0)
+        except Exception as e:
+            print(f"Error generating JSON Schema: {e}", file=sys.stderr)
+            sys.exit(1)
     elif parsed_args.command == "config" and parsed_args.subcommand == "resolve":
         try:
             resolved = load_config(

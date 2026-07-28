@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 import time
-from collections.abc import Callable, Mapping
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 import numpy as np
 import tensorflow as tf
 
 from wingbeat_ml.config.runtime import resolve_class_weights
+from wingbeat_ml.config.schema import AppConfig
 from wingbeat_ml.training import (
     Trainer,
     build_callbacks,
@@ -20,7 +21,7 @@ from wingbeat_ml.training import (
 from wingbeat_ml.training.strategies.supervised import SupervisedStrategy
 
 
-def _optimizer_learning_rate(optimizer):
+def _optimizer_learning_rate(optimizer: Any) -> Any:
     learning_rate = getattr(optimizer, "learning_rate", None)
     if learning_rate is not None:
         return learning_rate
@@ -45,43 +46,45 @@ def _normalize_mode(mode: str) -> str:
     return normalized
 
 
-def configure_trainable_layers(model, mode: str) -> str:
+def configure_trainable_layers(model: Any, mode: str) -> str:
     """Apply the trainability policy for a training mode."""
     normalized = _normalize_mode(mode)
 
     if normalized == "linear_probe":
-        if not model.layers:
+        if not hasattr(model, "layers") or not model.layers:
             raise ValueError("Linear probing requires a model with layers")
 
         for layer in model.layers[:-1]:
             layer.trainable = False
         model.layers[-1].trainable = True
     else:
-        for layer in model.layers:
+        for layer in getattr(model, "layers", []):
             layer.trainable = True
 
     return normalized
 
 
 def resolve_training_class_weights(
-    config: dict,
-    dataset_builder,
+    config: Any,
+    dataset_builder: Any,
     *,
     show_counts: bool = False,
-):
+) -> Optional[np.ndarray]:
     """Resolve class weights once and record them in the run config."""
+    from wingbeat_ml.config.schema import validate_config
+
+    app_cfg = validate_config(config)
     enabled, weights = resolve_class_weights(
-        config["class_weights"],
+        app_cfg.class_weights,
         dataset_builder.class_weights,
-        config["num_classes"],
-        labels_dict=config["labels"],
+        app_cfg.num_classes,
+        labels_dict=app_cfg.labels,
     )
 
-    console = str(config.get("logging", {}).get("console", "normal"))
+    console = app_cfg.logging.console
     if not enabled:
         if show_counts and console != "quiet":
             print("Class weights disabled.")
-        config["resolved_class_weights"] = None
         return None
 
     estimated_counts = getattr(dataset_builder, "class_counts", None)
@@ -90,15 +93,14 @@ def resolve_training_class_weights(
     else:
         counts = np.bincount(
             dataset_builder.train_labels,
-            minlength=config["num_classes"],
+            minlength=app_cfg.num_classes,
         )
     if show_counts and console != "quiet":
         print(f"Training class counts: {counts.tolist()}")
     if console != "quiet":
         print(f"Using class weights: {np.round(weights, 3).tolist()}")
-    config["resolved_class_counts"] = counts.tolist()
-    config["resolved_class_weights"] = weights.tolist()
-    if config.get("wandb", {}).get("enabled", False):
+
+    if app_cfg.wandb.enabled:
         try:
             import wandb
             if wandb.run is not None:
@@ -115,45 +117,40 @@ def resolve_training_class_weights(
 
 
 def build_training_components(
-    model,
-    train_dataset,
-    config: Mapping[str, object],
+    model: Any,
+    train_dataset: Any,
+    config: Any,
     *,
-    class_weights=None,
-    save_path: str | None = None,
-):
+    class_weights: Optional[Any] = None,
+    save_path: Optional[str] = None,
+) -> Tuple[Trainer, Any, Any, Dict[str, Any], str]:
     """Build the shared trainer, optimizer, loss and callbacks."""
+    from wingbeat_ml.config.schema import validate_config
+
+    app_cfg = validate_config(config)
     mode = configure_trainable_layers(
         model,
-        str(config["training_mode"]),
+        app_cfg.training_mode,
     )
 
-    model_config = config["model"]
-    loss_config = dict(config["loss"])
+    output_act = app_cfg.model.output_activation
+    from_logits = output_act is None
 
-    if model_config.get("output_activation") == "softmax":
-        loss_config["from_logits"] = False
-    elif model_config.get("output_activation") is None:
-        loss_config["from_logits"] = True
-
-    optimizer = build_optimizer(config["optimizer"])
+    optimizer = build_optimizer(app_cfg.optimizer)
     if tf.keras.mixed_precision.global_policy().compute_dtype == "float16":
         optimizer = tf.keras.mixed_precision.LossScaleOptimizer(optimizer)
-    loss_fn = build_loss(loss_config)
-    performance = config.get("performance", {})
+
+    loss_fn = build_loss(app_cfg.loss, from_logits=from_logits)
+    perf = app_cfg.performance
     trainer = Trainer(
         model,
         optimizer,
         loss_fn,
         train_dataset,
         class_weights=class_weights,
-        steps_per_call=int(
-            performance.get("steps_per_call", 20)
-        ),
-        jit_compile=bool(
-            performance.get("jit_compile", False)
-        ),
-        profiler=performance.get("profiler", {}),
+        steps_per_call=perf.steps_per_call,
+        jit_compile=perf.jit_compile,
+        profiler=perf.profiler.model_dump() if hasattr(perf.profiler, "model_dump") else perf.profiler,
         profiler_logdir=(
             Path(save_path).parent / "profiler"
             if save_path
@@ -161,20 +158,9 @@ def build_training_components(
         ),
     )
 
-    callback_cfg = config.get("callbacks", {})
-    needs_checkpoint_path = bool(
-        callback_cfg.get("model_checkpoint")
-        or (
-            callback_cfg.get("early_stopping", {}) or {}
-        ).get("restore_best_weights")
-    )
-    if needs_checkpoint_path and not save_path:
-        raise ValueError(
-            "save_path is required when checkpoint callbacks are enabled"
-        )
-
+    callbacks_cfg = app_cfg.callbacks
     callbacks = build_callbacks(
-        config,
+        app_cfg,
         optimizer,
         model,
         save_path,
@@ -184,20 +170,23 @@ def build_training_components(
 
 
 def run_training(
-    model,
-    train_dataset,
-    config: Mapping[str, object],
+    model: Any,
+    train_dataset: Any,
+    config: Any,
     *,
-    evaluate_epoch: Callable[[], Mapping[str, float]] | None = None,
-    on_epoch_end: Callable[[int, Mapping[str, float]], None] | None = None,
-    class_weights=None,
-    save_path: str | None = None,
-) -> list[dict[str, float]]:
+    evaluate_epoch: Optional[Callable[[], Dict[str, float]]] = None,
+    on_epoch_end: Optional[Callable[[int, Dict[str, float]], None]] = None,
+    class_weights: Optional[Any] = None,
+    save_path: Optional[str] = None,
+) -> List[Dict[str, float]]:
     """Run the shared epoch loop and return its metric history."""
+    from wingbeat_ml.config.schema import validate_config
+
+    app_cfg = validate_config(config)
     trainer, optimizer, _, callbacks, _ = build_training_components(
         model,
         train_dataset,
-        config,
+        app_cfg,
         class_weights=class_weights,
         save_path=save_path,
     )
@@ -207,11 +196,11 @@ def run_training(
         evaluate_fn=evaluate_epoch,
     )
 
-    epochs = int(config["train"]["epochs"])
-    history: list[dict[str, float]] = []
-    console = str(config.get("logging", {}).get("console", "normal"))
+    epochs = app_cfg.train.epochs
+    history: List[Dict[str, float]] = []
+    console = app_cfg.logging.console
     jsonl_logger = None
-    if config.get("logging", {}).get("jsonl", True) and save_path:
+    if app_cfg.logging.jsonl and save_path:
         from wingbeat_ml.pipelines.helpers.reporting import JsonlMetricLogger
         jsonl_logger = JsonlMetricLogger(
             Path(save_path).parent / "metrics.jsonl"

@@ -3,15 +3,27 @@ import tensorflow.keras as keras
 
 class MosSongPlusModel:
     def __init__(self, model_config, model_overrides=None):
-        self.model_config = model_config
-        model_section = model_config.get("model", {})
-        self.config = (
+        from wingbeat_ml.config.schema import AppConfig, ModelConfig
+
+        if isinstance(model_config, AppConfig):
+            model_dict = model_config.model.model_dump()
+        elif isinstance(model_config, ModelConfig):
+            model_dict = model_config.model_dump()
+        elif isinstance(model_config, dict):
+            model_dict = model_config
+        else:
+            model_dict = {}
+
+        self.model_config = model_dict
+        model_section = model_dict.get("model", {}) if isinstance(model_dict.get("model"), dict) else model_dict
+        self.model_cfg = (
             model_section.get("mossong_plus")
             or model_section.get("mossongplus")
+            or model_section
         )
         self.overrides = model_overrides or {}
 
-        if not self.config:
+        if not self.model_cfg or not isinstance(self.model_cfg, dict):
             raise ValueError(
                 "Invalid model configuration: expected "
                 "'model.mossong_plus' or legacy 'model.mossongplus'."
@@ -24,11 +36,11 @@ class MosSongPlusModel:
             inputs = keras.layers.Input(shape=input_shape)
         x = inputs
 
-        # Build sequential layer list
-        if "layers" not in self.config:
+        layers_list = self.model_cfg.get("layers") if isinstance(self.model_cfg, dict) else getattr(self.model_cfg, "layers", None)
+        if not layers_list:
             raise ValueError("Expected 'layers' in model configuration.")
 
-        x = self._build_sequential(x, self.config["layers"])
+        x = self._build_sequential(x, layers_list)
 
         # Output Layer
         x = keras.layers.Dense(

@@ -1,16 +1,19 @@
 """Runtime and artifact preparation shared by training pipelines."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 import os
 import subprocess
+from typing import Any, Optional
 
 from wingbeat_ml.config.runtime import (
     configure_training_runtime,
     generate_experiment_name,
     resolve_experiment_paths,
 )
+from wingbeat_ml.config.schema import AppConfig, validate_config
 from wingbeat_ml.tracking import initialize_training_run
-from wingbeat_ml.config.schema import validate_config
 
 
 @dataclass(frozen=True)
@@ -20,10 +23,10 @@ class TrainingRunContext:
     experiment_name: str
     save_path: str
     results_dir: str
-    tracking_run: object | None
+    tracking_run: Optional[Any]
 
 
-def _git_revision():
+def _git_revision() -> str:
     revision = os.environ.get("GIT_SHA") or os.environ.get("WANDB_GIT_COMMIT")
     if revision:
         return revision
@@ -38,67 +41,59 @@ def _git_revision():
         return "unknown"
 
 
-def _pretrain_tracking_name(config, base_name):
-    high_pass = config["augment"]["high_pass"]["p"]
-    seed = config["reproducibility"]["seed"]
-    task = (
-        config["wandb"].get("group")
-        or f"{config['num_classes']}class"
-    )
+def _pretrain_tracking_name(config: Any, base_name: str) -> str:
+    from wingbeat_ml.config.schema import validate_config
+
+    app_cfg = validate_config(config)
+    high_pass = app_cfg.augment.high_pass.p
+    seed = app_cfg.reproducibility.seed
+    group = app_cfg.wandb.group
+    num_classes = app_cfg.num_classes
+
+    task = group or f"{num_classes}class"
     return f"{task}_{base_name}_hpf{high_pass}_seed{seed}"
 
 
 def prepare_training_run(
-    config,
+    config: Any,
     *,
-    mode,
-    save_path=None,
-    results_dir=None,
-):
+    mode: str,
+    save_path: Optional[str] = None,
+    results_dir: Optional[str] = None,
+) -> TrainingRunContext:
     """Initialize tracking, artifact paths, and deterministic runtime."""
-    tracking_run = initialize_training_run(config)
-    try:
-        validate_config(config)
-    except Exception:
-        if tracking_run is not None:
-            finish = getattr(tracking_run, "finish", None)
-            if callable(finish):
-                finish(exit_code=1)
-        raise
-    base_name = generate_experiment_name(config, mode=mode)
+    app_cfg = validate_config(config)
+    tracking_run = initialize_training_run(app_cfg)
+
+    base_name = generate_experiment_name(app_cfg, mode=mode)
     experiment_name = (
-        _pretrain_tracking_name(config, base_name)
+        _pretrain_tracking_name(app_cfg, base_name)
         if tracking_run is not None and mode.casefold() == "pretrain"
         else base_name
     )
-    seed = int(config["reproducibility"]["seed"])
+    seed = app_cfg.reproducibility.seed
     if f"seed{seed}" not in experiment_name:
         experiment_name = f"{experiment_name}_seed{seed}"
     if tracking_run is not None:
         tracking_run.name = experiment_name
 
-    paths = resolve_experiment_paths(config, experiment_name)
-    save_path = save_path or paths["save_path"]
-    results_dir = results_dir or paths["results_dir"]
-    config["resolved_run"] = {
-        "experiment_name": experiment_name,
-        "save_path": str(save_path),
-        "results_dir": str(results_dir),
-    }
+    paths = resolve_experiment_paths(app_cfg, experiment_name)
+    resolved_save_path = str(save_path or paths["save_path"])
+    resolved_results_dir = str(results_dir or paths["results_dir"])
 
-    console = str(config.get("logging", {}).get("console", "normal"))
+    console = app_cfg.logging.console
     if console != "quiet":
         print(f"Experiment Name: {experiment_name}")
-        print(f"Saving weights to: {save_path}")
-        print(f"Saving results to: {results_dir}")
-    runtime_info = configure_training_runtime(
-        config["reproducibility"],
-        performance=config.get("performance", {}),
-        logging=config.get("logging", {}),
-    )
-    config["resolved_runtime"] = runtime_info
+        print(f"Saving weights to: {resolved_save_path}")
+        print(f"Saving results to: {resolved_results_dir}")
 
-    launch_seed = int(config.get("resolved_launch_seed", seed))
+    runtime_info = configure_training_runtime(
+        app_cfg.reproducibility,
+        performance=app_cfg.performance,
+        logging=app_cfg.logging,
+    )
+
+    launch_seed = app_cfg.resolved_launch_seed if app_cfg.resolved_launch_seed is not None else seed
     runtime_seed = int(runtime_info["seed"])
     if launch_seed != seed or runtime_seed != seed or f"seed{seed}" not in experiment_name:
         raise RuntimeError(
@@ -107,38 +102,25 @@ def prepare_training_run(
             f"run_name={experiment_name!r}"
         )
 
-    resolved = {
-        "seed": seed,
-        "profile": config.get(
-            "resolved_profile",
-            config.get("profile", os.environ.get("WINGBEAT_PROFILE", "unknown")),
-        ),
-        "git_revision": _git_revision(),
-        "image_revision": os.environ.get("WINGBEAT_IMAGE_REVISION", "unknown"),
-        "cache_schema": config.get("cache", {}).get("schema_version"),
-    }
-    config["resolved_provenance"] = resolved
-    if console != "quiet":
-        print(f"Resolved runtime: {resolved}")
-    if tracking_run is not None:
-        import wandb
-        wandb.config.update(
-            {f"resolved.{key}": value for key, value in resolved.items()},
-            allow_val_change=True,
-        )
-
     return TrainingRunContext(
         experiment_name=experiment_name,
-        save_path=save_path,
-        results_dir=results_dir,
+        save_path=resolved_save_path,
+        results_dir=resolved_results_dir,
         tracking_run=tracking_run,
     )
 
 
-def prepare_export_runtime(config):
-    """Initialize deterministic export runtime and return its seed."""
-    configure_training_runtime(config["reproducibility"])
-    return config["reproducibility"]["seed"]
+def prepare_export_runtime(config: AppConfig, *, save_path: str) -> None:
+    """Configure deterministic runtime state for export operations."""
+    if not os.path.exists(save_path):
+        raise FileNotFoundError(
+            f"Checkpoint file not found for export verification: {save_path}"
+        )
+    configure_training_runtime(
+        config.reproducibility,
+        performance=config.performance,
+        logging=config.logging,
+    )
 
 
 __all__ = [

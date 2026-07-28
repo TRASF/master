@@ -3,20 +3,19 @@
 from datetime import datetime
 import os
 from pathlib import Path
+from typing import Any, Dict, Optional, Tuple, Union
 
 import yaml
 
 from wingbeat_ml.config import (
-    load_config as load_layered_config,
+    AppConfig,
+    load_config,
     write_resolved_config,
 )
-from wingbeat_ml.config.runtime import (
-    load_config as load_legacy_config,
-    normalize_config,
-)
+from wingbeat_ml.config.loader import load_yaml
 
 
-def find_project_root(start=None):
+def find_project_root(start: Optional[Union[str, Path]] = None) -> Path:
     """Find a checkout containing the canonical configuration layers."""
     starting_path = Path(start or Path.cwd()).resolve()
     source_root = Path(__file__).resolve().parents[4]
@@ -39,29 +38,35 @@ def find_project_root(start=None):
     )
 
 
-def _absolute_from_project(value, project_root):
+def _absolute_from_project(value: Union[str, Path], project_root: Path) -> Path:
     path = Path(value).expanduser()
     if not path.is_absolute():
         path = project_root / path
     return path.resolve()
 
 
-def _override(path, value):
+def _override(path: str, value: Any) -> str:
     encoded = yaml.safe_dump(value, default_flow_style=True).strip()
     if encoded.endswith("\n..."):
         encoded = encoded[:-4]
     return f"{path}={encoded}"
 
 
-def load_pipeline_configuration(defaults_path, model_config_path):
-    """Load the compatibility configuration pair used by entrypoints."""
-    config = normalize_config(load_legacy_config(defaults_path))
+def load_pipeline_configuration(
+    defaults_path: Union[str, Path] = "configs/defaults.yaml",
+    model_config_path: Union[str, Path] = "configs/model.yaml",
+) -> Tuple[AppConfig, Dict[str, Any]]:
+    """Load the canonical configuration pair used by entrypoints."""
+    config = load_config(
+        defaults_path=defaults_path,
+        model_path=model_config_path if os.path.exists(str(model_config_path)) else None,
+    )
     validate_pipeline_configuration(config)
-    model_config = load_legacy_config(model_config_path)
-    return config, model_config
+    model_dict = load_yaml(model_config_path) if os.path.exists(str(model_config_path)) else config.model.model_dump()
+    return config, model_dict
 
 
-def validate_pipeline_configuration(config):
+def validate_pipeline_configuration(config: Any) -> AppConfig:
     """Require operational settings before expensive runtime setup."""
     required = (
         ("dataset", "train_dir"),
@@ -74,19 +79,26 @@ def validate_pipeline_configuration(config):
         ("runtime", "root"),
         ("wandb", "enabled"),
     )
-    missing = [
-        ".".join(path)
-        for path in required
-        if path[0] not in config or path[1] not in config[path[0]]
-    ]
-    if missing:
-        raise ValueError(
-            "Missing required pipeline configuration: "
-            + ", ".join(missing)
-        )
+    if isinstance(config, dict):
+        missing = [
+            ".".join(path)
+            for path in required
+            if path[0] not in config or not isinstance(config[path[0]], dict) or path[1] not in config[path[0]]
+        ]
+        if missing:
+            raise ValueError(
+                "Missing required pipeline configuration: "
+                + ", ".join(missing)
+            )
+    from wingbeat_ml.config.schema import validate_config
+
+    return validate_config(config)
 
 
-def prepare_default_pilot(project_root=None, runtime_root=None):
+def prepare_default_pilot(
+    project_root: Optional[Union[str, Path]] = None,
+    runtime_root: Optional[Union[str, Path]] = None,
+) -> Tuple[Path, Path, Path]:
     """Resolve the configured pilot profile for a bare invocation."""
     root = find_project_root(project_root)
     base_path = root / "configs" / "base.yaml"
@@ -94,16 +106,16 @@ def prepare_default_pilot(project_root=None, runtime_root=None):
     experiment_path = root / "configs" / "experiments" / "pretrain.yaml"
     profile_path = root / "configs" / "profiles" / "pilot.yaml"
 
-    policy = load_layered_config(
+    policy = load_config(
         base_path=str(base_path),
         model_path=str(model_path),
         experiment_path=str(experiment_path),
         profile_path=str(profile_path),
-    ).data
+    )
 
     dataset_value = (
         os.environ.get("WINGBEAT_DATASET_DIR")
-        or policy["dataset"]["train_dir"]
+        or policy.dataset.train_dir
     )
     dataset = _absolute_from_project(dataset_value, root)
     if not dataset.is_dir():
@@ -115,15 +127,16 @@ def prepare_default_pilot(project_root=None, runtime_root=None):
     runtime_value = (
         runtime_root
         or os.environ.get("WINGBEAT_RUNTIME_ROOT")
-        or policy["runtime"]["root"]
+        or policy.runtime.root
     )
     runtime = _absolute_from_project(runtime_value, root)
+
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     execution_root = runtime / "pilots" / timestamp
     config_dir = execution_root / "configs"
     config_dir.mkdir(parents=True, exist_ok=True)
 
-    resolved = load_layered_config(
+    resolved = load_config(
         base_path=str(base_path),
         model_path=str(model_path),
         experiment_path=str(experiment_path),

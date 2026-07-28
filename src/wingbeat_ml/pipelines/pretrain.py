@@ -1,13 +1,17 @@
 """Canonical pretraining pipeline."""
 
+from __future__ import annotations
+
 import argparse
 import os
+from typing import Optional, Union
 
 from wingbeat_ml.pipelines.helpers import (
     build_supervised_components,
     evaluate_training_run,
     load_pipeline_configuration,
     make_epoch_printer,
+    maybe_apply_adabn,
     prepare_default_pilot,
     prepare_training_run,
 )
@@ -15,12 +19,12 @@ from wingbeat_ml.pipelines.train import run_training
 
 
 def train_supervised(
-    defaults_path="configs/defaults.yaml",
-    model_cfg_path="configs/model.yaml",
-    save_path=None,
-    results_dir=None,
+    defaults_path: Union[str, os.PathLike] = "configs/defaults.yaml",
+    model_cfg_path: Union[str, os.PathLike] = "configs/model.yaml",
+    save_path: Optional[str] = None,
+    results_dir: Optional[str] = None,
 ):
-    """Run canonical supervised pretraining."""
+    """Run canonical supervised pretraining following the exact workflow sequence."""
     config, model_config = load_pipeline_configuration(
         defaults_path,
         model_cfg_path,
@@ -37,8 +41,8 @@ def train_supervised(
         show_class_counts=True,
     )
 
-    epochs = config["train"]["epochs"]
-    print(f"Output activation: {config['model']['output_activation']}")
+    epochs = config.train.epochs
+    print(f"Output activation: {config.model.output_activation}")
     print(f"\nStarting training for {epochs} epochs...")
     run_training(
         components.model,
@@ -49,6 +53,13 @@ def train_supervised(
         ),
         on_epoch_end=make_epoch_printer(config, detailed=True),
         class_weights=components.class_weights,
+        save_path=run.save_path,
+    )
+
+    maybe_apply_adabn(
+        components.model,
+        components.test_dataset,
+        config,
         save_path=run.save_path,
     )
 

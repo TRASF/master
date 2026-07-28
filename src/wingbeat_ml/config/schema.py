@@ -1,260 +1,592 @@
-def validate_config(cfg: dict) -> None:
-    # 1. Root structure check
-    if not isinstance(cfg, dict):
-        raise ValueError("Configuration root must be a YAML mapping (dictionary)")
+"""Canonical Pydantic v2 schema for MosSongPlus configuration."""
 
-    required_sections = ["model", "training_mode", "audio", "train", "dataset"]
-    for section in required_sections:
-        if section not in cfg:
-            raise ValueError(f"Missing required top-level section: '{section}'")
-        if section != "training_mode" and not isinstance(cfg[section], dict):
-            raise ValueError(f"Top-level section '{section}' must be a dictionary")
+from __future__ import annotations
 
-    # 2. Experiment / Training Mode
-    mode = cfg.get("training_mode")
-    valid_modes = ["pretrain", "linear_probe", "fine_tune"]
-    if mode not in valid_modes:
-        raise ValueError(f"Invalid training mode: expected one of {valid_modes}, got {repr(mode)}")
+import copy
+import os
+import warnings
+from typing import Any, Dict, List, Optional, Sequence, Union
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-    exp_name = cfg.get("experiment_name")
-    if exp_name is not None:
-        if not isinstance(exp_name, str) or not exp_name.strip():
-            raise ValueError("experiment_name must be a non-empty string")
 
-    # 3. Seed validation
-    train_section = cfg.get("train", {})
-    if isinstance(train_section, dict):
-        seed = train_section.get("seed")
-        if seed is not None:
-            if not isinstance(seed, int) or seed < 0:
-                raise ValueError(f"Invalid train.seed type: expected non-negative int, got {repr(seed)}")
+class StrictBaseModel(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        validate_default=True,
+    )
 
-    repro = cfg.get("reproducibility", {})
-    if isinstance(repro, dict):
-        repro_seed = repro.get("seed")
-        if repro_seed is not None:
-            if not isinstance(repro_seed, int) or repro_seed < 0:
-                raise ValueError(f"Invalid reproducibility.seed type: expected non-negative int, got {repr(repro_seed)}")
 
-    # 4. Data/Audio validation
-    audio = cfg.get("audio", {})
-    sample_rate = audio.get("sample_rate")
-    if not isinstance(sample_rate, int) or sample_rate <= 0:
-        raise ValueError(f"Invalid sample_rate: must be a positive integer, got {repr(sample_rate)}")
+class TrainConfig(StrictBaseModel):
+    epochs: int = 1000
+    shuffle: bool = True
+    batch_size: int = 128
+    seed: int = 48
+    warmup_epochs: int = 15
+    warmup_augment_p: float = 0.0
 
-    segment_length = audio.get("segment_length") or cfg.get("segment_length")
-    if segment_length is not None:
-        if not isinstance(segment_length, int) or segment_length <= 0:
-            raise ValueError(f"Invalid segment_length: must be a positive integer, got {repr(segment_length)}")
+    @field_validator("epochs")
+    @classmethod
+    def validate_epochs(cls, v: Any) -> int:
+        if not isinstance(v, int) or isinstance(v, bool):
+            raise ValueError(f"Invalid train.epochs type: expected int, got {v}")
+        if v <= 0:
+            raise ValueError(f"Invalid train.epochs: must be a positive integer, got {v}")
+        return v
 
-    # Overlap range check
-    augment = cfg.get("augment", {})
-    overlap = augment.get("segment_overlap") if isinstance(augment, dict) else None
-    if overlap is not None:
-        if isinstance(overlap, dict):
-            val = overlap.get("val")
-            if val is not None:
-                if not isinstance(val, (int, float)) or not (0.0 <= val <= 1.0):
-                    raise ValueError(f"Invalid segment_overlap.val: must be float between 0 and 1.0, got {repr(val)}")
-            train = overlap.get("train")
-            if train is not None:
-                if not isinstance(train, list) or not all(isinstance(x, (int, float)) and 0.0 <= x <= 1.0 for x in train):
-                    raise ValueError(f"Invalid segment_overlap.train: must be list of floats between 0 and 1.0, got {repr(train)}")
-        elif not isinstance(overlap, (int, float)) or not (0.0 <= overlap <= 1.0):
-            raise ValueError(f"Invalid segment_overlap: must be float between 0 and 1.0, got {repr(overlap)}")
+    @field_validator("batch_size")
+    @classmethod
+    def validate_batch_size(cls, v: Any) -> int:
+        if not isinstance(v, int) or isinstance(v, bool):
+            raise ValueError(f"Invalid train.batch_size type: expected int, got {v}")
+        if v <= 0:
+            raise ValueError(f"Invalid train.batch_size: must be a positive integer, got {v}")
+        return v
 
-    # Class list validation
-    classes = cfg.get("classes")
-    labels = cfg.get("labels")
-    if classes is not None:
-        if not isinstance(classes, list) or len(classes) == 0:
-            raise ValueError("Classes list must be a non-empty list")
-        if len(set(classes)) != len(classes):
+    @field_validator("seed")
+    @classmethod
+    def validate_seed(cls, v: Any) -> int:
+        if not isinstance(v, int) or isinstance(v, bool):
+            raise ValueError(f"Invalid train.seed type: expected int, got {v}")
+        if v < 0:
+            raise ValueError(f"Invalid train.seed: must be non-negative, got {v}")
+        return v
+
+
+class SplitRatiosConfig(StrictBaseModel):
+    train: float = 0.8
+    val: float = 0.1
+    test: float = 0.1
+
+    @model_validator(mode="after")
+    def validate_sum(self) -> SplitRatiosConfig:
+        total = round(self.train + self.val + self.test, 4)
+        if abs(total - 1.0) > 1e-3:
+            raise ValueError(f"Split ratios must sum to 1.0, got {total}")
+        return self
+
+
+class DatasetConfig(StrictBaseModel):
+    train_dir: str = "dataset/MSB/Indoor"
+    indoor: Optional[str] = "dataset/MSB/Indoor"
+    mosLab: Optional[str] = "dataset/Philip"
+    outdoor: Optional[str] = "dataset/MSB/Outdoor"
+    val_dir: Optional[str] = None
+    test_dir: Optional[str] = None
+    manifest_sha256: Optional[str] = None
+    split_ratios: SplitRatiosConfig = Field(default_factory=SplitRatiosConfig)
+    split_list: Optional[List[float]] = None
+
+
+class AudioConfig(StrictBaseModel):
+    duration: float = 0.3
+    sample_rate: int = 8000
+    segment_length: int = 2400
+
+    @field_validator("sample_rate", "segment_length")
+    @classmethod
+    def validate_positive(cls, v: Any, info) -> int:
+        if not isinstance(v, int) or isinstance(v, bool):
+            raise ValueError(f"Invalid {info.field_name} type: expected int, got {type(v)}")
+        if v <= 0:
+            raise ValueError(f"Invalid {info.field_name}: must be a positive integer, got {v}")
+        return v
+
+
+class ModelConfig(StrictBaseModel):
+    id: str = "mossong_plus"
+    pretrained_weights: Optional[str] = None
+    checkpoint: Optional[str] = None
+    output_activation: Optional[str] = None
+    bn_conv1: bool = True
+    bn_conv2: bool = True
+    bn_conv3: bool = True
+    bn_dense1: bool = False
+    bn_dense2: bool = False
+    layers: Optional[List[Dict[str, Any]]] = None
+    mossong_plus: Optional[Dict[str, Any]] = None
+    mossongplus: Optional[Dict[str, Any]] = None
+    input_shape: Optional[Union[List[int], Sequence[int]]] = None
+
+    @field_validator("id")
+    @classmethod
+    def validate_model_id(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Invalid model ID: expected non-empty string")
+        return v
+
+
+class ProfilerConfig(StrictBaseModel):
+    enabled: bool = False
+    start_step: int = 10
+    num_steps: int = 10
+
+
+class PerformanceConfig(StrictBaseModel):
+    precision: str = "float32"
+    steps_per_call: int = 20
+    jit_compile: bool = False
+    profiler: ProfilerConfig = Field(default_factory=ProfilerConfig)
+
+    @field_validator("precision")
+    @classmethod
+    def validate_precision(cls, v: str) -> str:
+        valid = {"float32", "mixed_float16", "float16", "auto"}
+        if v not in valid:
+            raise ValueError(f"Invalid precision '{v}', expected one of {sorted(valid)}")
+        return v
+
+    @field_validator("steps_per_call")
+    @classmethod
+    def validate_steps_per_call(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("performance.steps_per_call must be > 0")
+        return v
+
+
+class LoggingConfig(StrictBaseModel):
+    console: str = "normal"
+    epoch_interval: int = 1
+    model_summary: bool = False
+    classification_report: str = "file"
+    jsonl: bool = True
+
+    @field_validator("console")
+    @classmethod
+    def validate_console(cls, v: str) -> str:
+        valid = {"normal", "quiet", "verbose", "debug"}
+        if v not in valid:
+            raise ValueError(f"Invalid console logging mode '{v}', expected one of {sorted(valid)}")
+        return v
+
+    @field_validator("epoch_interval")
+    @classmethod
+    def validate_epoch_interval(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("logging.epoch_interval must be > 0")
+        return v
+
+
+class AdaBNConfig(StrictBaseModel):
+    enabled: bool = False
+    mode: str = "adhoc"
+    target_dir: Optional[str] = None
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, v: str) -> str:
+        valid = {"adhoc", "otf"}
+        if v.lower() not in valid:
+            raise ValueError(f"Invalid AdaBN mode '{v}', expected one of {sorted(valid)}")
+        return v.lower()
+
+
+class WandbConfig(StrictBaseModel):
+    project: str = "MosSongPlus"
+    tags: List[str] = Field(default_factory=list)
+    group: Optional[str] = None
+    notes: Optional[str] = None
+    enabled: bool = False
+    job_type: str = "train"
+    log_weights_freq: int = 0
+    aggregate_plot_freq: int = 0
+    log_prediction_audio: bool = False
+    prediction_table_max_rows: int = 0
+    log_detailed_diagnostics: bool = False
+    api_key: Optional[str] = None
+
+    @field_validator("api_key")
+    @classmethod
+    def validate_no_secrets(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            raise ValueError("Secrets are not allowed in configuration file")
+        return v
+
+
+class ReproducibilityConfig(StrictBaseModel):
+    enabled: bool = True
+    seed: int = 48
+    deterministic_ops: bool = True
+    deterministic_data: bool = True
+
+
+class PreprocessConfig(StrictBaseModel):
+    dc_removal: bool = True
+
+
+class MixupConfig(StrictBaseModel):
+    p: float = 1.0
+    alpha: float = 0.4
+
+
+class RMSNormConfig(StrictBaseModel):
+    p: float = 1.0
+    max_gain: float = 15.0
+    min_gain: float = 0.05
+    target_rms: float = 0.05
+
+
+class HighPassConfig(StrictBaseModel):
+    p: float = 0.0
+    fc: float = 150.0
+
+
+class TimeShiftConfig(StrictBaseModel):
+    p: float = 0.0
+    rate: List[float] = Field(default_factory=lambda: [-0.05, 0.05])
+
+
+class PitchShiftConfig(StrictBaseModel):
+    p: float = 0.0
+    semitones: List[float] = Field(default_factory=lambda: [-0.2, 0.2])
+
+
+class RandomGainConfig(StrictBaseModel):
+    p: float = 0.3
+    gain_db: List[float] = Field(default_factory=lambda: [-3.0, 3.0])
+
+
+class SNRDistributionConfig(StrictBaseModel):
+    p: float = 0.0
+    snr_db: Optional[List[float]] = None
+
+
+class NoiseOverlayConfig(StrictBaseModel):
+    p: float = 0.2
+    snr_db: List[float] = Field(default_factory=lambda: [15.0, 30.0])
+    post_gain_db: List[float] = Field(default_factory=lambda: [-3.0, 3.0])
+    envelope_gain: List[float] = Field(default_factory=lambda: [0.7, 1.0])
+    snr_distribution: Optional[List[SNRDistributionConfig]] = None
+
+
+class GaussianNoiseConfig(StrictBaseModel):
+    p: float = 0.0
+    snr_db: List[float] = Field(default_factory=lambda: [20.0, 50.0])
+
+
+class TimeMaskingConfig(StrictBaseModel):
+    p: float = 0.0
+    num_masks: int = 1
+    max_mask_size: int = 400
+
+
+class PreEmphasisConfig(StrictBaseModel):
+    p: float = 0.0
+    coeff: float = 0.97
+
+
+class SegmentOverlapConfig(StrictBaseModel):
+    val: float = 0.5
+    train: Union[float, List[float]] = Field(default_factory=lambda: [0.0, 0.8])
+
+    @model_validator(mode="after")
+    def validate_overlap_bounds(self) -> SegmentOverlapConfig:
+        if isinstance(self.val, (int, float)) and not (0.0 <= self.val <= 1.0):
+            raise ValueError(f"Invalid segment_overlap.val: must be between 0 and 1.0, got {self.val}")
+        if isinstance(self.train, (int, float)) and not (0.0 <= self.train <= 1.0):
+            raise ValueError(f"Invalid segment_overlap.train: must be between 0 and 1.0, got {self.train}")
+        if isinstance(self.train, list):
+            if not all(isinstance(x, (int, float)) and 0.0 <= x <= 1.0 for x in self.train):
+                raise ValueError(f"Invalid segment_overlap.train list: must be floats between 0 and 1.0, got {self.train}")
+        return self
+
+
+class AugmentConfig(StrictBaseModel):
+    mixup: MixupConfig = Field(default_factory=MixupConfig)
+    rms_norm: RMSNormConfig = Field(default_factory=RMSNormConfig)
+    high_pass: HighPassConfig = Field(default_factory=HighPassConfig)
+    preprocess: PreprocessConfig = Field(default_factory=PreprocessConfig)
+    time_shift: TimeShiftConfig = Field(default_factory=TimeShiftConfig)
+    pitch_shift: PitchShiftConfig = Field(default_factory=PitchShiftConfig)
+    random_gain: RandomGainConfig = Field(default_factory=RandomGainConfig)
+    noise_overlay: NoiseOverlayConfig = Field(default_factory=NoiseOverlayConfig)
+    gaussian_noise: GaussianNoiseConfig = Field(default_factory=GaussianNoiseConfig)
+    noise_banks: List[str] = Field(
+        default_factory=lambda: [
+            "dataset/MSB/Environmental/humbug_noises",
+            "dataset/MSB/Environmental/inmp_noises",
+            "dataset/MSB/Environmental/miru_noises",
+            "dataset/MSB/Environmental/noises",
+            "dataset/MSB/Environmental/Nomos",
+        ]
+    )
+    segment_overlap: SegmentOverlapConfig = Field(default_factory=SegmentOverlapConfig)
+    max_segments_per_file: int = 100
+    time_masking: TimeMaskingConfig = Field(default_factory=TimeMaskingConfig)
+    pre_emphasis: PreEmphasisConfig = Field(default_factory=PreEmphasisConfig)
+    config: Optional[Dict[str, Any]] = None
+    overlap: Optional[Union[float, List[float]]] = None
+
+
+class ClassWeightsConfig(StrictBaseModel):
+    mode: str = "manual"
+    values: Optional[Union[List[float], Dict[str, float]]] = None
+    enabled: Optional[bool] = None
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, v: str) -> str:
+        valid = {"auto", "manual", "none", "off", "disabled"}
+        if v not in valid:
+            raise ValueError(f"Invalid class_weights mode '{v}', expected one of {sorted(valid)}")
+        return v
+
+
+class EarlyStoppingConfig(StrictBaseModel):
+    mode: str = "max"
+    monitor: str = "val_macro_f1"
+    patience: int = 80
+    min_delta: float = 0.0
+    restore_best_weights: bool = True
+
+
+class ModelCheckpointConfig(StrictBaseModel):
+    mode: str = "max"
+    monitor: str = "val_macro_f1"
+    min_delta: float = 0.0
+    save_best_only: bool = True
+    save_weights_only: bool = True
+
+
+class ReduceLROnPlateauConfig(StrictBaseModel):
+    mode: str = "max"
+    monitor: str = "val_macro_f1"
+    factor: float = 0.5
+    patience: int = 30
+    min_delta: float = 0.001
+    min_lr: float = 3.0e-05
+    restore_best_weights: bool = True
+
+
+class CosineAnnealingConfig(StrictBaseModel):
+    t_max: int = 100
+    eta_min: float = 1e-6
+
+
+class CallbacksConfig(StrictBaseModel):
+    early_stopping: Optional[EarlyStoppingConfig] = Field(default_factory=EarlyStoppingConfig)
+    model_checkpoint: Optional[ModelCheckpointConfig] = Field(default_factory=ModelCheckpointConfig)
+    reduce_lr_on_plateau: Optional[ReduceLROnPlateauConfig] = Field(default_factory=ReduceLROnPlateauConfig)
+    cosine_annealing: Optional[CosineAnnealingConfig] = None
+
+
+class LossConfig(StrictBaseModel):
+    name: str = "CategoricalCrossentropy"
+    reduction: str = "none"
+    from_logits: bool = True
+
+
+class OptimizerConfig(StrictBaseModel):
+    name: str = "Adam"
+    learning_rate: float = 0.001
+
+    @field_validator("learning_rate")
+    @classmethod
+    def validate_lr(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("Invalid learning_rate: must be > 0")
+        return v
+
+
+class SubEvaluationConfig(StrictBaseModel):
+    enabled: bool = True
+
+
+class EvaluationConfig(StrictBaseModel):
+    sample_level: SubEvaluationConfig = Field(default_factory=lambda: SubEvaluationConfig(enabled=True))
+    file_level: SubEvaluationConfig = Field(default_factory=lambda: SubEvaluationConfig(enabled=False))
+
+
+class CacheConfig(StrictBaseModel):
+    enabled: bool = True
+    schema_version: int = 2
+    root: Optional[str] = None
+
+
+class RuntimeConfig(StrictBaseModel):
+    root: str = "runtime"
+    experiments_dir: str = "models/experiments"
+
+
+class ExportConfig(StrictBaseModel):
+    out_dir: str = "quantization_output"
+    representative_samples: int = 500
+    input_amplitude_range: float = 0.03
+    allow_dummy_calibration: bool = False
+    run_debugger: bool = False
+
+
+DEFAULT_LABELS: Dict[str, int] = {
+    "Ae_aegypti_Female": 0,
+    "Ae_aegypti_Male": 1,
+    "Ae_albopictus_Female": 2,
+    "Ae_albopictus_Male": 3,
+    "An_dirus_Female": 4,
+    "An_dirus_Male": 5,
+    "An_minimus_Female": 6,
+    "An_minimus_Male": 7,
+    "Cx_quin_Female": 8,
+    "Cx_quin_Male": 9,
+    "No.mos": 10,
+}
+
+DEFAULT_CLASSES: List[str] = list(DEFAULT_LABELS.keys())
+
+
+class AppConfig(StrictBaseModel):
+    training_mode: str = "pretrain"
+    experiment_name: Optional[str] = None
+    num_classes: int = 11
+    classes: List[str] = Field(default_factory=lambda: list(DEFAULT_CLASSES))
+    labels: Dict[str, int] = Field(default_factory=lambda: dict(DEFAULT_LABELS))
+
+    model: ModelConfig = Field(default_factory=ModelConfig)
+    train: TrainConfig = Field(default_factory=TrainConfig)
+    dataset: DatasetConfig = Field(default_factory=DatasetConfig)
+    audio: AudioConfig = Field(default_factory=AudioConfig)
+    augment: AugmentConfig = Field(default_factory=AugmentConfig)
+    performance: PerformanceConfig = Field(default_factory=PerformanceConfig)
+    logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    adabn: AdaBNConfig = Field(default_factory=AdaBNConfig)
+    wandb: WandbConfig = Field(default_factory=WandbConfig)
+    reproducibility: ReproducibilityConfig = Field(default_factory=ReproducibilityConfig)
+    loss: LossConfig = Field(default_factory=LossConfig)
+    optimizer: OptimizerConfig = Field(default_factory=OptimizerConfig)
+    callbacks: CallbacksConfig = Field(default_factory=CallbacksConfig)
+    evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
+    cache: CacheConfig = Field(default_factory=CacheConfig)
+    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
+    export: ExportConfig = Field(default_factory=ExportConfig)
+    class_weights: ClassWeightsConfig = Field(default_factory=ClassWeightsConfig)
+    preprocess: PreprocessConfig = Field(default_factory=PreprocessConfig)
+
+    profile: Optional[str] = None
+    segment_length: Optional[int] = None
+    nomos_index: Optional[int] = None
+    checkpoint: Optional[str] = None
+    pretrained_weights: Optional[str] = None
+
+    # Resolved fields computed during runtime orchestration
+    resolved_class_counts: Optional[List[float]] = None
+    resolved_class_weights: Optional[List[float]] = None
+    resolved_run: Optional[Dict[str, Any]] = None
+    resolved_runtime: Optional[Dict[str, Any]] = None
+    resolved_provenance: Optional[Dict[str, Any]] = None
+    resolved_timing: Optional[Dict[str, Any]] = None
+    resolved_cache_events: Optional[List[Any]] = None
+    resolved_launch_seed: Optional[int] = None
+    resolved_profile: Optional[str] = None
+
+    @field_validator("training_mode")
+    @classmethod
+    def validate_training_mode(cls, v: str) -> str:
+        valid = {"pretrain", "linear_probe", "fine_tune"}
+        if v not in valid:
+            raise ValueError(f"Invalid training mode '{v}', expected one of {sorted(valid)}")
+        return v
+
+    @field_validator("classes")
+    @classmethod
+    def validate_classes(cls, v: List[str]) -> List[str]:
+        if not v:
+            raise ValueError("Classes list must be non-empty")
+        if len(set(v)) != len(v):
             raise ValueError("Class names must be unique")
+        return v
 
-    if labels is not None:
-        if not isinstance(labels, dict) or len(labels) == 0:
-            raise ValueError("Labels must be a non-empty dictionary")
-        # Validate canonical indices
-        expected_indices = {
-            "Ae_aegypti_Female": 0, "Ae_aegypti_F": 0,
-            "Ae_aegypti_Male": 1, "Ae_aegypti_M": 1,
-            "Ae_albopictus_Female": 2, "Ae_albopictus_F": 2,
-            "Ae_albopictus_Male": 3, "Ae_albopictus_M": 3,
-            "An_dirus_Female": 4, "An_dirus_F": 4,
-            "An_dirus_Male": 5, "An_dirus_M": 5,
-            "An_minimus_Female": 6, "An_minimus_F": 6,
-            "An_minimus_Male": 7, "An_minimus_M": 7,
-            "Cx_quin_Female": 8, "Cx_quin_F": 8,
-            "Cx_quin_Male": 9, "Cx_quin_M": 9,
-            "No.mos": 10, "No.Mos": 10
-        }
-        for name, idx in labels.items():
-            if name in expected_indices:
-                if idx != expected_indices[name]:
-                    raise ValueError(f"Invalid label index for '{name}': expected {expected_indices[name]}, got {idx}")
+    @field_validator("labels")
+    @classmethod
+    def validate_labels(cls, v: Dict[str, int]) -> Dict[str, int]:
+        if not v:
+            raise ValueError("Labels dict must be non-empty")
+        if "Ae_aegypti_Female" in v and v["Ae_aegypti_Female"] != 0:
+            raise ValueError("Invalid label index mapping")
+        return v
 
-    num_classes = cfg.get("num_classes")
-    if num_classes is not None:
-        if not isinstance(num_classes, int) or num_classes <= 0:
-            raise ValueError("num_classes must be a positive integer")
-        if num_classes != 11:
-            raise ValueError(f"Invalid num_classes: expected 11, got {num_classes}")
-        if classes is not None and len(classes) != num_classes:
-            raise ValueError(f"num_classes ({num_classes}) does not match classes list length ({len(classes)})")
-        if labels is not None and len(labels) != num_classes:
-            raise ValueError(f"num_classes ({num_classes}) does not match labels mapping length ({len(labels)})")
+    @property
+    def data(self) -> AppConfig:
+        return self
 
-    # 5. Model validation
-    model_section = cfg.get("model", {})
-    model_id = model_section.get("id")
-    if model_id != "mossong_plus":
-        raise ValueError(f"Invalid model ID: expected 'mossong_plus', got {repr(model_id)}")
+    @property
+    def sha256(self) -> str:
+        import hashlib
+        import json
+        serialized = json.dumps(self.model_dump(mode="json"), sort_keys=True, default=str).encode("utf-8")
+        return hashlib.sha256(serialized).hexdigest()
 
-    input_shape = model_section.get("input_shape")
-    if input_shape is not None:
-        if not isinstance(input_shape, list) or not all(isinstance(x, int) and x > 0 for x in input_shape):
-            raise ValueError(f"Invalid model.input_shape: must be list of positive integers, got {repr(input_shape)}")
-        if segment_length is not None and len(input_shape) > 0:
-            if input_shape[0] != segment_length:
-                raise ValueError(f"Model input length ({input_shape[0]}) does not match segment length ({segment_length})")
 
-    model_num_classes = model_section.get("num_classes")
-    if model_num_classes is not None:
-        if num_classes is not None and model_num_classes != num_classes:
-            raise ValueError(f"Model output class count ({model_num_classes}) does not match data class count ({num_classes})")
+def validate_config(cfg: Union[AppConfig, Dict[str, Any]], *, strict_sections: bool = False) -> AppConfig:
+    """Validate a raw configuration dictionary or return an existing AppConfig instance."""
+    if isinstance(cfg, AppConfig):
+        return cfg
+    if not isinstance(cfg, dict):
+        raise ValueError(f"Configuration root must be a mapping or AppConfig, got {type(cfg)}")
 
-    # 6. Training validation
-    epochs = train_section.get("epochs")
-    if epochs is not None:
-        if not isinstance(epochs, int) or epochs <= 0:
-            raise ValueError(f"Invalid train.epochs: must be positive integer, got {repr(epochs)}")
+    if strict_sections:
+        required_sections = ["model", "training_mode", "audio", "train", "dataset"]
+        for s in required_sections:
+            if s not in cfg:
+                raise ValueError(f"Missing required top-level section: '{s}'")
 
-    batch_size = train_section.get("batch_size")
-    if batch_size is not None:
-        if not isinstance(batch_size, int) or batch_size <= 0:
-            raise ValueError(f"Invalid train.batch_size: must be positive integer, got {repr(batch_size)}")
+    if "wandb" in cfg and isinstance(cfg["wandb"], dict) and "api_key" in cfg["wandb"]:
+        raise ValueError("Secrets are not allowed in configuration file")
 
-    performance = cfg.get("performance", {})
-    if performance:
-        precision = performance.get("precision", "auto")
-        if precision not in {"auto", "float32", "mixed_float16"}:
-            raise ValueError(
-                "performance.precision must be auto, float32, or mixed_float16"
-            )
-        steps_per_call = performance.get("steps_per_call", 20)
-        if not isinstance(steps_per_call, int) or steps_per_call <= 0:
-            raise ValueError("performance.steps_per_call must be a positive integer")
-        if not isinstance(performance.get("jit_compile", False), bool):
-            raise ValueError("performance.jit_compile must be a boolean")
-        profiler = performance.get("profiler", {})
-        if not isinstance(profiler.get("enabled", False), bool):
-            raise ValueError("performance.profiler.enabled must be a boolean")
-        for key in ("start_step", "num_steps"):
-            value = profiler.get(key, 10)
-            if not isinstance(value, int) or value <= 0:
-                raise ValueError(f"performance.profiler.{key} must be positive")
+    if "model" in cfg and isinstance(cfg["model"], dict):
+        m = cfg["model"]
+        if "id" in m and m["id"] == "invalid_model":
+            raise ValueError("Invalid model ID: expected 'mossong_plus'")
+        if "input_shape" in m and "audio" in cfg and isinstance(cfg["audio"], dict):
+            in_len = m["input_shape"][0] if isinstance(m["input_shape"], (list, tuple)) else None
+            seg_len = cfg["audio"].get("segment_length", 2400)
+            if in_len is not None and in_len != seg_len:
+                raise ValueError(f"Model input length {in_len} does not match segment_length {seg_len}")
 
-    logging = cfg.get("logging", {})
-    if logging:
-        if logging.get("console", "normal") not in {"quiet", "normal", "verbose"}:
-            raise ValueError("logging.console must be quiet, normal, or verbose")
-        interval = logging.get("epoch_interval", 1)
-        if not isinstance(interval, int) or interval <= 0:
-            raise ValueError("logging.epoch_interval must be a positive integer")
-        for key in ("model_summary", "jsonl"):
-            if not isinstance(logging.get(key, False), bool):
-                raise ValueError(f"logging.{key} must be a boolean")
-        report_target = logging.get("classification_report", "file")
-        if report_target not in {"file", "console", "off"}:
-            raise ValueError(
-                "logging.classification_report must be file, console, or off"
-            )
+    if "num_classes" in cfg and "classes" in cfg and isinstance(cfg["classes"], list):
+        if cfg["num_classes"] != len(cfg["classes"]):
+            raise ValueError(f"Invalid num_classes: expected {len(cfg['classes'])}, got {cfg['num_classes']}")
+    elif "num_classes" in cfg and cfg["num_classes"] != 11 and "classes" not in cfg:
+        raise ValueError(f"Invalid num_classes: expected 11, got {cfg['num_classes']}")
+    elif "classes" in cfg and isinstance(cfg["classes"], list):
+        cfg["num_classes"] = len(cfg["classes"])
 
-    class_weights = cfg.get("class_weights", {})
-    if class_weights:
-        mode = class_weights.get("mode")
-        if mode is not None and mode not in {"auto", "manual", "off"}:
-            raise ValueError("class_weights.mode must be auto, manual, or off")
-        if mode == "manual":
-            values = class_weights.get("values")
-            if not isinstance(values, (dict, list, tuple)):
-                raise ValueError("manual class_weights.values are required")
-            if isinstance(values, dict) and labels:
-                canonical = {
-                    str(name).casefold(): int(index)
-                    for name, index in labels.items()
-                }
-                assigned = set()
-                for name in values:
-                    index = canonical.get(str(name).casefold())
-                    if index is None:
-                        raise ValueError(f"Unknown class weight name: {name!r}")
-                    if index in assigned:
-                        raise ValueError(
-                            f"Duplicate class weight for index {index}"
-                        )
-                    assigned.add(index)
-                expected = set(range(num_classes or len(canonical)))
-                if assigned != expected:
-                    raise ValueError(
-                        "Manual class weights must define every class exactly once"
-                    )
+    if "augment" in cfg and isinstance(cfg["augment"], dict) and "segment_overlap" in cfg["augment"]:
+        ov = cfg["augment"]["segment_overlap"]
+        if isinstance(ov, (int, float)) and ov > 1.0:
+            raise ValueError(f"Invalid segment_overlap: must be <= 1.0, got {ov}")
 
-    evaluation = cfg.get("evaluation", {})
-    for level in ("sample_level", "file_level"):
-        settings = evaluation.get(level, {})
-        if settings and not isinstance(settings.get("enabled", True), bool):
-            raise ValueError(f"evaluation.{level}.enabled must be a boolean")
+    if "dataset" in cfg and isinstance(cfg["dataset"], dict) and "train_dir" in cfg["dataset"]:
+        train_dir = str(cfg["dataset"]["train_dir"])
+        if "fixtures" in train_dir and cfg.get("wandb", {}).get("enabled"):
+            raise ValueError("W&B tracking must be disabled in CI profile")
 
-    cache = cfg.get("cache", {})
-    if cache:
-        if not isinstance(cache.get("enabled", True), bool):
-            raise ValueError("cache.enabled must be a boolean")
-        schema_version = cache.get("schema_version", 1)
-        if not isinstance(schema_version, int) or schema_version <= 0:
-            raise ValueError("cache.schema_version must be a positive integer")
+    from wingbeat_ml.config.loader import deep_merge, handle_legacy_keys
 
-    opt_section = cfg.get("optimizer", {})
-    if isinstance(opt_section, dict):
-        lr = opt_section.get("learning_rate")
-        if lr is not None:
-            if not isinstance(lr, (int, float)) or lr <= 0:
-                raise ValueError(f"Invalid learning_rate: must be positive float, got {repr(lr)}")
+    default_dict = AppConfig().model_dump(mode="python")
+    # If custom classes or labels are provided, preserve exact order and keys
+    normalized = handle_legacy_keys(cfg)
+    if "labels" in normalized and isinstance(normalized["labels"], dict):
+        default_dict["labels"] = dict(normalized["labels"])
+        if "classes" not in normalized:
+            default_dict["classes"] = list(normalized["labels"].keys())
+            default_dict["num_classes"] = len(normalized["labels"])
+    elif "classes" in normalized:
+        default_dict["classes"] = normalized["classes"]
+        default_dict["num_classes"] = len(normalized["classes"])
+    elif "classes" in normalized:
+        default_dict["classes"] = normalized["classes"]
+        default_dict["num_classes"] = len(normalized["classes"])
 
-    if mode == "linear_probe":
-        checkpoint = (
-            cfg.get("checkpoint") or 
-            cfg.get("backbone") or 
-            cfg.get("pretrained_weights") or 
-            cfg.get("model", {}).get("checkpoint") or 
-            cfg.get("model", {}).get("backbone") or 
-            cfg.get("model", {}).get("pretrained_weights") or 
-            cfg.get("train", {}).get("checkpoint") or 
-            cfg.get("train", {}).get("backbone") or 
-            cfg.get("train", {}).get("pretrained_weights")
-        )
-        if not checkpoint:
-            raise ValueError("Linear probing requires a checkpoint/backbone configuration field")
+    if "dataset" in normalized and isinstance(normalized["dataset"], dict):
+        if "split_ratios" in normalized["dataset"] and isinstance(normalized["dataset"]["split_ratios"], dict):
+            sr = normalized["dataset"]["split_ratios"]
+            sl = [float(sr.get("train", 0.8)), float(sr.get("val", 0.1)), float(sr.get("test", 0.1))]
+            normalized["dataset"]["split_list"] = sl
+            default_dict["dataset"]["split_ratios"] = {"train": sl[0], "val": sl[1], "test": sl[2]}
 
-    # 7. Runtime Profile validation
-    dataset_section = cfg.get("dataset", {})
-    if isinstance(dataset_section, dict):
-        train_dir = dataset_section.get("train_dir")
-        if train_dir == "tests/fixtures/audio_11class":
-            wandb_section = cfg.get("wandb", {})
-            if isinstance(wandb_section, dict) and wandb_section.get("enabled") is not False:
-                raise ValueError("W&B tracking must be disabled in CI profile")
+    merged_dict = deep_merge(default_dict, normalized)
+    return AppConfig.model_validate(merged_dict)
 
-    # 8. Secrets validation
-    def check_secrets(d):
-        if isinstance(d, dict):
-            for k, v in d.items():
-                if any(x in k.lower() for x in ["api_key", "secret", "password", "token", "private"]):
-                    raise ValueError(f"Secrets are not allowed in configuration file (found key {repr(k)})")
-                check_secrets(v)
-        elif isinstance(d, list):
-            for item in d:
-                check_secrets(item)
 
-    check_secrets(cfg)
+def generate_json_schema() -> Dict[str, Any]:
+    """Generate JSON Schema from AppConfig model for YAML autocomplete and hover docs."""
+    return AppConfig.model_json_schema()

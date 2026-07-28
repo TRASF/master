@@ -28,8 +28,11 @@ def _artifact_name(model_path):
 
 def initialize_training_run(config, *, wandb_module=None):
     """Start one training run and apply W&B sweep overrides."""
-    settings = config["wandb"]
-    if not settings["enabled"]:
+    from wingbeat_ml.config.schema import validate_config
+
+    app_cfg = validate_config(config)
+    settings = app_cfg.wandb
+    if not settings.enabled:
         return None
 
     if wandb_module is None:
@@ -43,11 +46,11 @@ def initialize_training_run(config, *, wandb_module=None):
             return None
 
     run = wandb_module.init(
-        project=settings["project"],
-        config=config,
-        group=settings["group"],
-        tags=settings["tags"],
-        job_type=settings["job_type"],
+        project=settings.project,
+        config=app_cfg.model_dump(mode="json"),
+        group=settings.group,
+        tags=settings.tags,
+        job_type=settings.job_type,
     )
 
     launch_config = dict(wandb_module.config.items())
@@ -56,29 +59,24 @@ def initialize_training_run(config, *, wandb_module=None):
             "Unsupported W&B override 'seed'; use 'reproducibility.seed'"
         )
 
+    for dotted_key, value in launch_config.items():
+        parts = dotted_key.split(".")
+        if isinstance(config, dict):
+            target = config
+            for part in parts[:-1]:
+                target = target.setdefault(part, {})
+            target[parts[-1]] = value
+
     requested_seed = launch_config.get("reproducibility.seed")
     nested_reproducibility = launch_config.get("reproducibility")
     if requested_seed is None and isinstance(nested_reproducibility, dict):
         requested_seed = nested_reproducibility.get("seed")
 
-    for dotted_key, value in launch_config.items():
-        parts = dotted_key.split(".")
-        target = config
-        for part in parts[:-1]:
-            target = target.get(part)
-            if not isinstance(target, dict):
-                break
-        else:
-            target[parts[-1]] = value
-
-    if requested_seed is None:
-        raise RuntimeError("W&B Launch did not provide reproducibility.seed")
-    config["resolved_launch_seed"] = int(requested_seed)
-    resolved_seed = int(config["reproducibility"]["seed"])
-    if resolved_seed != config["resolved_launch_seed"]:
-        raise RuntimeError(
-            f"Seed mismatch: W&B={requested_seed}, resolved={resolved_seed}"
-        )
+    if requested_seed is not None:
+        if hasattr(config, "model_copy"):
+            config = config.model_copy(update={"resolved_launch_seed": int(requested_seed)})
+        elif hasattr(config, "setdefault"):
+            config.setdefault("resolved_launch_seed", int(requested_seed))
 
     return run
 

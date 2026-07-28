@@ -1,41 +1,44 @@
 """Assembly of existing domain components for canonical pipelines."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 import json
 from pathlib import Path
 import time
+from typing import Any, Dict, Optional, Tuple, Union
 
+from wingbeat_ml.config.schema import AppConfig
 from wingbeat_ml.data.bundle import DatasetBundle
 
 
 @dataclass(frozen=True)
 class SupervisedComponents:
-    dataset_builder: object
-    train_dataset: object
-    validation_dataset: object
-    test_dataset: object
-    model: object
-    loss_fn: object
-    evaluator: object
-    class_weights: object
-    bundle: DatasetBundle | None = None
+    dataset_builder: Any
+    train_dataset: Any
+    validation_dataset: Any
+    test_dataset: Any
+    model: Any
+    loss_fn: Any
+    evaluator: Any
+    class_weights: Any
+    bundle: Optional[DatasetBundle] = None
 
 
-def build_dataset_bundle(config, *, return_builder=False):
+def build_dataset_bundle(config: AppConfig, *, return_builder: bool = False):
     """Build configured train, validation, and test datasets."""
     from wingbeat_ml.data.dataset import build_datasets
 
-    dataset = config["dataset"]
     return build_datasets(
-        dataset["train_dir"],
+        config.dataset.train_dir,
         config,
-        val_dir=dataset["val_dir"],
-        test_dir=dataset["test_dir"],
+        val_dir=config.dataset.val_dir,
+        test_dir=config.dataset.test_dir,
         return_builder=return_builder,
     )
 
 
-def build_model_component(config, model_config, *, batch_size=None):
+def build_model_component(config: AppConfig, model_config: Any, *, batch_size: Optional[int] = None):
     """Build the configured model through the canonical registry."""
     from wingbeat_ml.registry import build_model
 
@@ -45,36 +48,30 @@ def build_model_component(config, model_config, *, batch_size=None):
     return build_model(config, model_config, **arguments)
 
 
-def build_warmup_dataset(builder, config):
+def build_warmup_dataset(builder: Any, config: AppConfig):
     """Build a no-augmentation train dataset for warmup epochs."""
-    train_cfg = config["train"]
     return builder._create_pipeline(
         builder.train_paths,
         builder.train_labels,
         augment=False,
-        batch_size=int(train_cfg["batch_size"]),
-        shuffle=bool(train_cfg.get("shuffle", True)),
+        batch_size=config.train.batch_size,
+        shuffle=config.train.shuffle,
         one_hot=True,
     )
 
 
-def _synchronize_loss_activation(config):
-    activation = config["model"]["output_activation"]
-    config["loss"]["from_logits"] = activation is None
-
-
 def build_supervised_components(
-    config,
-    model_config,
+    config: AppConfig,
+    model_config: Any,
     *,
-    show_class_counts=False,
-):
+    show_class_counts: bool = False,
+) -> SupervisedComponents:
     """Build the common dataset, model, loss, and evaluation stack."""
     from wingbeat_ml.evaluation import ModelEvaluator
     from wingbeat_ml.pipelines.train import resolve_training_class_weights
     from wingbeat_ml.training import build_loss
 
-    console = str(config.get("logging", {}).get("console", "normal"))
+    console = config.logging.console
     if console != "quiet":
         print("Setting up datasets...")
     dataset_started = time.perf_counter()
@@ -83,27 +80,26 @@ def build_supervised_components(
         return_builder=True,
     )
     from wingbeat_ml.data.cache import consume_cache_events
-    config.setdefault("resolved_timing", {})[
-        "dataset_setup_seconds"
-    ] = time.perf_counter() - dataset_started
-    config["resolved_cache_events"] = consume_cache_events()
-    cache_identities = sorted(
-        {event["key"] for event in config["resolved_cache_events"]}
-    )
-    config.setdefault("resolved_provenance", {})[
-        "cache_identity"
-    ] = cache_identities
-    if console != "quiet":
-        print(f"Resolved cache identity: {cache_identities}")
+
+    dataset_setup_seconds = time.perf_counter() - dataset_started
+    cache_events = consume_cache_events()
+    cache_identities = sorted({event["key"] for event in cache_events})
+
+    timing_dict = dict(config.resolved_timing or {})
+    timing_dict["dataset_setup_seconds"] = dataset_setup_seconds
+
+    provenance_dict = dict(config.resolved_provenance or {})
+    provenance_dict["cache_identity"] = cache_identities
 
     if console != "quiet":
+        print(f"Resolved cache identity: {cache_identities}")
         print("Building model...")
+
     model_started = time.perf_counter()
     model = build_model_component(config, model_config)
-    config.setdefault("resolved_timing", {})[
-        "model_build_seconds"
-    ] = time.perf_counter() - model_started
-    if config.get("logging", {}).get("model_summary", False):
+    timing_dict["model_build_seconds"] = time.perf_counter() - model_started
+
+    if config.logging.model_summary:
         model.summary()
 
     class_weights = resolve_training_class_weights(
@@ -111,18 +107,19 @@ def build_supervised_components(
         builder,
         show_counts=show_class_counts,
     )
-    _synchronize_loss_activation(config)
-    loss_fn = build_loss(config["loss"])
-    evaluator = ModelEvaluator(model, config["classes"], loss_fn)
 
-    if config.get("wandb", {}).get("enabled", False):
+    from_logits = config.model.output_activation is None
+    loss_fn = build_loss(config.loss, from_logits=from_logits)
+    evaluator = ModelEvaluator(model, config.classes, loss_fn)
+
+    if config.wandb.enabled:
         try:
             import wandb
             if wandb.run is not None:
                 wandb.config.update(
                     {
-                        "resolved_timing": config["resolved_timing"],
-                        "resolved_cache_events": config["resolved_cache_events"],
+                        "resolved_timing": timing_dict,
+                        "resolved_cache_events": cache_events,
                         "resolved.cache_identity": cache_identities,
                     },
                     allow_val_change=True,
@@ -130,14 +127,14 @@ def build_supervised_components(
         except ImportError:
             pass
 
-    resolved_run = config.get("resolved_run", {})
+    resolved_run = config.resolved_run or {}
     save_path = resolved_run.get("save_path")
     if save_path:
         metadata_path = Path(save_path).parent / "run_metadata.json"
         metadata_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = metadata_path.with_suffix(".json.tmp")
         temporary.write_text(
-            json.dumps(config, indent=2, sort_keys=True, default=str) + "\n",
+            json.dumps(config.model_dump(mode="json"), indent=2, sort_keys=True, default=str) + "\n",
             encoding="utf-8",
         )
         temporary.replace(metadata_path)

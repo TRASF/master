@@ -3,6 +3,7 @@
 import tensorflow as tf
 from wingbeat_ml.data.loading import DataLoader
 from wingbeat_ml.augmentations.transforms import AudioAugmentor
+from wingbeat_ml.config.schema import AugmentConfig
 import numpy as np
 import os
 from pathlib import Path
@@ -52,7 +53,7 @@ class SupervisedDataset:
         segment_length: int = 2400,
         classes: list = None,
         noise_dirs: list = None,
-        augment_cfg: dict = None,
+        augment_cfg: AugmentConfig | None = None,
         seed: int = 42,
         deterministic: bool = False,
         nomos_index: int = None,
@@ -116,20 +117,14 @@ class SupervisedDataset:
     def _compute_balanced_class_weights(self, file_paths, labels):
         import wave
         # Retrieve average overlap/step size
-        raw_config = self.augmentor.cfg.get('config', {})
-        overlap_cfg = raw_config.get('segment_overlap') or raw_config.get('overlap') or {}
-        if isinstance(overlap_cfg, dict):
-            overlap_range = overlap_cfg.get('train', [0.0, 0.8])
-        elif isinstance(overlap_cfg, (list, tuple)) and len(overlap_cfg) == 2:
-            overlap_range = overlap_cfg
-        else:
-            overlap_range = [0.0, 0.8]
-
+        overlap_range = getattr(self.augmentor.aug_cfg.segment_overlap, "train", [0.0, 0.8])
+        if not isinstance(overlap_range, (list, tuple)):
+            overlap_range = [0.0, float(overlap_range)]
         avg_overlap = np.mean(overlap_range)
         avg_step = int(self.segment_length * (1.0 - avg_overlap))
         avg_step = max(avg_step, 1)
 
-        max_segments = raw_config.get('max_segments_per_file', 100)
+        max_segments = getattr(self.augmentor.aug_cfg, "max_segments_per_file", 100)
 
         counts = np.zeros(self.data_loader.num_classes, dtype=np.float32)
         for path, label in zip(file_paths, labels):
@@ -219,7 +214,7 @@ class SupervisedDataset:
             "sample_rate": self.sample_rate,
             "segment_length": self.segment_length,
             "file_extensions": self.data_loader.file_exts,
-            "augment": self.augmentor.cfg,
+            "augment": self.augmentor.aug_cfg.model_dump(mode="json") if hasattr(self.augmentor.aug_cfg, "model_dump") else self.augmentor.cfg,
             "stage": "audio" if augment else "segments",
         }
         cache_key = stable_cache_key(
@@ -316,9 +311,7 @@ class SupervisedDataset:
             deterministic=self.deterministic,
         )
 
-        noise_probability = float(
-            self.augmentor.noise_cfg.get("p", 0.0)
-        )
+        noise_probability = self.augmentor.noise_cfg.p
 
         use_noise = augment and noise_probability > 0.0
 
@@ -329,39 +322,35 @@ class SupervisedDataset:
         )
 
         if use_noise:
-            if not self.noise_dirs:
-                raise ValueError(
-                    "noise_overlay.p is greater than zero, but no "
-                    "noise directories were configured."
+            valid_noise_dirs = [d for d in (self.noise_dirs or []) if Path(d).exists()]
+            if valid_noise_dirs:
+                noise_ds = self.augmentor.build_noise_dataset(
+                    valid_noise_dirs,
+                    load_fn=lambda path: self._tf_load_full_audio(path),
                 )
 
-            noise_ds = self.augmentor.build_noise_dataset(
-                self.noise_dirs,
-                load_fn=lambda path: self._tf_load_full_audio(path),
-            )
+                if noise_ds is None:
+                    raise ValueError(
+                        "noise_overlay.p is greater than zero, but no "
+                        ".wav or .npy noise files were found."
+                    )
 
-            if noise_ds is None:
-                raise ValueError(
-                    "noise_overlay.p is greater than zero, but no "
-                    ".wav or .npy noise files were found."
-                )
-
-            dataset = tf.data.Dataset.zip((dataset, noise_ds))
-
-            dataset = dataset.map(
-                lambda item, noise: (
-                    self.augmentor.apply_post_processing(
+                dataset = tf.data.Dataset.zip((dataset, noise_ds))
+                dataset = dataset.map(
+                    lambda item, noise: self.augmentor.apply_post_processing(
                         item[0],
                         item[1],
                         item[2],
                         noise=noise,
                         augment=True,
-                    )
-                ),
-                num_parallel_calls=post_parallel_calls,
-                deterministic=self.deterministic,
-            )
-        else:
+                    ),
+                    num_parallel_calls=post_parallel_calls,
+                    deterministic=self.deterministic,
+                )
+            else:
+                use_noise = False
+
+        if not use_noise:
             dataset = dataset.map(
                 lambda frame, label, seed, sample_id: (
                     self.augmentor.apply_post_processing(
@@ -411,8 +400,8 @@ class SupervisedDataset:
 
         dataset = dataset.batch(batch_size)
 
-        mixup_cfg = self.augmentor.cfg.get("mixup", {})
-        mixup_probability = float(mixup_cfg.get("p", 0.0))
+        mixup_cfg = self.augmentor.aug_cfg.mixup
+        mixup_probability = mixup_cfg.p
 
         if augment and mixup_probability > 0.0:
             mixup_seed_ds = tf.data.Dataset.random(seed=self.seed + 888 if self.seed is not None else None, rerandomize_each_iteration=True)
@@ -434,8 +423,8 @@ class SupervisedDataset:
 
     @tf.function
     def _apply_targeted_mixup(self, x, y, mixup_cfg, seed):
-        p = float(mixup_cfg.get('p', 1.0))
-        alpha = float(mixup_cfg.get('alpha', 0.2))
+        p = float(mixup_cfg.p) if hasattr(mixup_cfg, "p") else float(mixup_cfg.get("p", 1.0))
+        alpha = float(mixup_cfg.alpha) if hasattr(mixup_cfg, "alpha") else float(mixup_cfg.get("alpha", 0.2))
 
         batch_size = tf.shape(x)[0]
 
@@ -453,7 +442,7 @@ class SupervisedDataset:
         num_classes = self.data_loader.num_classes
         allowed = np.zeros((num_classes, num_classes), dtype=bool)
 
-        mappings = mixup_cfg.get('class_mappings', {})
+        mappings = getattr(mixup_cfg, "class_mappings", None) if not isinstance(mixup_cfg, dict) else mixup_cfg.get('class_mappings', {})
         if mappings:
             for src_class_str, allowed_list in mappings.items():
                 src_class = int(src_class_str)
@@ -468,7 +457,7 @@ class SupervisedDataset:
         pair_indices = tf.stack([label1, label2], axis=1)
         is_mapped_pair = tf.gather_nd(allowed_tensor, pair_indices)
 
-        outside_prob_scale = float(mixup_cfg.get(' ', 0.2))
+        outside_prob_scale = float(getattr(mixup_cfg, "outside_prob_scale", 0.2)) if not isinstance(mixup_cfg, dict) else float(mixup_cfg.get("outside_prob_scale", 0.2))
         if mappings:
             prob_scale = tf.where(is_mapped_pair, tf.ones([batch_size]), tf.fill([batch_size], outside_prob_scale))
         else:
@@ -612,76 +601,33 @@ def build_datasets(
     Returns:
         Dataset tuple, optionally prefixed by the SupervisedDataset builder.
     """
-    train_cfg = config.get("train", {})
-    repro_cfg = config.get("reproducibility", {})
-    audio_cfg = config.get("audio", {})
-    dataset_cfg = config.get("dataset", {})
-    legacy_data_cfg = config.get("data", {})
-    augment_cfg = (
-        config.get("augment", config.get("augmentation", {})) or {}
-    )
+    from wingbeat_ml.config.schema import validate_config
 
-    seed = int(repro_cfg.get("seed", train_cfg.get("seed", 42)))
-    deterministic = bool(
-        repro_cfg.get(
-            "deterministic_data",
-            train_cfg.get("deterministic", False),
-        )
-    )
-    batch_size = int(train_cfg.get("batch_size", 32))
-    shuffle = bool(
-        train_cfg.get(
-            "shuffle",
-            legacy_data_cfg.get("shuffle", True),
-        )
-    )
-
-    classes = config.get(
-        "classes",
-        legacy_data_cfg.get("classes"),
-    )
-    labels_dict = config.get(
-        "labels",
-        legacy_data_cfg.get("labels"),
-    )
-    segment_length = int(
-        audio_cfg.get(
-            "segment_length",
-            legacy_data_cfg.get("segment_length", 2400),
-        )
-    )
-    sample_rate = int(
-        audio_cfg.get(
-            "sample_rate",
-            legacy_data_cfg.get("sample_rate", 8000),
-        )
-    )
-
-    split_value = dataset_cfg.get(
-        "split_list",
-        dataset_cfg.get(
-            "split_ratios",
-            legacy_data_cfg.get("split", [0.8, 0.1, 0.1]),
-        ),
-    )
-    if isinstance(split_value, Mapping):
-        split = [
-            float(split_value["train"]),
-            float(split_value["val"]),
-            float(split_value["test"]),
-        ]
-    else:
-        split = list(split_value)
-
+    app_cfg = validate_config(config)
+    seed = app_cfg.reproducibility.seed
+    deterministic = app_cfg.reproducibility.deterministic_data
+    batch_size = app_cfg.train.batch_size
+    shuffle = app_cfg.train.shuffle
+    classes = app_cfg.classes
+    labels_dict = app_cfg.labels
+    segment_length = app_cfg.audio.segment_length
+    sample_rate = app_cfg.audio.sample_rate
+    split = [
+        app_cfg.dataset.split_ratios.train,
+        app_cfg.dataset.split_ratios.val,
+        app_cfg.dataset.split_ratios.test,
+    ]
     if val_dir is None:
-        val_dir = dataset_cfg.get("val_dir")
+        val_dir = app_cfg.dataset.val_dir
     if test_dir is None:
-        test_dir = dataset_cfg.get("test_dir")
+        test_dir = app_cfg.dataset.test_dir
     if noise_dirs is None:
-        configured_noise = augment_cfg.get("noise_banks")
-        noise_dirs = list(configured_noise) if configured_noise else None
-
-    # Resolve nomos_index from classes list
+        noise_dirs = list(app_cfg.augment.noise_banks)
+    augment_cfg = app_cfg.augment
+    cache_cfg = {
+        **app_cfg.cache.model_dump(),
+        "manifest_sha256": app_cfg.dataset.manifest_sha256 or "",
+    }
     nomos_index = None
     if classes:
         for i, name in enumerate(classes):
@@ -703,10 +649,7 @@ def build_datasets(
         deterministic=deterministic,
         nomos_index=nomos_index,
         labels_dict=labels_dict,
-        cache_cfg={
-            **(config.get("cache", {}) or {}),
-            "manifest_sha256": dataset_cfg.get("manifest_sha256", ""),
-        },
+        cache_cfg=cache_cfg,
     )
 
     datasets = ds.build(

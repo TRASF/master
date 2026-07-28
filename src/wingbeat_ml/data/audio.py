@@ -148,8 +148,16 @@ def preprocess_audio(
     Returns:
         float32 numpy array at config sample_rate.
     """
-    cfg = config or {}
-    target_rate = int(cfg.get("sample_rate", 8000))
+    from wingbeat_ml.config.schema import AppConfig
+
+    if isinstance(config, AppConfig):
+        target_rate = config.audio.sample_rate
+    elif hasattr(config, "sample_rate"):
+        target_rate = int(getattr(config, "sample_rate"))
+    elif hasattr(config, "audio") and hasattr(getattr(config, "audio"), "sample_rate"):
+        target_rate = int(getattr(getattr(config, "audio"), "sample_rate"))
+    else:
+        target_rate = 8000
     waveform = resample_audio(waveform, source_rate, target_rate)
     return waveform.astype(np.float32)
 

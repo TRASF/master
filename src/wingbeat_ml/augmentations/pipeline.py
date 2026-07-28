@@ -29,6 +29,7 @@ from __future__ import annotations
 from typing import Mapping
 
 from wingbeat_ml.augmentations.transforms import AudioAugmentor
+from wingbeat_ml.config.schema import AugmentConfig
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +50,7 @@ TRANSFORMS: dict[str, str] = {
 
 
 def build_augmentor(
-    augment_cfg: Mapping[str, object],
+    augment_cfg: AugmentConfig | Mapping[str, object],
     segment_length: int = 2400,
     seed: int = 42,
     deterministic: bool = False,
@@ -80,19 +81,24 @@ def build_augmentor(
         "rms_norm",
     })
 
-    unknown = []
-    for key in augment_cfg:
-        if key not in TRANSFORMS and key not in _non_transform_keys:
-            unknown.append(key)
-    if unknown:
-        raise ValueError(
-            f"Unknown augmentation transform name(s): {unknown}. "
-            f"Recognised names: {sorted(TRANSFORMS)}"
-        )
+    if isinstance(augment_cfg, AugmentConfig):
+        config = augment_cfg
+    else:
+        unknown = [
+            key
+            for key in augment_cfg
+            if key not in TRANSFORMS and key not in _non_transform_keys
+        ]
+        if unknown:
+            raise ValueError(
+                f"Unknown augmentation transform name(s): {unknown}. "
+                f"Recognised names: {sorted(TRANSFORMS)}"
+            )
+        config = AugmentConfig.model_validate(augment_cfg)
 
     return AudioAugmentor(
         segment_length=segment_length,
-        config=dict(augment_cfg),
+        config=config,
         seed=seed,
         deterministic=deterministic,
         nomos_index=nomos_index,

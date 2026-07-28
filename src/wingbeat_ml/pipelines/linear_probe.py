@@ -1,6 +1,9 @@
 """Canonical linear-probe pipeline."""
 
+from __future__ import annotations
+
 from pathlib import Path
+from typing import Optional, Union
 
 from wingbeat_ml.pipelines.helpers import (
     build_supervised_components,
@@ -13,20 +16,20 @@ from wingbeat_ml.pipelines.train import run_training
 
 
 def train_linear_probe(
-    defaults_path="configs/defaults.yaml",
-    model_cfg_path="configs/model.yaml",
-    pretrained_weights=None,
-    save_path=None,
-    results_dir=None,
+    defaults_path: Union[str, Path] = "configs/defaults.yaml",
+    model_cfg_path: Union[str, Path] = "configs/model.yaml",
+    pretrained_weights: Optional[Union[str, Path]] = None,
+    save_path: Optional[str] = None,
+    results_dir: Optional[str] = None,
 ):
     """Train only the configured model's classification head."""
     config, model_config = load_pipeline_configuration(
         defaults_path,
         model_cfg_path,
     )
-    config["training_mode"] = "linear_probe"
-    if config["model"]["output_activation"] is None:
-        config["model"]["output_activation"] = "softmax"
+    output_act = config.model.output_activation or "softmax"
+    model_cfg = config.model.model_copy(update={"output_activation": output_act})
+    config = config.model_copy(update={"training_mode": "linear_probe", "model": model_cfg})
 
     run = prepare_training_run(
         config,
@@ -36,11 +39,12 @@ def train_linear_probe(
     )
     components = build_supervised_components(config, model_config)
 
-    weights = Path(
+    weights_target = (
         pretrained_weights
-        or config["model"].get("pretrained_weights")
-        or config["model"]["checkpoint"]
+        or config.model.pretrained_weights
+        or config.model.checkpoint
     )
+    weights = Path(weights_target) if weights_target else Path("non_existent_weights")
     if weights.exists():
         print(f"Loading pre-trained contrastive weights from {weights}...")
         components.model.load_weights(weights)
@@ -50,7 +54,7 @@ def train_linear_probe(
             "Training from scratch."
         )
 
-    epochs = config["train"]["epochs"]
+    epochs = config.train.epochs
     print("\n--- Linear Probing (Training Only Dense Head) ---")
     print(f"Starting linear probe training for {epochs} epochs...")
     run_training(

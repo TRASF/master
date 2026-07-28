@@ -1,24 +1,29 @@
 """Low-overhead console, JSONL, and evaluation coordination."""
 
+from __future__ import annotations
+
 import json
 from pathlib import Path
+from typing import Any, Callable, Dict
+
+from wingbeat_ml.config.schema import AppConfig
 
 
 class JsonlMetricLogger:
     """Append epoch metrics without rewriting an existing history."""
 
-    def __init__(self, path):
+    def __init__(self, path: Union[str, Path]):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
-    def _json_value(value):
+    def _json_value(value: Any) -> Any:
         item = getattr(value, "item", None)
         if callable(item):
             return item()
         return value
 
-    def log(self, values):
+    def log(self, values: Dict[str, Any]) -> None:
         record = {
             key: self._json_value(value)
             for key, value in values.items()
@@ -26,14 +31,17 @@ class JsonlMetricLogger:
         with self.path.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(record, sort_keys=True) + "\n")
 
-def make_epoch_printer(config, *, detailed=False):
-    """Return the shared console formatter for training epochs."""
-    epochs = config["train"]["epochs"]
-    settings = config.get("logging", {})
-    console = str(settings.get("console", "normal")).casefold()
-    interval = int(settings.get("epoch_interval", 1))
 
-    def print_epoch(epoch, logs):
+def make_epoch_printer(config: Any, *, detailed: bool = False) -> Callable[[int, Dict[str, Any]], None]:
+    """Return the shared console formatter for training epochs."""
+    from wingbeat_ml.config.schema import validate_config
+
+    app_cfg = validate_config(config)
+    epochs = app_cfg.train.epochs
+    console = app_cfg.logging.console
+    interval = app_cfg.logging.epoch_interval
+
+    def print_epoch(epoch: int, logs: Dict[str, Any]) -> None:
         if console == "quiet":
             return
         is_last = epoch + 1 >= epochs
@@ -78,20 +86,22 @@ def make_epoch_printer(config, *, detailed=False):
 
 def evaluate_training_run(
     *,
-    model,
-    evaluator,
-    dataset_builder,
-    config,
-    checkpoint_path,
-    results_dir,
-    artifact_name,
-    validation_dataset,
-    test_dataset,
-):
+    model: Any,
+    evaluator: Any,
+    dataset_builder: Any,
+    config: Any,
+    checkpoint_path: str,
+    results_dir: str,
+    artifact_name: str,
+    validation_dataset: Any,
+    test_dataset: Any,
+) -> None:
     """Evaluate and report one completed training run."""
+    from wingbeat_ml.config.schema import validate_config
     from wingbeat_ml.evaluation import report_results
 
-    console = str(config.get("logging", {}).get("console", "normal"))
+    app_cfg = validate_config(config)
+    console = app_cfg.logging.console
     if console != "quiet":
         print("\nTraining complete. Running final evaluation on test set...")
     if Path(checkpoint_path).exists():
@@ -104,16 +114,13 @@ def evaluate_training_run(
     )
     file_results = None
     train_file_results = None
-    file_enabled = bool(
-        config.get("evaluation", {})
-        .get("file_level", {})
-        .get("enabled", True)
-    )
+    file_enabled = app_cfg.evaluation.file_level.enabled
+
     if file_enabled:
         common_file_args = {
             "load_fn": dataset_builder.data_loader.load_file,
             "augmentor": dataset_builder.augmentor,
-            "batch_size": config["train"]["batch_size"],
+            "batch_size": app_cfg.train.batch_size,
             "save_dir": results_dir,
         }
         if console != "quiet":

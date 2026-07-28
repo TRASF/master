@@ -29,18 +29,18 @@ def get_model_builder(model_id: str):
 
 def build_model(config, architecture_config, **build_overrides):
     """Build the model selected by the resolved configuration."""
-    model_config = config.get("model", {})
-    builder_class = get_model_builder(
-        str(model_config.get("id", "mossong_plus"))
-    )
+    from wingbeat_ml.config.schema import validate_config
+
+    app_cfg = validate_config(config)
+    builder_class = get_model_builder(app_cfg.model.id)
     builder = builder_class(
         architecture_config,
-        model_overrides=model_config,
+        model_overrides=app_cfg.model.model_dump(),
     )
     build_options = {
-        "input_shape": (config["audio"]["segment_length"], 1),
-        "output_units": config["num_classes"],
-        "output_activation": model_config.get("output_activation"),
+        "input_shape": (app_cfg.audio.segment_length, 1),
+        "output_units": app_cfg.num_classes,
+        "output_activation": app_cfg.model.output_activation,
     }
     build_options.update(build_overrides)
     return builder.build(**build_options)

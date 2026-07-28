@@ -42,10 +42,27 @@ class SupervisedContrastiveLoss(tf.keras.losses.Loss):
 
         return -mean_log_prob_pos
 
-def build_loss(config=None):
+def build_loss(config=None, from_logits=None):
     """Build one Keras loss from its configuration section."""
-    loss_config = dict(config or {})
+    from wingbeat_ml.config.schema import AppConfig, LossConfig
+
+    if isinstance(config, AppConfig):
+        loss_obj = config.loss
+    elif isinstance(config, LossConfig):
+        loss_obj = config
+    else:
+        loss_obj = config
+
+    if isinstance(loss_obj, (LossConfig, AppConfig)):
+        loss_config = loss_obj.model_dump() if hasattr(loss_obj, "model_dump") else loss_obj.loss.model_dump()
+    elif isinstance(loss_obj, dict):
+        loss_config = dict(loss_obj)
+    else:
+        loss_config = {}
+
     name = loss_config.pop("name", "CategoricalCrossentropy")
+    if from_logits is not None:
+        loss_config["from_logits"] = from_logits
 
     aliases = {
         "CategoricalFocalLoss": "CategoricalFocalCrossentropy",
