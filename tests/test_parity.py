@@ -12,12 +12,12 @@ tf.config.set_visible_devices([], 'GPU')
 os.environ["WANDB_MODE"] = "offline"
 os.environ["WANDB_DISABLED"] = "true"
 
-# Add project root to sys.path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
 from configs.mos_config import load_config, normalize_config, apply_reproducibility_environment, resolve_experiment_paths
 from src.framework.supervised.dataset import SupervisedDataset
 from wingbeat_ml.models import MosSongPlusModel
+
+
+from wingbeat_ml.config.loader import load_yaml
 
 class TestMosSongPlusParity(unittest.TestCase):
     @classmethod
@@ -28,7 +28,7 @@ class TestMosSongPlusParity(unittest.TestCase):
         cls.defaults_path = "configs/defaults.yaml"
         cls.model_cfg_path = "configs/model.yaml"
 
-        cls.defaults_raw = load_config(cls.defaults_path)
+        cls.defaults_raw = load_yaml(cls.defaults_path)
         cls.defaults_raw["dataset"]["train_dir"] = "tests/fixtures/audio_11class"
         cls.defaults_raw["dataset"]["val_dir"] = None
         cls.defaults_raw["dataset"]["test_dir"] = None
@@ -47,32 +47,32 @@ class TestMosSongPlusParity(unittest.TestCase):
         cls.defaults_raw["augment"]["noise_overlay"]["p"] = 0.0
 
         cls.cfg = normalize_config(cls.defaults_raw)
-        cls.model_cfg = load_config(cls.model_cfg_path)
+        cls.model_cfg = load_yaml(cls.model_cfg_path)
 
-        apply_reproducibility_environment(cls.cfg["reproducibility"])
+        apply_reproducibility_environment(cls.cfg.reproducibility)
         tf.random.set_seed(45)
         np.random.seed(45)
 
         cls.ds_builder = SupervisedDataset(
-            dataset_dir=cls.cfg["dataset"]["train_dir"],
-            val_dir=cls.cfg["dataset"]["val_dir"],
-            test_dir=cls.cfg["dataset"]["test_dir"],
-            sample_rate=cls.cfg["audio"]["sample_rate"],
-            segment_length=cls.cfg["audio"]["segment_length"],
-            classes=cls.cfg["classes"],
+            dataset_dir=cls.cfg.dataset.train_dir,
+            val_dir=cls.cfg.dataset.val_dir,
+            test_dir=cls.cfg.dataset.test_dir,
+            sample_rate=cls.cfg.audio.sample_rate,
+            segment_length=cls.cfg.audio.segment_length,
+            classes=cls.cfg.classes,
             noise_dirs=None,
-            augment_cfg=cls.cfg["augment"],
-            seed=cls.cfg["reproducibility"]["seed"],
-            deterministic=cls.cfg["reproducibility"]["deterministic_data"],
-            nomos_index=cls.cfg["nomos_index"],
-            labels_dict=cls.cfg["labels"]
+            augment_cfg=cls.cfg.augment,
+            seed=cls.cfg.reproducibility.seed,
+            deterministic=cls.cfg.reproducibility.deterministic_data,
+            nomos_index=cls.cfg.nomos_index,
+            labels_dict=cls.cfg.labels,
         )
 
         # Build the dataset
         cls.train_ds, cls.val_ds, cls.test_ds = cls.ds_builder.build(
-            split=cls.cfg["dataset"]["split_list"],
+            split=cls.cfg.dataset.split_list,
             batch_size=2,
-            shuffle=False
+            shuffle=False,
         )
 
     def test_file_discovery(self):
@@ -91,9 +91,9 @@ class TestMosSongPlusParity(unittest.TestCase):
         with open(os.path.join(self.baseline_dir, "label_map.json"), "r") as f:
             baseline = json.load(f)
 
-        self.assertEqual(self.cfg["classes"], baseline["classes"])
-        self.assertEqual(self.cfg["labels"], baseline["class_to_idx"])
-        self.assertEqual(self.cfg["num_classes"], baseline["num_classes"])
+        self.assertEqual(self.cfg.classes, baseline["classes"])
+        self.assertEqual(self.cfg.labels, baseline["class_to_idx"])
+        self.assertEqual(self.cfg.num_classes, baseline["num_classes"])
 
     def test_splits(self):
         with open(os.path.join(self.baseline_dir, "splits.json"), "r") as f:
@@ -158,7 +158,7 @@ class TestMosSongPlusParity(unittest.TestCase):
                 "pitch_shift": {"p": 1.0, "semitones": [-0.2, 0.2]}
             }
             test_augmentor = self.ds_builder.augmentor.__class__(
-                segment_length=self.cfg["audio"]["segment_length"],
+                segment_length=self.cfg.audio.segment_length,
                 config=test_augment_cfg,
                 seed=45,
                 deterministic=True,
@@ -185,11 +185,11 @@ class TestMosSongPlusParity(unittest.TestCase):
         import tensorflow.keras as keras
         keras.backend.clear_session()
         keras.utils.set_random_seed(45)
-        model_builder = MosSongPlusModel(self.model_cfg, model_overrides=self.cfg.get("model"))
+        model_builder = MosSongPlusModel(self.model_cfg, model_overrides=self.cfg.model.model_dump())
         model = model_builder.build(
-            input_shape=(self.cfg["audio"]["segment_length"], 1),
-            output_units=self.cfg["num_classes"],
-            output_activation=self.cfg["model"]["output_activation"]
+            input_shape=(self.cfg.audio.segment_length, 1),
+            output_units=self.cfg.num_classes,
+            output_activation=self.cfg.model.output_activation
         )
 
         self.assertEqual(model.name, baseline["name"])
@@ -210,14 +210,14 @@ class TestMosSongPlusParity(unittest.TestCase):
         import tensorflow.keras as keras
         keras.backend.clear_session()
         keras.utils.set_random_seed(45)
-        model_builder = MosSongPlusModel(self.model_cfg, model_overrides=self.cfg.get("model"))
+        model_builder = MosSongPlusModel(self.model_cfg, model_overrides=self.cfg.model.model_dump())
         model = model_builder.build(
-            input_shape=(self.cfg["audio"]["segment_length"], 1),
-            output_units=self.cfg["num_classes"],
-            output_activation=self.cfg["model"]["output_activation"]
+            input_shape=(self.cfg.audio.segment_length, 1),
+            output_units=self.cfg.num_classes,
+            output_activation=self.cfg.model.output_activation
         )
 
-        dummy_input = np.ones((5, self.cfg["audio"]["segment_length"], 1), dtype=np.float32)
+        dummy_input = np.ones((5, self.cfg.audio.segment_length, 1), dtype=np.float32)
         initial_preds = model.predict(dummy_input)
 
         np.testing.assert_allclose(initial_preds, baseline["preds"], rtol=1e-5, atol=1e-6)

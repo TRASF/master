@@ -4,7 +4,7 @@ from pathlib import Path
 from shutil import copytree
 from tempfile import TemporaryDirectory
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 test_env = os.environ.copy()
 test_env.pop("WINGBEAT_DATASET_DIR", None)
@@ -99,6 +99,43 @@ class TestDefaultPretrainPilot(TestCase):
             defaults_path="custom-defaults.yaml",
             model_cfg_path="custom-model.yaml",
         )
+
+    @patch("wingbeat_ml.pipelines.helpers.domain_adaptation.AdaBN")
+    @patch.object(pretrain, "evaluate_training_run")
+    @patch.object(pretrain, "run_training")
+    @patch.object(pretrain, "build_supervised_components")
+    @patch.object(pretrain, "prepare_training_run")
+    @patch.object(pretrain, "load_pipeline_configuration")
+    def test_train_supervised_runs_adabn_when_enabled(
+        self,
+        load_pipeline_config,
+        prepare_run,
+        build_components,
+        run_training,
+        evaluate_run,
+        mock_adabn,
+    ):
+        config = {
+            "train": {"epochs": 1},
+            "model": {"output_activation": "softmax"},
+            "adabn": {"enabled": True, "mode": "adhoc"},
+        }
+        model_config = {}
+        load_pipeline_config.return_value = (config, model_config)
+
+        mock_run = MagicMock()
+        mock_run.save_path = None
+        mock_run.results_dir = "/tmp/results"
+        prepare_run.return_value = mock_run
+
+        mock_comp = MagicMock()
+        mock_comp.test_dataset = "mock_test_ds"
+        build_components.return_value = mock_comp
+
+        pretrain.train_supervised()
+
+        mock_adabn.assert_called_once_with(mock_comp.model, mode=pretrain.AdaBN.mode if hasattr(pretrain, "AdaBN") else mock_adabn.call_args[1]["mode"])
+        mock_adabn.return_value.adapt.assert_called_once_with("mock_test_ds")
 
 
 if __name__ == "__main__":

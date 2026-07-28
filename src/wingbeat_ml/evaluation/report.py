@@ -189,19 +189,19 @@ def log_confusion_matrices(wandb, confusion_matrix, classes, log_all_variants=Fa
 
 
 def log_prediction_table(wandb, evaluator, dataset, split_name, cfg):
-    wandb_cfg = cfg.get("wandb", {})
-    max_rows = wandb_cfg.get("prediction_table_max_rows", 5000)
-    if max_rows is not None:
-        max_rows = int(max_rows)
-        if max_rows <= 0:
-            max_rows = None
+    from wingbeat_ml.config.schema import validate_config
+
+    app_cfg = validate_config(cfg)
+    max_rows = app_cfg.wandb.prediction_table_max_rows
+    if max_rows is not None and max_rows <= 0:
+        max_rows = None
 
     diagnostics = evaluator.collect_prediction_diagnostics(
         dataset,
         split_name=split_name,
         max_rows=max_rows,
-        sample_rate=cfg["audio"]["sample_rate"],
-        include_audio=bool(wandb_cfg.get("log_prediction_audio", False)),
+        sample_rate=app_cfg.audio.sample_rate,
+        include_audio=app_cfg.wandb.log_prediction_audio,
         wandb_module=wandb,
     )
 
@@ -248,13 +248,17 @@ def report_results(model, test_results, file_results, train_file_results, cfg, d
     Logs standard metrics, a metrics table, one confusion matrix, and one model artifact.
     Optional detailed diagnostics can be enabled via configs.
     """
+    from wingbeat_ml.config.schema import validate_config
+
+    app_cfg = validate_config(cfg)
+    console = app_cfg.logging.console
+    report_target = app_cfg.logging.classification_report
+    classes = app_cfg.classes
+    wandb_enabled = app_cfg.wandb.enabled
+
     # Print metrics to stdout
     print(f"Final Test Accuracy: {test_results['metrics']['accuracy']:.4f}")
     print(f"Final Test Macro F1: {test_results['metrics']['macro_f1']:.4f}")
-    console = str(cfg.get("logging", {}).get("console", "normal"))
-    report_target = str(
-        cfg.get("logging", {}).get("classification_report", "file")
-    )
     if console == "verbose":
         print(
             "Confusion Matrix: Test Accuracy: "
@@ -266,7 +270,7 @@ def report_results(model, test_results, file_results, train_file_results, cfg, d
     if report_target == "console" or console == "verbose":
         print("\nClassification Report:")
         for label, metrics in test_results["report"].items():
-            if label in cfg["classes"]:
+            if label in classes:
                 print(
                     f"Class {label:20} - Precision: "
                     f"{metrics['precision']:.4f}, Recall: "
@@ -281,22 +285,21 @@ def report_results(model, test_results, file_results, train_file_results, cfg, d
         print(f"Final File-level Train Macro F1: {train_file_results['metrics']['macro_f1']:.4f}")
 
     # W&B Logging
-    if cfg.get("wandb", {}).get("enabled", False):
+    if wandb_enabled:
         try:
             import wandb
             if wandb.run is not None:
                 wandb.log({f"test/{k}": v for k, v in test_results['metrics'].items()})
 
                 # Check for detailed diagnostics flag
-                wandb_cfg = cfg.get("wandb", {})
-                log_detailed = bool(wandb_cfg.get("log_detailed_diagnostics", False))
+                log_detailed = False
 
                 # Log one metrics table (per-class metrics table)
                 log_test_report_metrics(wandb, test_results["report"], test_results["metrics"],
-                                         cfg["classes"], log_grouped_plot=log_detailed)
+                                         classes, log_grouped_plot=log_detailed)
 
                 if log_detailed:
-                    log_class_support_tables(wandb, ds_builder, cfg["classes"])
+                    log_class_support_tables(wandb, ds_builder, classes)
 
                     # Log file-level diagnostics tables
                     for label_prefix, results_dict in [
@@ -332,7 +335,7 @@ def report_results(model, test_results, file_results, train_file_results, cfg, d
 
                 # Log one confusion matrix
                 try:
-                    log_confusion_matrices(wandb, test_results["confusion_matrix"], cfg["classes"],
+                    log_confusion_matrices(wandb, test_results["confusion_matrix"], classes,
                                            log_all_variants=log_detailed)
                 except Exception as e:
                     print(f"Failed to log confusion matrix: {e}")

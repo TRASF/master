@@ -288,66 +288,89 @@ class WandbLogger:
             self.wandb.log(log_dict)
 
 
-def build_callbacks(config: dict, optimizer, model, model_save_path, val_x=None):
+def build_callbacks(config, optimizer, model, model_save_path, val_x=None):
     """Build the callbacks used by the custom epoch loop."""
-    callback_config = config.get("callbacks", {})
+    from wingbeat_ml.config.schema import validate_config
+
+    app_cfg = validate_config(config)
+    c_cfg = app_cfg.callbacks
+    early_stopping_cfg = c_cfg.early_stopping
+    model_checkpoint_cfg = c_cfg.model_checkpoint
+    reduce_lr_cfg = c_cfg.reduce_lr_on_plateau
+    cosine_cfg = c_cfg.cosine_annealing
+    wandb_enabled = app_cfg.wandb.enabled
+    log_weights_freq = app_cfg.wandb.log_weights_freq
+    classes = app_cfg.classes
+    aggregate_plot_freq = app_cfg.wandb.aggregate_plot_freq
+
     callbacks = {}
 
-    cfg = callback_config.get("early_stopping")
-    if cfg is not None:
+    if early_stopping_cfg is not None:
+        patience = early_stopping_cfg.patience if hasattr(early_stopping_cfg, "patience") else early_stopping_cfg.get("patience", 10)
+        monitor = early_stopping_cfg.monitor if hasattr(early_stopping_cfg, "monitor") else early_stopping_cfg.get("monitor", "val_loss")
+        mode = early_stopping_cfg.mode if hasattr(early_stopping_cfg, "mode") else early_stopping_cfg.get("mode", "min")
+        min_delta = early_stopping_cfg.min_delta if hasattr(early_stopping_cfg, "min_delta") else early_stopping_cfg.get("min_delta", 0.0)
+        restore_best = early_stopping_cfg.restore_best_weights if hasattr(early_stopping_cfg, "restore_best_weights") else early_stopping_cfg.get("restore_best_weights", False)
         callbacks["early_stopping"] = EarlyStopping(
-            patience=cfg.get("patience", 10),
-            monitor=cfg.get("monitor", "val_loss"),
-            mode=cfg.get("mode", "min"),
-            min_delta=float(cfg.get("min_delta", 0.0)),
-            restore_best_weights=cfg.get("restore_best_weights", False),
+            patience=patience,
+            monitor=monitor,
+            mode=mode,
+            min_delta=float(min_delta),
+            restore_best_weights=restore_best,
             model=model,
             checkpoint_path=model_save_path,
         )
 
-    cfg = callback_config.get("model_checkpoint")
-    if cfg is not None:
+    if model_checkpoint_cfg is not None:
+        monitor = model_checkpoint_cfg.monitor if hasattr(model_checkpoint_cfg, "monitor") else model_checkpoint_cfg.get("monitor", "val_loss")
+        mode = model_checkpoint_cfg.mode if hasattr(model_checkpoint_cfg, "mode") else model_checkpoint_cfg.get("mode", "min")
+        save_best = model_checkpoint_cfg.save_best_only if hasattr(model_checkpoint_cfg, "save_best_only") else model_checkpoint_cfg.get("save_best_only", True)
+        min_delta = model_checkpoint_cfg.min_delta if hasattr(model_checkpoint_cfg, "min_delta") else model_checkpoint_cfg.get("min_delta", 0.0)
         callbacks["model_checkpoint"] = ModelCheckpoint(
             filepath=model_save_path,
-            monitor=cfg.get("monitor", "val_loss"),
-            mode=cfg.get("mode", "min"),
-            save_best_only=cfg.get("save_best_only", True),
-            min_delta=float(cfg.get("min_delta", 0.0)),
+            monitor=monitor,
+            mode=mode,
+            save_best_only=save_best,
+            min_delta=float(min_delta),
         )
 
-    cfg = callback_config.get("reduce_lr_on_plateau")
-    if cfg is not None:
+    if reduce_lr_cfg is not None:
+        factor = reduce_lr_cfg.factor if hasattr(reduce_lr_cfg, "factor") else reduce_lr_cfg.get("factor", 0.5)
+        patience = reduce_lr_cfg.patience if hasattr(reduce_lr_cfg, "patience") else reduce_lr_cfg.get("patience", 5)
+        monitor = reduce_lr_cfg.monitor if hasattr(reduce_lr_cfg, "monitor") else reduce_lr_cfg.get("monitor", "val_loss")
+        mode = reduce_lr_cfg.mode if hasattr(reduce_lr_cfg, "mode") else reduce_lr_cfg.get("mode", "min")
+        min_lr = reduce_lr_cfg.min_lr if hasattr(reduce_lr_cfg, "min_lr") else reduce_lr_cfg.get("min_lr", 1e-6)
+        min_delta = reduce_lr_cfg.min_delta if hasattr(reduce_lr_cfg, "min_delta") else reduce_lr_cfg.get("min_delta", 0.0)
+        restore_best = reduce_lr_cfg.restore_best_weights if hasattr(reduce_lr_cfg, "restore_best_weights") else reduce_lr_cfg.get("restore_best_weights", False)
         callbacks["reduce_lr_on_plateau"] = ReduceLROnPlateau(
             optimizer=optimizer,
             model=model,
-            factor=cfg.get("factor", 0.5),
-            patience=cfg.get("patience", 5),
-            monitor=cfg.get("monitor", "val_loss"),
-            mode=cfg.get("mode", "min"),
-            min_lr=float(cfg.get("min_lr", 1e-6)),
-            min_delta=float(cfg.get("min_delta", 0.0)),
-            restore_best_weights=cfg.get("restore_best_weights", False),
+            factor=factor,
+            patience=patience,
+            monitor=monitor,
+            mode=mode,
+            min_lr=float(min_lr),
+            min_delta=float(min_delta),
+            restore_best_weights=restore_best,
             checkpoint_path=model_save_path,
         )
 
-    cfg = callback_config.get("cosine_annealing")
-    if cfg is not None:
+    if cosine_cfg is not None:
+        t_max = cosine_cfg.t_max if hasattr(cosine_cfg, "t_max") else cosine_cfg.get("t_max", 100)
+        eta_min = cosine_cfg.eta_min if hasattr(cosine_cfg, "eta_min") else cosine_cfg.get("eta_min", 1e-6)
         callbacks["cosine_annealing"] = CosineAnnealing(
             optimizer=optimizer,
-            t_max=cfg.get("t_max", 100),
-            eta_min=float(cfg.get("eta_min", 1e-6)),
+            t_max=t_max,
+            eta_min=float(eta_min),
         )
 
-    wandb_config = config.get("wandb", {})
-    if wandb_config.get("enabled", False):
+    if wandb_enabled:
         callbacks["wandb_logger"] = WandbLogger(
             model=model,
             val_x=val_x,
-            log_weights_freq=wandb_config.get("log_weights_freq", 10),
-            classes=config.get("classes", []),
-            aggregate_plot_freq=int(
-                wandb_config.get("aggregate_plot_freq", 25)
-            ),
+            log_weights_freq=log_weights_freq,
+            classes=classes,
+            aggregate_plot_freq=int(aggregate_plot_freq),
         )
 
     return callbacks

@@ -18,11 +18,7 @@ class TestCiProfile(unittest.TestCase):
             profile_path=ROOT / "configs/profiles/ci.yaml",
         )
 
-        self.assertEqual(
-            config["augment"]["noise_overlay"]["p"],
-            0.0,
-        )
-
+        self.assertEqual(config.augment.noise_overlay.p, 0.0)
 
     def test_model_output_activation_is_explicit(self):
         config = resolve_config(
@@ -32,8 +28,7 @@ class TestCiProfile(unittest.TestCase):
             profile_path=ROOT / "configs/profiles/ci.yaml",
         )
 
-        self.assertIn("output_activation", config["model"])
-        self.assertIsNone(config["model"]["output_activation"])
+        self.assertIsNone(config.model.output_activation)
 
 
 if __name__ == "__main__":

@@ -1,65 +1,64 @@
 """Canonical TensorFlow audio augmentation implementation."""
 
 from pathlib import Path
+from typing import Mapping
+
 import tensorflow as tf
 import numpy as np
+
+from wingbeat_ml.config.schema import AugmentConfig
+
 
 class AudioAugmentor:
     def __init__(
         self,
         segment_length: int = 2400,
-        config: dict = None,
-        seed: int = None,
+        config: AugmentConfig | Mapping[str, object] | None = None,
+        seed: int | None = None,
         deterministic: bool = False,
-        nomos_index: int = None,
+        nomos_index: int | None = None,
     ):
         self.segment_length = segment_length
-        self.cfg = config or {}
+        self.aug_cfg = (
+            config
+            if isinstance(config, AugmentConfig)
+            else AugmentConfig.model_validate(config or {})
+        )
         self.seed = seed
         self.deterministic = deterministic
         self.nomos_index = nomos_index
 
-        self.noise_cfg = self.cfg.get("noise_overlay", {})
-        self.noise_envelope_cfg = self.noise_cfg.get(
-            "envelope_gain", [0.7, 1.0]
-        )
-        self.noise_post_gain_cfg = self.noise_cfg.get(
-            "post_gain_db", [-6.0, 3.0]
-        )
-
-        self.pitch_cfg = self.cfg.get("pitch_shift", {})
-        self.time_cfg = self.cfg.get("time_shift", {})
-        self.gain_cfg = self.cfg.get("random_gain", {})
-        self.gauss_cfg = self.cfg.get("gaussian_noise", {})
-        self.mask_cfg = self.cfg.get("time_masking", {})
-        self.pre_cfg = self.cfg.get("pre_emphasis", {})
-        self.hpf_cfg = self.cfg.get("high_pass", {})
-        self.rms_cfg = self.cfg.get("rms_norm", {})
-        self.preprocess_cfg = self.cfg.get("preprocess", {})
-
-        raw_config = self.cfg.get("config", {})
-        self.overlap_cfg = (
-            raw_config.get("segment_overlap")
-            or raw_config.get("overlap")
-            or self.cfg.get("overlap", [0.0, 0.8])
-        )
+        self.noise_cfg = self.aug_cfg.noise_overlay
+        self.noise_envelope_cfg = self.noise_cfg.envelope_gain
+        self.noise_post_gain_cfg = self.noise_cfg.post_gain_db
+        self.pitch_cfg = self.aug_cfg.pitch_shift
+        self.time_cfg = self.aug_cfg.time_shift
+        self.gain_cfg = self.aug_cfg.random_gain
+        self.gauss_cfg = self.aug_cfg.gaussian_noise
+        self.mask_cfg = self.aug_cfg.time_masking
+        self.pre_cfg = self.aug_cfg.pre_emphasis
+        self.hpf_cfg = self.aug_cfg.high_pass
+        self.rms_cfg = self.aug_cfg.rms_norm
+        self.preprocess_cfg = self.aug_cfg.preprocess
+        self.overlap_cfg = self.aug_cfg.segment_overlap
 
         import scipy.signal
 
-        self.hpf_p = float(self.hpf_cfg.get('p', 0.0))
-        self.pre_p = float(self.pre_cfg.get('p', 0.0))
-        self.pitch_p = float(self.pitch_cfg.get('p', 0.0))
-        self.time_p = float(self.time_cfg.get('p', 0.0))
-        self.mask_p = float(self.mask_cfg.get('p', 0.0))
-        self.gain_p = float(self.gain_cfg.get('p', 0.0))
-        self.gauss_p = float(self.gauss_cfg.get('p', 0.0))
-        self.noise_p = float(self.noise_cfg.get('p', 0.0))
+        self.hpf_p = self.hpf_cfg.p
+        self.pre_p = self.pre_cfg.p
+        self.pitch_p = self.pitch_cfg.p
+        self.time_p = self.time_cfg.p
+        self.mask_p = self.mask_cfg.p
+        self.gain_p = self.gain_cfg.p
+        self.gauss_p = self.gauss_cfg.p
+        self.noise_p = self.noise_cfg.p
 
-        if self.hpf_cfg.get("fc", 0) > 0:
+        fc = self.hpf_cfg.fc
+        if fc > 0:
             sr = 8000
             taps = scipy.signal.firwin(
                 101,
-                self.hpf_cfg["fc"],
+                fc,
                 fs=sr,
                 pass_zero=False,
             )
@@ -100,16 +99,16 @@ class AudioAugmentor:
         """
         if seed is None:
             seed = tf.constant([0, 0], dtype=tf.int64)
-        num_masks = self.mask_cfg.get('num_masks', 1)
-        max_mask_size = self.mask_cfg.get('max_mask_size', 400)
+        num_masks = self.mask_cfg.num_masks
+        max_mask_size = self.mask_cfg.max_mask_size
 
         for i in range(num_masks):
             max_mask_size = tf.minimum(tf.cast(max_mask_size, tf.int32), self.segment_length)
             max_mask_size = tf.maximum(max_mask_size, 1)
             min_mask_size = tf.minimum(tf.constant(10, dtype=tf.int32), max_mask_size)
 
-            mask_size_seed = tf.stack([seed[0], tf.cast(100 + i, tf.int64)])
-            start_idx_seed = tf.stack([seed[0], tf.cast(200 + i, tf.int64)])
+            mask_size_seed = tf.stack([tf.gather(seed, 0), tf.cast(100 + i, tf.int64)])
+            start_idx_seed = tf.stack([tf.gather(seed, 0), tf.cast(200 + i, tf.int64)])
 
             mask_size = tf.random.stateless_uniform(
                 [],
@@ -182,29 +181,23 @@ class AudioAugmentor:
 
         if training:
             # Overlap seed
-            overlap_seed = tf.stack([seed[0], seed[1] ^ tf.constant(1, dtype=tf.int64)])
+            overlap_seed = tf.stack([tf.gather(seed, 0), tf.gather(seed, 1) ^ tf.constant(1, dtype=tf.int64)])
             # Offset seed
-            offset_seed = tf.stack([seed[0], seed[1] ^ tf.constant(2, dtype=tf.int64)])
+            offset_seed = tf.stack([tf.gather(seed, 0), tf.gather(seed, 1) ^ tf.constant(2, dtype=tf.int64)])
             # Shuffle seed
-            shuffle_seed = tf.stack([seed[0], seed[1] ^ tf.constant(3, dtype=tf.int64)])
+            shuffle_seed = tf.stack([tf.gather(seed, 0), tf.gather(seed, 1) ^ tf.constant(3, dtype=tf.int64)])
 
             # Random overlap between the ranges provided in overlap_cfg
-            if isinstance(self.overlap_cfg, dict):
-                overlap_range = self.overlap_cfg.get('train', [0.0, 0.8])
-            elif isinstance(self.overlap_cfg, list) and len(self.overlap_cfg) == 2:
-                overlap_range = self.overlap_cfg
-            else:
-                overlap_range = [0.0, 0.8]
+            overlap_range = self.overlap_cfg.train
+            if isinstance(overlap_range, (int, float)):
+                overlap_range = [overlap_range, overlap_range]
 
             random_overlap = tf.random.stateless_uniform([], seed=overlap_seed, minval=float(overlap_range[0]), maxval=float(overlap_range[1]))
             # Convert overlap ratio to step ratio
             current_step_ratio = 1.0 - random_overlap
         else:
             # Evaluation/Validation/Test: Use val overlap
-            if isinstance(self.overlap_cfg, dict):
-                val_overlap = self.overlap_cfg.get('val', 0.5)
-            else:
-                val_overlap = 0.5
+            val_overlap = self.overlap_cfg.val
             current_step_ratio = 1.0 - float(val_overlap)
 
         step = tf.cast(tf.cast(self.segment_length, tf.float32) * current_step_ratio, tf.int32)
@@ -227,8 +220,7 @@ class AudioAugmentor:
             sample_ids = tf.fill([num_frames], tf.constant("", dtype=tf.string))
 
         if training:
-            raw_config = self.cfg.get('config', {})
-            max_segments = raw_config.get('max_segments_per_file', 100)
+            max_segments = getattr(self.aug_cfg, "max_segments_per_file", 100)
 
             if self.nomos_index is not None:
                 is_nomos = tf.equal(label, self.nomos_index)
@@ -247,8 +239,8 @@ class AudioAugmentor:
             idx_cast = tf.cast(sliced_indices, tf.int64)
             c1 = tf.constant(-7046029254386353131, dtype=tf.int64)
             c2 = tf.constant(-4658826500735392327, dtype=tf.int64)
-            s0 = seed[0] ^ (idx_cast * c1)
-            s1 = seed[1] ^ (idx_cast * c2 + 1000)
+            s0 = tf.gather(seed, 0) ^ (idx_cast * c1)
+            s1 = tf.gather(seed, 1) ^ (idx_cast * c2 + 1000)
             segment_seeds = tf.stack([s0, s1], axis=1)
         else:
             segment_seeds = tf.zeros([num_frames, 2], dtype=tf.int64)
@@ -313,24 +305,25 @@ class AudioAugmentor:
 
     @tf.function
     def sample_noise_snr(self, fallback_range, seed):
-        if 'snr_distribution' not in self.noise_cfg:
+        distribution = self.noise_cfg.snr_distribution
+        if not distribution:
             return tf.random.stateless_uniform([], seed=seed, minval=float(fallback_range[0]), maxval=float(fallback_range[1]))
 
-        r_seed = tf.stack([seed[0], tf.constant(101, dtype=tf.int64)])
+        r_seed = tf.stack([tf.gather(seed, 0), tf.constant(101, dtype=tf.int64)])
         r = tf.random.stateless_uniform([], seed=r_seed)
         cumulative = 0.0
         branches = []
-        for i, item in enumerate(self.noise_cfg['snr_distribution']):
-            cumulative += float(item.get('p', 0.0))
-            low, high = item.get('snr_db', fallback_range)
-            branch_seed = tf.stack([seed[0], tf.cast(1000 + i, tf.int64)])
+        for i, item in enumerate(distribution):
+            cumulative += item.p
+            low, high = item.snr_db or fallback_range
+            branch_seed = tf.stack([tf.gather(seed, 0), tf.cast(1000 + i, tf.int64)])
             branches.append((
                 r < cumulative,
                 lambda low=low, high=high, bs=branch_seed: tf.random.stateless_uniform([], seed=bs, minval=float(low), maxval=float(high)),
             ))
 
-        last_low, last_high = self.noise_cfg['snr_distribution'][-1].get('snr_db', fallback_range)
-        last_seed = tf.stack([seed[0], tf.constant(999, dtype=tf.int64)])
+        last_low, last_high = distribution[-1].snr_db or fallback_range
+        last_seed = tf.stack([tf.gather(seed, 0), tf.constant(999, dtype=tf.int64)])
         return tf.case(
             branches,
             default=lambda: tf.random.stateless_uniform([], seed=last_seed, minval=float(last_low), maxval=float(last_high)),
@@ -341,8 +334,8 @@ class AudioAugmentor:
     def apply_noise_envelope(self, noise, seed):
         min_gain = float(self.noise_envelope_cfg[0])
         max_gain = float(self.noise_envelope_cfg[1])
-        start_seed = tf.stack([seed[0], tf.constant(201, dtype=tf.int64)])
-        end_seed = tf.stack([seed[0], tf.constant(202, dtype=tf.int64)])
+        start_seed = tf.stack([tf.gather(seed, 0), tf.constant(201, dtype=tf.int64)])
+        end_seed = tf.stack([tf.gather(seed, 0), tf.constant(202, dtype=tf.int64)])
         start_gain = tf.random.stateless_uniform([], seed=start_seed, minval=min_gain, maxval=max_gain)
         end_gain = tf.random.stateless_uniform([], seed=end_seed, minval=min_gain, maxval=max_gain)
         envelope = tf.linspace(start_gain, end_gain, tf.shape(noise)[0])
@@ -350,9 +343,9 @@ class AudioAugmentor:
 
     @tf.function
     def add_noise(self, audio, noise, snr_range, seed):
-        env_seed = tf.stack([seed[0], tf.constant(301, dtype=tf.int64)])
-        snr_seed = tf.stack([seed[0], tf.constant(302, dtype=tf.int64)])
-        gain_seed = tf.stack([seed[0], tf.constant(303, dtype=tf.int64)])
+        env_seed = tf.stack([tf.gather(seed, 0), tf.constant(301, dtype=tf.int64)])
+        snr_seed = tf.stack([tf.gather(seed, 0), tf.constant(302, dtype=tf.int64)])
+        gain_seed = tf.stack([tf.gather(seed, 0), tf.constant(303, dtype=tf.int64)])
 
         noise = self.apply_noise_envelope(noise, seed=env_seed)
 
@@ -427,8 +420,8 @@ class AudioAugmentor:
     @tf.function
     def add_gaussian_noise(self, audio, snr_range, seed):
         audio_rms = tf.sqrt(tf.reduce_mean(tf.square(audio)) + 1e-9)
-        snr_seed = tf.stack([seed[0], tf.constant(1001, dtype=tf.int64)])
-        noise_seed = tf.stack([seed[0], tf.constant(1002, dtype=tf.int64)])
+        snr_seed = tf.stack([tf.gather(seed, 0), tf.constant(1001, dtype=tf.int64)])
+        noise_seed = tf.stack([tf.gather(seed, 0), tf.constant(1002, dtype=tf.int64)])
         snr_db = tf.random.stateless_uniform([], seed=snr_seed, minval=float(snr_range[0]), maxval=float(snr_range[1]))
         snr_lin = tf.pow(10.0, snr_db / 20.0)
         noise_rms = audio_rms / snr_lin
@@ -456,6 +449,8 @@ class AudioAugmentor:
                 seed = tf.stack([seed, tf.constant(0, dtype=tf.int64)])
             else:
                 seed = tf.reshape(seed, [2])
+        seed_0 = tf.gather(seed, 0)
+        seed_1 = tf.gather(seed, 1)
         # ----------------------------------------------------
         # Phase 1: Signal Conditioning (Structure)
         # ----------------------------------------------------
@@ -464,17 +459,17 @@ class AudioAugmentor:
             if not augment:
                 audio = self.apply_hpf(audio)
             else:
-                hpf_toss_seed = tf.stack([seed[0], seed[1] ^ tf.constant(10, dtype=tf.int64)])
+                hpf_toss_seed = tf.stack([seed_0, seed_1 ^ tf.constant(10, dtype=tf.int64)])
                 if tf.random.stateless_uniform([], seed=hpf_toss_seed) < self.hpf_p:
                     audio = self.apply_hpf(audio)
 
         # Pre-emphasis
         if self.pre_p > 0.0:
-            coeff = float(self.pre_cfg.get('coeff', 0.97))
+            coeff = self.pre_cfg.coeff
             if not augment:
                 audio = self.pre_emphasis(audio, coeff=coeff)
             else:
-                pre_toss_seed = tf.stack([seed[0], seed[1] ^ tf.constant(20, dtype=tf.int64)])
+                pre_toss_seed = tf.stack([seed_0, seed_1 ^ tf.constant(20, dtype=tf.int64)])
                 if tf.random.stateless_uniform([], seed=pre_toss_seed) < self.pre_p:
                     audio = self.pre_emphasis(audio, coeff=coeff)
 
@@ -484,58 +479,58 @@ class AudioAugmentor:
         if augment:
             # Pitch Shift
             if self.pitch_p > 0.0:
-                pitch_toss_seed = tf.stack([seed[0], seed[1] ^ tf.constant(30, dtype=tf.int64)])
-                pitch_val_seed = tf.stack([seed[0], seed[1] ^ tf.constant(31, dtype=tf.int64)])
+                pitch_toss_seed = tf.stack([seed_0, seed_1 ^ tf.constant(30, dtype=tf.int64)])
+                pitch_val_seed = tf.stack([seed_0, seed_1 ^ tf.constant(31, dtype=tf.int64)])
                 if tf.random.stateless_uniform([], seed=pitch_toss_seed) < self.pitch_p:
-                    audio = self.pitch_shift(audio, self.pitch_cfg['semitones'], seed=pitch_val_seed)
+                    audio = self.pitch_shift(audio, self.pitch_cfg.semitones, seed=pitch_val_seed)
 
             # Time Shift
             if self.time_p > 0.0:
-                time_toss_seed = tf.stack([seed[0], seed[1] ^ tf.constant(40, dtype=tf.int64)])
-                time_val_seed = tf.stack([seed[0], seed[1] ^ tf.constant(41, dtype=tf.int64)])
+                time_toss_seed = tf.stack([seed_0, seed_1 ^ tf.constant(40, dtype=tf.int64)])
+                time_val_seed = tf.stack([seed_0, seed_1 ^ tf.constant(41, dtype=tf.int64)])
                 if tf.random.stateless_uniform([], seed=time_toss_seed) < self.time_p:
-                    audio = self.time_shift(audio, self.time_cfg['rate'], seed=time_val_seed)
+                    audio = self.time_shift(audio, self.time_cfg.rate, seed=time_val_seed)
 
             # Time Masking
             if self.mask_p > 0.0:
-                mask_toss_seed = tf.stack([seed[0], seed[1] ^ tf.constant(50, dtype=tf.int64)])
-                mask_val_seed = tf.stack([seed[0], seed[1] ^ tf.constant(51, dtype=tf.int64)])
+                mask_toss_seed = tf.stack([seed_0, seed_1 ^ tf.constant(50, dtype=tf.int64)])
+                mask_val_seed = tf.stack([seed_0, seed_1 ^ tf.constant(51, dtype=tf.int64)])
                 if tf.random.stateless_uniform([], seed=mask_toss_seed) < self.mask_p:
                     audio = self.apply_time_masking(audio, seed=mask_val_seed)
 
             # Random Gain
             if self.gain_p > 0.0:
-                gain_toss_seed = tf.stack([seed[0], seed[1] ^ tf.constant(60, dtype=tf.int64)])
-                gain_val_seed = tf.stack([seed[0], seed[1] ^ tf.constant(61, dtype=tf.int64)])
+                gain_toss_seed = tf.stack([seed_0, seed_1 ^ tf.constant(60, dtype=tf.int64)])
+                gain_val_seed = tf.stack([seed_0, seed_1 ^ tf.constant(61, dtype=tf.int64)])
                 if tf.random.stateless_uniform([], seed=gain_toss_seed) < self.gain_p:
-                    audio = self.random_gain(audio, self.gain_cfg['gain_db'], seed=gain_val_seed)
+                    audio = self.random_gain(audio, self.gain_cfg.gain_db, seed=gain_val_seed)
 
             # Gaussian Noise
             if self.gauss_p > 0.0:
-                gauss_toss_seed = tf.stack([seed[0], seed[1] ^ tf.constant(70, dtype=tf.int64)])
-                gauss_val_seed = tf.stack([seed[0], seed[1] ^ tf.constant(71, dtype=tf.int64)])
+                gauss_toss_seed = tf.stack([seed_0, seed_1 ^ tf.constant(70, dtype=tf.int64)])
+                gauss_val_seed = tf.stack([seed_0, seed_1 ^ tf.constant(71, dtype=tf.int64)])
                 if tf.random.stateless_uniform([], seed=gauss_toss_seed) < self.gauss_p:
-                    audio = self.add_gaussian_noise(audio, self.gauss_cfg['snr_db'], seed=gauss_val_seed)
+                    audio = self.add_gaussian_noise(audio, self.gauss_cfg.snr_db, seed=gauss_val_seed)
 
             # Noise Overlay (External Noise Bank)
             if noise is not None and self.noise_p > 0.0:
-                noise_toss_seed = tf.stack([seed[0], seed[1] ^ tf.constant(80, dtype=tf.int64)])
-                noise_val_seed = tf.stack([seed[0], seed[1] ^ tf.constant(81, dtype=tf.int64)])
+                noise_toss_seed = tf.stack([seed_0, seed_1 ^ tf.constant(80, dtype=tf.int64)])
+                noise_val_seed = tf.stack([seed_0, seed_1 ^ tf.constant(81, dtype=tf.int64)])
                 if tf.random.stateless_uniform([], seed=noise_toss_seed) < self.noise_p:
-                    audio = self.add_noise(audio, noise, self.noise_cfg['snr_db'], seed=noise_val_seed)
+                    audio = self.add_noise(audio, noise, self.noise_cfg.snr_db, seed=noise_val_seed)
 
         # ----------------------------------------------------
         # Phase 4: Final Standardization (The Capstone)
         # ----------------------------------------------------
         # 1. First, normalize the energy so the model sees consistent volume
-        if self.preprocess_cfg.get('dc_removal', True):
+        if self.preprocess_cfg.dc_removal:
             audio -= tf.reduce_mean(audio)
 
         audio = self.rms_normalize(
             audio,
-            target_rms=float(self.rms_cfg.get('target_rms', 0.5)),
-            min_gain=float(self.rms_cfg.get('min_gain', 0.1)),
-            max_gain=float(self.rms_cfg.get('max_gain', 10.0))
+            target_rms=self.rms_cfg.target_rms,
+            min_gain=self.rms_cfg.min_gain,
+            max_gain=self.rms_cfg.max_gain
         )
 
         # 2. Finally, clip to prevent extreme outliers from crashing the model

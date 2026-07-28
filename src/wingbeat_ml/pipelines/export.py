@@ -245,29 +245,30 @@ def export_from_weights(
         defaults_path,
         model_config_path,
     )
-    export_config = cfg["export"]
-    out_dir = out_dir or export_config["out_dir"]
+    export_config = cfg.export
+    out_dir = out_dir or export_config.out_dir
     rep_samples = (
         rep_samples
         if rep_samples is not None
-        else export_config["representative_samples"]
+        else export_config.representative_samples
     )
     allow_dummy_calibration = (
         allow_dummy_calibration
         if allow_dummy_calibration is not None
-        else export_config["allow_dummy_calibration"]
+        else export_config.allow_dummy_calibration
     )
     run_debugger = (
         run_debugger
         if run_debugger is not None
-        else export_config["run_debugger"]
+        else export_config.run_debugger
     )
 
-    seed = prepare_export_runtime(cfg)
+    prepare_export_runtime(cfg, save_path=weights_path)
+    seed = cfg.reproducibility.seed
 
     try:
-        dataset_config = copy.deepcopy(cfg)
-        dataset_config["train"]["shuffle"] = False
+        train_cfg = cfg.train.model_copy(update={"shuffle": False})
+        dataset_config = cfg.model_copy(update={"train": train_cfg})
         _, val_ds, test_ds = build_dataset_bundle(dataset_config)
     except Exception:
         if not allow_dummy_calibration:
@@ -290,7 +291,7 @@ def export_from_weights(
     amplitude = (
         input_amplitude_range
         if input_amplitude_range is not None
-        else export_config["input_amplitude_range"]
+        else export_config.input_amplitude_range
     )
 
     return run_basic_quantization_suite(
@@ -298,7 +299,7 @@ def export_from_weights(
         val_ds=val_ds,
         test_ds=test_ds,
         out_dir=out_dir,
-        class_names=cfg["classes"],
+        class_names=cfg.classes,
         rep_samples=rep_samples,
         seed=seed,
         input_amplitude_range=amplitude,

@@ -13,6 +13,7 @@ _EXPORTS = {
     "find_project_root": "configuration",
     "load_pipeline_configuration": "configuration",
     "make_epoch_printer": "reporting",
+    "maybe_apply_adabn": "domain_adaptation",
     "prepare_default_pilot": "configuration",
     "prepare_export_runtime": "runtime",
     "prepare_training_run": "runtime",
