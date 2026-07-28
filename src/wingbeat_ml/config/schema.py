@@ -433,6 +433,19 @@ DEFAULT_LABELS: Dict[str, int] = {
 DEFAULT_CLASSES: List[str] = list(DEFAULT_LABELS.keys())
 
 
+class SSLConfig(StrictBaseModel):
+    enabled: bool = False
+    method: str = "fixmatch"
+    tau: float = 0.95
+    lambda_u: float = 1.0
+    mapping: str = "convex"
+    source_dir: str = "dataset/MSB/Indoor"
+    target_dir: str = "dataset/MSB/Outdoor"
+    train_samples_per_class: Optional[int] = 100
+    val_samples_per_class: Optional[int] = 50
+    test_samples_per_class: Optional[int] = 50
+
+
 class AppConfig(StrictBaseModel):
     training_mode: str = "pretrain"
     experiment_name: Optional[str] = None
@@ -448,6 +461,7 @@ class AppConfig(StrictBaseModel):
     performance: PerformanceConfig = Field(default_factory=PerformanceConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     adabn: AdaBNConfig = Field(default_factory=AdaBNConfig)
+    ssl: SSLConfig = Field(default_factory=SSLConfig)
     wandb: WandbConfig = Field(default_factory=WandbConfig)
     reproducibility: ReproducibilityConfig = Field(default_factory=ReproducibilityConfig)
     loss: LossConfig = Field(default_factory=LossConfig)
