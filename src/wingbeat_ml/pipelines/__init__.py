@@ -1,6 +1,12 @@
 """High-level Wingbeat ML pipelines."""
 
 
+from wingbeat_ml.pipelines.ssl import (
+    run_ssl_pipeline,
+    train_fixmatch,
+    train_flexmatch,
+)
+
 _TRAIN_EXPORTS = {
     "build_training_components",
     "configure_trainable_layers",
@@ -44,4 +50,7 @@ __all__ = [
     "configure_trainable_layers",
     "get_training_entrypoint",
     "run_training",
+    "run_ssl_pipeline",
+    "train_fixmatch",
+    "train_flexmatch",
 ]
