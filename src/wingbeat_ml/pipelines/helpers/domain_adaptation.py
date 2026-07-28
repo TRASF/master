@@ -22,7 +22,7 @@ class AdaBN(keras.Model):
 
         # Find all Dropout layers across all nested submodules recursively
         self._dropout_layers = [
-            layer for layer in self.base_model.submodules
+            layer for layer in self.base_model.layers
             if isinstance(layer, keras.layers.Dropout)
         ]
         self._original_dropout_rates = {l: l.rate for l in self._dropout_layers}
@@ -189,7 +189,7 @@ def maybe_apply_adabn(
     if target_dir:
         from wingbeat_ml.data.dataset import build_datasets
 
-        _, _, _, target_dataset = build_datasets(
+        _, _, target_dataset = build_datasets(
             target_dir,
             config,
         )
@@ -208,5 +208,3 @@ def maybe_apply_adabn(
             print(
                 f" --> Re-saved best weights with target AdaBN stats to {save_path}"
             )
-
-

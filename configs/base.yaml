@@ -58,6 +58,10 @@ dataset:
     val: 0.1
     test: 0.1
 
+adabn:
+    enabled: false
+    target_dir: "dataset/MSB/Outdoor"
+
 preprocess:
   dc_removal: true
 
