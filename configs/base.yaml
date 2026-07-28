@@ -62,6 +62,18 @@ adabn:
     enabled: false
     target_dir: "dataset/MSB/Outdoor"
 
+ssl:
+  enabled: false
+  method: "fixmatch"
+  tau: 0.95
+  lambda_u: 1.0
+  mapping: "convex"
+  source_dir: "dataset/MSB/Indoor"
+  target_dir: "dataset/MSB/Outdoor"
+  train_samples_per_class: 100
+  val_samples_per_class: 50
+  test_samples_per_class: 50
+
 preprocess:
   dc_removal: true
 
