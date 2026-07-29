@@ -445,6 +445,15 @@ class SSLConfig(StrictBaseModel):
     val_samples_per_class: Optional[int] = 50
     test_samples_per_class: Optional[int] = 50
 
+    labeled_domains: List[str] = Field(default_factory=lambda: ["indoor"])
+    unlabeled_domains: List[str] = Field(default_factory=lambda: ["outdoor"])
+    labeled_samples_per_class: Optional[int] = None
+    unlabeled_samples_per_class: Optional[int] = None
+    unlabeled_policy: str = "remaining"
+    exclude_labeled_from_unlabeled: bool = True
+    subset_seed: int = 42
+    minimum_recordings_per_class: Optional[int] = None
+
 
 class AppConfig(StrictBaseModel):
     training_mode: str = "pretrain"

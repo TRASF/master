@@ -6,8 +6,43 @@ Formulations:
 - FlexMatch: Zhang et al., NeurIPS 2021.
 """
 
+import numpy as np
 import tensorflow as tf
 from typing import Any, Dict, Tuple
+
+
+def compute_classification_metrics(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    num_classes: int = 11,
+) -> Dict[str, Any]:
+    """Compute per-class and macro classification metrics."""
+    acc = float(np.mean(y_true == y_pred)) if len(y_true) > 0 else 0.0
+    f1s = []
+    precisions = []
+    recalls = []
+
+    for c in range(num_classes):
+        tp = np.sum((y_true == c) & (y_pred == c))
+        fp = np.sum((y_true != c) & (y_pred == c))
+        fn = np.sum((y_true == c) & (y_pred != c))
+
+        precision = float(tp / (tp + fp + 1e-12))
+        recall = float(tp / (tp + fn + 1e-12))
+        f1 = float(2 * precision * recall / (precision + recall + 1e-12))
+
+        precisions.append(precision)
+        recalls.append(recall)
+        f1s.append(f1)
+
+    macro_f1 = float(np.mean(f1s))
+    return {
+        "accuracy": acc,
+        "macro_f1": macro_f1,
+        "per_class_f1": f1s,
+        "per_class_precision": precisions,
+        "per_class_recall": recalls,
+    }
 
 
 def tf_compute_fixmatch_loss(
@@ -265,12 +300,17 @@ def evaluate_tf_domain_performance(
     model: tf.keras.Model,
     source_val_ds: Any,
     target_val_ds: Any,
+    num_classes: int = 11,
 ) -> Dict[str, float]:
-    """Evaluate accuracy and loss of TensorFlow model on Source and Target datasets."""
-    def _eval(ds: Any) -> Tuple[float, float]:
+    """Evaluate accuracy, loss, macro-F1 and worst-domain performance of TensorFlow model across domains."""
+    def _eval(ds: Any) -> Tuple[float, float, float]:
+        if ds is None:
+            return 0.0, 0.0, 0.0
+
         total_loss = 0.0
-        correct = 0.0
         total_samples = 0.0
+        all_true = []
+        all_pred = []
 
         for x_batch, y_batch in ds:
             logits = model(x_batch, training=False)
@@ -287,19 +327,34 @@ def evaluate_tf_domain_performance(
 
             preds = tf.argmax(logits, axis=-1, output_type=tf.int64)
             total_loss += float(loss.numpy())
-            correct += float(tf.reduce_sum(tf.cast(preds == labels, tf.float32)).numpy())
             total_samples += float(tf.shape(y_batch)[0].numpy())
+            all_true.extend(labels.numpy())
+            all_pred.extend(preds.numpy())
 
-        return total_loss / max(total_samples, 1.0), correct / max(total_samples, 1.0)
+        if total_samples == 0:
+            return 0.0, 0.0, 0.0
 
-    src_loss, src_acc = _eval(source_val_ds)
-    tgt_loss, tgt_acc = _eval(target_val_ds)
+        avg_loss = total_loss / total_samples
+        metrics = compute_classification_metrics(np.array(all_true), np.array(all_pred), num_classes=num_classes)
+        return avg_loss, metrics["accuracy"], metrics["macro_f1"]
+
+    src_loss, src_acc, src_f1 = _eval(source_val_ds)
+    tgt_loss, tgt_acc, tgt_f1 = _eval(target_val_ds)
+
+    worst_f1 = min(src_f1, tgt_f1)
+    mean_f1 = (src_f1 + tgt_f1) / 2.0
 
     return {
         "source_loss": src_loss,
         "source_accuracy": src_acc,
+        "source_macro_f1": src_f1,
         "target_loss": tgt_loss,
         "target_accuracy": tgt_acc,
+        "target_macro_f1": tgt_f1,
+        "indoor_macro_f1": src_f1,
+        "outdoor_macro_f1": tgt_f1,
+        "worst_domain_macro_f1": worst_f1,
+        "mean_domain_macro_f1": mean_f1,
     }
 
 
@@ -309,4 +364,5 @@ __all__ = [
     "train_tf_fixmatch_step",
     "train_tf_flexmatch_step",
     "evaluate_tf_domain_performance",
+    "compute_classification_metrics",
 ]

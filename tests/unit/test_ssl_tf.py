@@ -1,29 +1,61 @@
-"""Unit tests for TensorFlow SSL loss functions, dataset sample limiting, and pipeline execution."""
+"""Unit tests for TensorFlow SSL loss functions, dataset sample limiting, and multi-domain evaluation."""
 
 import numpy as np
 import pytest
 import tensorflow as tf
 
-from wingbeat_ml.data.ssl_dataset import filter_paths_by_sample_limit
+from wingbeat_ml.data.ssl_dataset import filter_paths_by_sample_limit, get_recording_id
 from wingbeat_ml.training.tf_ssl_losses import (
     TFFlexMatchLoss,
+    compute_classification_metrics,
+    evaluate_tf_domain_performance,
     tf_compute_fixmatch_loss,
     train_tf_fixmatch_step,
     train_tf_flexmatch_step,
 )
 
 
+def test_get_recording_id():
+    path1 = "/data/indoor/mosquito_rec01_seg0.wav"
+    path2 = "/data/indoor/mosquito_rec01_seg1.wav"
+    path3 = "/data/outdoor/rec02.wav"
+
+    assert get_recording_id(path1) == "mosquito_rec01"
+    assert get_recording_id(path2) == "mosquito_rec01"
+    assert get_recording_id(path3) == "rec02"
+
+
 def test_filter_paths_by_sample_limit():
-    paths = np.array([f"path_{i}.wav" for i in range(100)])
+    paths = np.array([f"rec_{i//5}_seg_{i%5}.wav" for i in range(100)])
     # 50 samples class 0, 50 samples class 1
     labels = np.array([0] * 50 + [1] * 50)
 
-    # Sub-sample to 10 samples per class
+    # Sub-sample to 10 samples per class without grouping
     filtered_p, filtered_l = filter_paths_by_sample_limit(paths, labels, samples_per_class=10, seed=42)
 
     assert len(filtered_p) == 20
     assert (filtered_l == 0).sum() == 10
     assert (filtered_l == 1).sum() == 10
+
+    # Sub-sample with group_by_recording
+    filtered_gp, filtered_gl = filter_paths_by_sample_limit(
+        paths, labels, samples_per_class=10, seed=42, group_by_recording=True
+    )
+    assert len(filtered_gp) == 20
+    assert (filtered_gl == 0).sum() == 10
+    assert (filtered_gl == 1).sum() == 10
+
+
+def test_compute_classification_metrics():
+    y_true = np.array([0, 0, 1, 1, 2, 2])
+    y_pred = np.array([0, 0, 1, 0, 2, 2])
+
+    metrics = compute_classification_metrics(y_true, y_pred, num_classes=3)
+    assert "accuracy" in metrics
+    assert "macro_f1" in metrics
+    assert "per_class_f1" in metrics
+    assert len(metrics["per_class_f1"]) == 3
+    assert metrics["macro_f1"] > 0.0
 
 
 def test_tf_fixmatch_loss_calculation():
