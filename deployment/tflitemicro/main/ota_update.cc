@@ -16,6 +16,57 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+RuntimeConfig g_runtime_config;
+
+esp_err_t LoadRuntimeConfigFromNvs(void) {
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open("runtime_cfg", NVS_READONLY, &handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    uint8_t dc = 1, rms = 1, fix = 0, raw_gate = 0;
+    nvs_get_u8(handle, "dc_rem", &dc);
+    nvs_get_u8(handle, "rms_norm", &rms);
+    nvs_get_u8(handle, "fix_rng", &fix);
+    nvs_get_u8(handle, "raw_gate", &raw_gate);
+
+    g_runtime_config.enable_dc_removal = (dc != 0);
+    g_runtime_config.enable_rms_normalize = (rms != 0);
+    g_runtime_config.enable_fixed_range = (fix != 0);
+    g_runtime_config.enable_raw_rms_gate = (raw_gate != 0);
+
+    size_t size = sizeof(float);
+    nvs_get_blob(handle, "target_rms", &g_runtime_config.target_rms, &size);
+    nvs_get_blob(handle, "thresh", &g_runtime_config.detection_threshold, &size);
+
+    nvs_close(handle);
+    ESP_LOGI(TAG, "Loaded RuntimeConfig from NVS: DC=%d RMS=%d Gate=%d Thresh=%.2f",
+             g_runtime_config.enable_dc_removal, g_runtime_config.enable_rms_normalize,
+             g_runtime_config.enable_raw_rms_gate, g_runtime_config.detection_threshold);
+    return ESP_OK;
+}
+
+esp_err_t SaveRuntimeConfigToNvs(const RuntimeConfig& cfg) {
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open("runtime_cfg", NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+
+    g_runtime_config = cfg;
+    nvs_set_u8(handle, "dc_rem", cfg.enable_dc_removal ? 1 : 0);
+    nvs_set_u8(handle, "rms_norm", cfg.enable_rms_normalize ? 1 : 0);
+    nvs_set_u8(handle, "fix_rng", cfg.enable_fixed_range ? 1 : 0);
+    nvs_set_u8(handle, "raw_gate", cfg.enable_raw_rms_gate ? 1 : 0);
+
+    nvs_set_blob(handle, "target_rms", &cfg.target_rms, sizeof(float));
+    nvs_set_blob(handle, "thresh", &cfg.detection_threshold, sizeof(float));
+
+    err = nvs_commit(handle);
+    nvs_close(handle);
+    ESP_LOGI(TAG, "Saved RuntimeConfig to NVS");
+    return err;
+}
+
 static const char* TAG = "ota_update";
 
 // -----------------------------------------------------------------------------

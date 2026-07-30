@@ -47,6 +47,12 @@ def export_ota_config_json(
     segment_length: int = 2400,
     detection_threshold: float = 0.60,
     class_names: Sequence[str] | None = None,
+    dc_removal: bool = True,
+    high_pass_filter: bool = True,
+    high_pass_cutoff_hz: float = 150.0,
+    pre_emphasis: bool = False,
+    pre_emphasis_coeff: float = 0.97,
+    rms_normalization: bool = True,
 ) -> Path:
     import json
     import time
@@ -65,6 +71,16 @@ def export_ota_config_json(
             "sample_rate": sample_rate,
             "segment_length": segment_length,
             "amplitude_range": amplitude_range,
+            "hop_length_ms": 150,
+        },
+        "preprocessing_overrides": {
+            "dc_removal": dc_removal,
+            "high_pass_filter": high_pass_filter,
+            "high_pass_cutoff_hz": high_pass_cutoff_hz,
+            "pre_emphasis": pre_emphasis,
+            "pre_emphasis_coeff": pre_emphasis_coeff,
+            "rms_normalization": rms_normalization,
+            "target_rms": amplitude_range,
         },
         "quantization": {
             "input_scale": float(scale),
@@ -72,6 +88,8 @@ def export_ota_config_json(
         },
         "inference": {
             "detection_threshold": detection_threshold,
+            "min_frequency_hz": 150.0,
+            "max_frequency_hz": 1500.0,
         },
         "classes": list(class_names) if class_names else [],
     }
@@ -158,7 +176,8 @@ To run inference on your ESP32-S3 or other compatible microcontroller, use the f
 
 // Adjust tensor arena size as needed based on model complexity (e.g. 60-120 KB)
 constexpr int kTensorArenaSize = 100 * 1024;
-alignas(16) uint8_t tensor_arena[kTensorArenaSize];
+// Allocate in fast internal SRAM (DRAM), NOT external PSRAM, for 3x memory speed
+alignas(16) DRAM_ATTR uint8_t tensor_arena[kTensorArenaSize];
 
 const tflite::Model* model = nullptr;
 tflite::MicroInterpreter* interpreter = nullptr;
@@ -169,12 +188,16 @@ void setup() {{
     // 1. Initialize TFLite model from header array
     model = tflite::GetModel({array_name});
     if (model->version() != TFLITE_SCHEMA_VERSION) {{
-        // Handle error: Model schema mismatch
         return;
     }}
 
-    // 2. Load all ops resolver (use MicroMutableOpResolver to save flash size in production)
-    static tflite::AllOpsResolver resolver;
+    // 2. Optimized Op Resolver (Use MicroMutableOpResolver<5> for minimal RAM & flash)
+    static tflite::MicroMutableOpResolver<5> resolver;
+    resolver.AddConv2D();
+    resolver.AddMaxPool2D();
+    resolver.AddReshape();
+    resolver.AddFullyConnected();
+    resolver.AddSoftmax();
 
     // 3. Instantiate interpreter
     static tflite::MicroInterpreter static_interpreter(

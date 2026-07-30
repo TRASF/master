@@ -89,10 +89,10 @@ static void RmsNormalize(float* x, size_t n, float current_rms) {
     if (x == NULL || n == 0) return;
 
     const float eps = 1e-8f;
-    float gain = TARGET_RMS / (current_rms + eps);
+    float gain = g_runtime_config.target_rms / (current_rms + eps);
 
-    if (gain < RMS_MIN_GAIN) gain = RMS_MIN_GAIN;
-    if (gain > RMS_MAX_GAIN) gain = RMS_MAX_GAIN;
+    if (gain < g_runtime_config.rms_min_gain) gain = g_runtime_config.rms_min_gain;
+    if (gain > g_runtime_config.rms_max_gain) gain = g_runtime_config.rms_max_gain;
 
     for (size_t i = 0; i < n; ++i) {
         float v = x[i] * gain;
@@ -108,7 +108,8 @@ static void RmsNormalize(float* x, size_t n, float current_rms) {
 static void ApplyFixedInputRange(float* x, size_t n) {
     if (x == NULL || n == 0) return;
 
-    const float inverse_range = 1.0f / MODEL_INPUT_AMPLITUDE_RANGE;
+    const float amp = (g_runtime_config.fixed_range_amplitude > 0.0f) ? g_runtime_config.fixed_range_amplitude : 0.03f;
+    const float inverse_range = 1.0f / amp;
 
     for (size_t i = 0; i < n; ++i) {
         float v = x[i] * inverse_range;
@@ -153,29 +154,23 @@ static esp_err_t ReadRawSamples(float* output, size_t sample_count) {
 static void ApplyTrainingPreprocess(float* output, size_t sample_count) {
     if (output == NULL || sample_count == 0) return;
 
-    // This order must match Python exactly. The rolling buffer stores only raw
-    // normalized waveform samples from I2sSampleToFloat().
-    RemoveDc(output, sample_count);
+    // Order matches Python pipeline exactly
+    if (g_runtime_config.enable_dc_removal) {
+        RemoveDc(output, sample_count);
+    }
 
-    // Raw RMS is measured after DC removal, before fixed-range scaling or RMS
-    // normalization, so ENABLE_RAW_RMS_GATE operates on physical normalized
-    // waveform amplitude.
     const float raw_rms = ComputeRms(output, sample_count);
 
-#if ENABLE_RAW_RMS_GATE
-    if (raw_rms < MIN_RAW_RMS_GATE) {
+    if (g_runtime_config.enable_raw_rms_gate && raw_rms < g_runtime_config.min_raw_rms_gate) {
         memset(output, 0, sample_count * sizeof(output[0]));
         return;
     }
-#endif
 
-#if PREPROCESS_FIXED_RANGE
-    ApplyFixedInputRange(output, sample_count);
-#elif PREPROCESS_RMS_NORMALIZE
-    RmsNormalize(output, sample_count, raw_rms);
-#else
-    // DC removal only.
-#endif
+    if (g_runtime_config.enable_rms_normalize) {
+        RmsNormalize(output, sample_count, raw_rms);
+    } else if (g_runtime_config.enable_fixed_range) {
+        ApplyFixedInputRange(output, sample_count);
+    }
 }
 
 // ============================================================
