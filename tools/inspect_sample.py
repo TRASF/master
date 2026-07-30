@@ -7,9 +7,15 @@ for any given audio file or synthetic mosquito signal.
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
+
+# Ensure 'src' is in sys.path for direct script execution
+_repo_src = Path(__file__).resolve().parent.parent / "src"
+if _repo_src.exists() and str(_repo_src) not in sys.path:
+    sys.path.insert(0, str(_repo_src))
 
 try:
     import tensorflow as tf
@@ -17,8 +23,11 @@ try:
     from wingbeat_ml.evaluation.diagnostics import analyze_model_sample
     from wingbeat_ml.visualizer.spectrogram import compute_spectrogram, analyze_harmonics
     from wingbeat_ml.data.audio import load_audio
-except ImportError:
+except ImportError as err:
+    print(f"Warning: Failed to import wingbeat_ml components: {err}")
     tf = None
+    MosSongPlusModel = None
+    analyze_model_sample = None
 
 CLASS_NAMES = [
     "Ae_aegypti_Female",
