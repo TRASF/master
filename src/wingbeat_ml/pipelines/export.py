@@ -355,3 +355,6 @@ __all__ = [
     "main",
     "run_basic_quantization_suite",
 ]
+
+if __name__ == "__main__":
+    main()

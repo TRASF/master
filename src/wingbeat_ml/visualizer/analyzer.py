@@ -24,6 +24,53 @@ except ImportError:  # pragma: no cover
     compute_gradcam = None
 
 
+def _load_or_build_model(model_path: str):
+    if tf is None:
+        return None
+
+    path = str(model_path)
+    if not path.endswith(".weights.h5"):
+        try:
+            return tf.keras.models.load_model(path)
+        except Exception:
+            pass
+
+    try:
+        from wingbeat_ml.models import MosSongPlusModel
+        import yaml
+        from pathlib import Path
+
+        cfg_path = Path("configs/models/mossong_plus.yaml")
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                model_cfg = yaml.safe_load(f)
+        else:
+            model_cfg = {
+                "model": {
+                    "mossong_plus": {
+                        "layers": [
+                            {"type": "conv1d", "filters": 32, "kernel_size": 100, "strides": 4, "activation": "relu", "padding": "valid", "batch_norm": True},
+                            {"type": "conv1d", "filters": 32, "kernel_size": 64, "strides": 4, "activation": "relu", "padding": "valid", "batch_norm": True},
+                            {"type": "conv1d", "filters": 64, "kernel_size": 64, "strides": 3, "activation": "relu", "padding": "valid", "batch_norm": True},
+                            {"type": "maxpool1d", "pool_size": 3, "strides": 3, "padding": "valid"},
+                            {"type": "flatten"},
+                            {"type": "dropout", "rate": 0.5},
+                            {"type": "dense", "units": 256, "activation": "relu", "batch_norm": True},
+                            {"type": "dropout", "rate": 0.5},
+                        ]
+                    }
+                }
+            }
+
+        builder = MosSongPlusModel(model_cfg)
+        model = builder.build(input_shape=(2400, 1), output_units=11, output_activation="softmax")
+        model.load_weights(path)
+        return model
+    except Exception as err:
+        print(f"[HostAnalyzer] Failed to load model weights from {path}: {err}")
+        return None
+
+
 @dataclass
 class AnalysisResult:
     seq: int
@@ -63,10 +110,7 @@ class HostAnalyzer(threading.Thread):
         self.model = None
 
         if self.model_path and tf is not None:
-            try:
-                self.model = tf.keras.models.load_model(self.model_path)
-            except Exception as err:
-                print(f"[HostAnalyzer] Failed to load model at {self.model_path}: {err}")
+            self.model = _load_or_build_model(self.model_path)
 
     def submit_packet(
         self,

@@ -818,6 +818,7 @@ class Visualizer:
         self.floor_db = floor_db
         self.ceiling_db = ceiling_db
         self.refresh_ms = refresh_ms
+        self.enable_gradcam = enable_gradcam
 
         self.host_analyzer = None
         if HostAnalyzer is not None and (local_model or enable_gradcam or export_anomalies):
@@ -837,6 +838,10 @@ class Visualizer:
         self.spec_matrix = np.full(
             (len(self.freqs), self.spec_columns),
             self.floor_db,
+            dtype=np.float32,
+        )
+        self.gradcam_matrix = np.zeros(
+            (len(self.freqs), self.spec_columns),
             dtype=np.float32,
         )
         self.spec_column_remainder = 0.0
@@ -860,10 +865,17 @@ class Visualizer:
     def _build_figure(self) -> None:
         plt.style.use("dark_background")
         self.fig = plt.figure(figsize=(15, 8.5))
-        grid = self.fig.add_gridspec(2, 1, height_ratios=[1.0, 2.1])
 
-        self.ax_wave = self.fig.add_subplot(grid[0])
-        self.ax_spec = self.fig.add_subplot(grid[1])
+        if self.enable_gradcam:
+            grid = self.fig.add_gridspec(3, 1, height_ratios=[1.0, 1.6, 1.2])
+            self.ax_wave = self.fig.add_subplot(grid[0])
+            self.ax_spec = self.fig.add_subplot(grid[1])
+            self.ax_gradcam = self.fig.add_subplot(grid[2])
+        else:
+            grid = self.fig.add_gridspec(2, 1, height_ratios=[1.0, 2.1])
+            self.ax_wave = self.fig.add_subplot(grid[0])
+            self.ax_spec = self.fig.add_subplot(grid[1])
+            self.ax_gradcam = None
 
         self.fig.canvas.manager.set_window_title("ESP32 Mosquito Edge-ML Monitor")
         self.fig.suptitle("Waiting for telemetry...", fontsize=16, fontweight="bold")
@@ -924,6 +936,31 @@ class Visualizer:
             fraction=0.025,
         )
         colorbar.set_label("Magnitude (dBFS)")
+
+        # Grad-CAM Attention Heatmap Subplot
+        self.gradcam_image = None
+        if self.ax_gradcam is not None:
+            self.gradcam_image = self.ax_gradcam.imshow(
+                self.gradcam_matrix,
+                origin="lower",
+                aspect="auto",
+                interpolation="nearest",
+                extent=[-self.history_seconds, 0.0, 0.0, self.fs / 2.0],
+                cmap="jet",
+                vmin=0.0,
+                vmax=1.0,
+            )
+            self.ax_gradcam.set_ylim(self.min_frequency, self.max_frequency)
+            self.ax_gradcam.set_title("Grad-CAM Host Model Attention Heatmap")
+            self.ax_gradcam.set_xlabel("History (seconds)")
+            self.ax_gradcam.set_ylabel("Frequency (Hz)")
+            cb_cam = self.fig.colorbar(
+                self.gradcam_image,
+                ax=self.ax_gradcam,
+                pad=0.01,
+                fraction=0.025,
+            )
+            cb_cam.set_label("Attention")
 
         self.status_text = self.fig.text(
             0.01,
@@ -995,6 +1032,31 @@ class Visualizer:
             self.spec_matrix[:, -column_count:] = newest
 
         self.spec_image.set_data(self.spec_matrix)
+
+    def _append_gradcam(self, heatmap: np.ndarray) -> None:
+        if not self.enable_gradcam or self.gradcam_image is None:
+            return
+
+        cols_per_packet = max(1, int(round(self.packet_hop_samples / self.hop_length)))
+        if heatmap.ndim == 1:
+            h_interp = np.interp(
+                np.linspace(0, len(heatmap) - 1, cols_per_packet),
+                np.arange(len(heatmap)),
+                heatmap,
+            )
+            slice_2d = np.tile(h_interp, (len(self.freqs), 1))
+        elif heatmap.ndim == 2:
+            slice_2d = heatmap
+        else:
+            return
+
+        if cols_per_packet >= self.spec_columns:
+            self.gradcam_matrix[:, :] = slice_2d[:, -self.spec_columns :]
+        else:
+            self.gradcam_matrix[:, :-cols_per_packet] = self.gradcam_matrix[:, cols_per_packet:]
+            self.gradcam_matrix[:, -cols_per_packet:] = slice_2d
+
+        self.gradcam_image.set_data(self.gradcam_matrix)
 
     def _update_waveform_axes(self) -> None:
         """Update waveform limits from the valid portion of the rolling data."""
@@ -1311,6 +1373,8 @@ class Visualizer:
         if self.host_analyzer is not None and not self.host_analyzer.output_queue.empty():
             try:
                 res = self.host_analyzer.output_queue.get_nowait()
+                if res.heatmap is not None:
+                    self._append_gradcam(res.heatmap)
                 if res.host_class_id is not None:
                     h_cls = CLASS_NAMES[res.host_class_id] if 0 <= res.host_class_id < len(CLASS_NAMES) else str(res.host_class_id)
                     status += f" | Host: {h_cls} ({res.host_confidence * 100:.0f}%)"

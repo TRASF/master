@@ -90,6 +90,24 @@ class TestHostAnalyzer(unittest.TestCase):
         analyzer.stop_event.set()
         analyzer.join(timeout=1.0)
 
+    def test_analyzer_weights_h5_loading(self):
+        if tf is None:
+            self.skipTest("TensorFlow not installed")
+
+        from wingbeat_ml.models import MosSongPlusModel
+        import yaml
+
+        with open("configs/models/mossong_plus.yaml", "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+
+        m = MosSongPlusModel(cfg).build((2400, 1), 11, "softmax")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            weights_file = str(Path(tmpdir) / "best_model.weights.h5")
+            m.save_weights(weights_file)
+
+            analyzer = HostAnalyzer(model_path=weights_file, sample_rate=8000, enable_gradcam=True)
+            self.assertIsNotNone(analyzer.model)
+
 
 if __name__ == "__main__":
     unittest.main()
