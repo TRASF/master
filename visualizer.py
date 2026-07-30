@@ -16,6 +16,11 @@ from matplotlib import patches
 from matplotlib.animation import FuncAnimation
 from serial.tools import list_ports
 
+try:
+    from wingbeat_ml.visualizer.analyzer import HostAnalyzer
+except ImportError:
+    HostAnalyzer = None
+
 CLASS_NAMES = [
     "Ae_aegypti_Female",
     "Ae_aegypti_Male",
@@ -773,6 +778,10 @@ class Visualizer:
         floor_db: float,
         ceiling_db: float,
         refresh_ms: int,
+        local_model: Optional[str] = None,
+        enable_gradcam: bool = False,
+        export_anomalies: bool = False,
+        anomaly_dir: str = "output/misclassifications",
     ) -> None:
         self.packet_queue = packet_queue
         self.reader = reader
@@ -809,6 +818,17 @@ class Visualizer:
         self.floor_db = floor_db
         self.ceiling_db = ceiling_db
         self.refresh_ms = refresh_ms
+
+        self.host_analyzer = None
+        if HostAnalyzer is not None and (local_model or enable_gradcam or export_anomalies):
+            self.host_analyzer = HostAnalyzer(
+                model_path=local_model,
+                sample_rate=sample_rate,
+                enable_gradcam=enable_gradcam,
+                export_anomalies=export_anomalies,
+                anomaly_output_dir=anomaly_dir,
+            )
+            self.host_analyzer.start()
 
         self.freqs = np.fft.rfftfreq(self.n_fft, d=1.0 / self.fs)
         self.spec_columns = max(
@@ -1252,6 +1272,15 @@ class Visualizer:
                 peak_frequency=peak_frequency,
             )
 
+        if self.host_analyzer is not None:
+            self.host_analyzer.submit_packet(
+                seq=packet.seq,
+                mcu_class_id=packet.class_id,
+                mcu_confidence=packet.confidence,
+                audio_i16=packet.audio_i16,
+                received_at=packet.received_at,
+            )
+
         self.last_packet_time = packet.received_at
 
     def update(self, _frame):
@@ -1279,6 +1308,17 @@ class Visualizer:
             f"dropped={stats.queue_drops}  "
             f"last={age_text}"
         )
+        if self.host_analyzer is not None and not self.host_analyzer.output_queue.empty():
+            try:
+                res = self.host_analyzer.output_queue.get_nowait()
+                if res.host_class_id is not None:
+                    h_cls = CLASS_NAMES[res.host_class_id] if 0 <= res.host_class_id < len(CLASS_NAMES) else str(res.host_class_id)
+                    status += f" | Host: {h_cls} ({res.host_confidence * 100:.0f}%)"
+                    if res.discrepancy:
+                        status += " [DISCREPANCY]"
+            except queue.Empty:
+                pass
+
         if stats.last_error:
             status += f" | SERIAL ERROR: {stats.last_error}"
 
@@ -1450,6 +1490,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--floor-db", type=float, default=-100.0)
     parser.add_argument("--ceiling-db", type=float, default=-20.0)
     parser.add_argument("--refresh-ms", type=int, default=20)
+    parser.add_argument(
+        "--local-model",
+        type=str,
+        default=None,
+        help="Path to local Keras/TF model for host-side model analysis.",
+    )
+    parser.add_argument(
+        "--enable-gradcam",
+        action="store_true",
+        help="Enable live Grad-CAM explainability heatmap computation.",
+    )
+    parser.add_argument(
+        "--export-anomalies",
+        action="store_true",
+        help="Automatically export misclassifications and low-confidence frames.",
+    )
+    parser.add_argument(
+        "--anomaly-dir",
+        type=str,
+        default="output/misclassifications",
+        help="Output directory for saved anomaly frames.",
+    )
     return parser.parse_args()
 
 
@@ -1557,6 +1619,10 @@ def main() -> int:
         floor_db=args.floor_db,
         ceiling_db=args.ceiling_db,
         refresh_ms=args.refresh_ms,
+        local_model=args.local_model,
+        enable_gradcam=args.enable_gradcam,
+        export_anomalies=args.export_anomalies,
+        anomaly_dir=args.anomaly_dir,
     )
 
     try:
