@@ -108,6 +108,28 @@ class TestHostAnalyzer(unittest.TestCase):
             analyzer = HostAnalyzer(model_path=weights_file, sample_rate=8000, enable_gradcam=True)
             self.assertIsNotNone(analyzer.model)
 
+    def test_analyzer_fast_tflite_loading(self):
+        if tf is None:
+            self.skipTest("TensorFlow not installed")
+
+        from wingbeat_ml.export.tflite import convert_float_tflite
+        from wingbeat_ml.visualizer.analyzer import FastTFLiteModel
+
+        m = make_model() if "make_model" in globals() else None
+        if m is None:
+            inp = tf.keras.layers.Input(batch_shape=(1, 2400, 1))
+            out = tf.keras.layers.Dense(11)(tf.keras.layers.GlobalAveragePooling1D()(inp))
+            m = tf.keras.Model(inp, out)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tflite_path = str(Path(tmpdir) / "model.tflite")
+            convert_float_tflite(m, tflite_path)
+
+            fast_model = FastTFLiteModel(tflite_path)
+            cls_id, conf = fast_model.predict_fast(np.random.randn(2400).astype(np.float32))
+            self.assertGreaterEqual(cls_id, 0)
+            self.assertLess(cls_id, 11)
+
 
 class TestModelDiagnostics(unittest.TestCase):
     def test_analyze_model_sample(self):

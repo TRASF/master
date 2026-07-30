@@ -222,6 +222,8 @@ extern "C" void app_main(void) {
     }
     ESP_ERROR_CHECK(nvs_err);
 
+    LoadRuntimeConfigFromNvs();
+
     esp_err_t init_err = InitAudio();
     if (init_err != ESP_OK) {
         ESP_LOGE(TAG, "InitAudio failed during startup self-test: %s", esp_err_to_name(init_err));

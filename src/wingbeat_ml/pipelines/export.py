@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import copy
 import csv
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -343,9 +344,14 @@ def main(args=None):
         action="store_true",
         default=None,
     )
+    parser.add_argument(
+        "--sync-deployment",
+        action="store_true",
+        help="Automatically copy exported model.h and quantization headers into deployment/tflitemicro/main/",
+    )
     parsed = parser.parse_args(args)
 
-    return export_from_weights(
+    res = export_from_weights(
         defaults_path=parsed.defaults_path,
         model_config_path=parsed.model_config,
         weights_path=parsed.weights,
@@ -355,6 +361,15 @@ def main(args=None):
         allow_dummy_calibration=parsed.allow_dummy_calibration,
         run_debugger=parsed.run_debugger,
     )
+
+    if parsed.sync_deployment:
+        dep_dir = Path("deployment/tflitemicro/main")
+        if dep_dir.exists():
+            shutil.copy(res["paths"]["int8_header"], dep_dir / "model.h")
+            shutil.copy(res["paths"]["input_quantization"], dep_dir / "model_input_quantization.h")
+            print(f"Synced headers to deployment directory: {dep_dir}")
+
+    return res
 
 
 __all__ = [

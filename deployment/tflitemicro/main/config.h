@@ -2,6 +2,25 @@
 
 #include "freertos/FreeRTOS.h"
 #include "driver/gpio.h"
+#include "esp_err.h"
+
+// ===== Runtime Dynamic Preprocessing & Inference Config (NVS Overridable) =====
+struct RuntimeConfig {
+    bool enable_dc_removal = true;
+    bool enable_rms_normalize = true;
+    bool enable_fixed_range = false;
+    float fixed_range_amplitude = 0.03f;
+    float target_rms = 0.05f;
+    float rms_min_gain = 0.1f;
+    float rms_max_gain = 10.0f;
+    bool enable_raw_rms_gate = false;
+    float min_raw_rms_gate = 0.0005f;
+    float detection_threshold = 0.60f;
+};
+
+extern RuntimeConfig g_runtime_config;
+esp_err_t LoadRuntimeConfigFromNvs(void);
+esp_err_t SaveRuntimeConfigToNvs(const RuntimeConfig& cfg);
 
 // ===== Audio config: must match configs/defaults.yaml =====
 #define SAMPLE_RATE_HZ          8000
