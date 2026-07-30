@@ -9,6 +9,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "mdns.h"
 
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
@@ -102,6 +103,13 @@ esp_err_t connect_wifi(const char* ssid, const char* password) {
     esp_err_t result = ESP_FAIL;
     if (bits & WIFI_CONNECTED_BIT) {
         ESP_LOGI(TAG, "Connected to AP successfully");
+        // Initialize mDNS service for local hostname resolution (.local)
+        esp_err_t err = mdns_init();
+        if (err == ESP_OK) {
+            mdns_hostname_set("esp32-mosquito");
+            mdns_instance_name_set("ESP32 Mosquito Classifier");
+            ESP_LOGI(TAG, "mDNS initialized; hostname: esp32-mosquito.local");
+        }
         result = ESP_OK;
     } else if (bits & WIFI_FAIL_BIT) {
         ESP_LOGE(TAG, "Failed to connect to Wi-Fi");
