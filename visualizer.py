@@ -1270,8 +1270,9 @@ class Visualizer:
         color: str,
         peak_frequency: float,
     ) -> None:
-        """Draw a box over the newest spectrogram segment."""
-        low_f, high_f = self._detection_band(class_name, peak_frequency)
+        """Draw a full-frequency window bounding box over the newest spectrogram segment."""
+        low_f = self.min_frequency
+        high_f = self.max_frequency
 
         x0 = -self.packet_advance_seconds
         width = self.packet_advance_seconds
@@ -1281,15 +1282,15 @@ class Visualizer:
             (x0, low_f),
             width,
             height,
-            linewidth=1.8,
+            linewidth=1.5,
             edgecolor=color,
             facecolor="none",
-            alpha=0.95,
+            alpha=0.90,
         )
         self.ax_spec.add_patch(rect)
 
         label = f"{self._short_class_label(class_name)}  {confidence * 100:.0f}%"
-        text_y = min(high_f + 25.0, self.max_frequency - 20.0)
+        text_y = self.max_frequency - 40.0
         text = self.ax_spec.text(
             x0 + 0.01,
             text_y,
@@ -1298,8 +1299,8 @@ class Visualizer:
             fontsize=8,
             fontweight="bold",
             ha="left",
-            va="bottom",
-            bbox={"facecolor": "black", "alpha": 0.55, "edgecolor": "none", "pad": 1.5},
+            va="top",
+            bbox={"facecolor": "black", "alpha": 0.65, "edgecolor": "none", "pad": 1.5},
         )
 
         self.spec_annotations.append((rect, text))
