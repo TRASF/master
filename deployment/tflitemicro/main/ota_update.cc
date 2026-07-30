@@ -16,6 +16,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+static const char* TAG = "ota_update";
+
 RuntimeConfig g_runtime_config;
 
 esp_err_t LoadRuntimeConfigFromNvs(void) {
@@ -66,8 +68,6 @@ esp_err_t SaveRuntimeConfigToNvs(const RuntimeConfig& cfg) {
     ESP_LOGI(TAG, "Saved RuntimeConfig to NVS");
     return err;
 }
-
-static const char* TAG = "ota_update";
 
 // -----------------------------------------------------------------------------
 // FIRMWARE OTA IMPLEMENTATION
