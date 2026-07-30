@@ -21,6 +21,8 @@ idf_component_register(
         esp_event
         esp_netif
         json
+        cjson
+        mdns
 )
 
 # target_compile_options(${COMPONENT_LIB} PRIVATE -DESP_NN)
