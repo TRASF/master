@@ -780,6 +780,7 @@ class Visualizer:
         refresh_ms: int,
         local_model: Optional[str] = None,
         enable_gradcam: bool = False,
+        enable_dense: bool = False,
         export_anomalies: bool = False,
         anomaly_dir: str = "output/misclassifications",
     ) -> None:
@@ -819,6 +820,7 @@ class Visualizer:
         self.ceiling_db = ceiling_db
         self.refresh_ms = refresh_ms
         self.enable_gradcam = enable_gradcam
+        self.enable_dense = enable_dense or (local_model is not None)
 
         self.host_analyzer = None
         if HostAnalyzer is not None and (local_model or enable_gradcam or export_anomalies):
@@ -864,18 +866,32 @@ class Visualizer:
 
     def _build_figure(self) -> None:
         plt.style.use("dark_background")
-        self.fig = plt.figure(figsize=(15, 8.5))
+        self.fig = plt.figure(figsize=(16, 8.5))
 
-        if self.enable_gradcam:
+        if self.enable_dense and self.enable_gradcam:
+            grid = self.fig.add_gridspec(3, 2, height_ratios=[1.0, 1.6, 1.2], width_ratios=[2.2, 1.0])
+            self.ax_wave = self.fig.add_subplot(grid[0, 0])
+            self.ax_spec = self.fig.add_subplot(grid[1, 0])
+            self.ax_gradcam = self.fig.add_subplot(grid[2, 0])
+            self.ax_emb = self.fig.add_subplot(grid[0:2, 1])
+        elif self.enable_dense:
+            grid = self.fig.add_gridspec(2, 2, height_ratios=[1.0, 2.1], width_ratios=[2.2, 1.0])
+            self.ax_wave = self.fig.add_subplot(grid[0, 0])
+            self.ax_spec = self.fig.add_subplot(grid[1, 0])
+            self.ax_gradcam = None
+            self.ax_emb = self.fig.add_subplot(grid[0:2, 1])
+        elif self.enable_gradcam:
             grid = self.fig.add_gridspec(3, 1, height_ratios=[1.0, 1.6, 1.2])
             self.ax_wave = self.fig.add_subplot(grid[0])
             self.ax_spec = self.fig.add_subplot(grid[1])
             self.ax_gradcam = self.fig.add_subplot(grid[2])
+            self.ax_emb = None
         else:
             grid = self.fig.add_gridspec(2, 1, height_ratios=[1.0, 2.1])
             self.ax_wave = self.fig.add_subplot(grid[0])
             self.ax_spec = self.fig.add_subplot(grid[1])
             self.ax_gradcam = None
+            self.ax_emb = None
 
         self.fig.canvas.manager.set_window_title("ESP32 Mosquito Edge-ML Monitor")
         self.fig.suptitle("Waiting for telemetry...", fontsize=16, fontweight="bold")
@@ -961,6 +977,22 @@ class Visualizer:
                 fraction=0.025,
             )
             cb_cam.set_label("Attention")
+
+        # Dense Embedding Subplot
+        self.emb_line = None
+        if self.ax_emb is not None:
+            (self.emb_line,) = self.ax_emb.plot(
+                np.arange(256),
+                np.zeros(256),
+                color="#00d6b4",
+                linewidth=1.2,
+            )
+            self.ax_emb.set_xlim(0, 255)
+            self.ax_emb.set_ylim(-2.0, 2.0)
+            self.ax_emb.set_title("Dense Embedding (256-dim)")
+            self.ax_emb.set_xlabel("Neuron Index")
+            self.ax_emb.set_ylabel("Activation Level")
+            self.ax_emb.grid(True, alpha=0.18)
 
         self.status_text = self.fig.text(
             0.01,
@@ -1375,6 +1407,12 @@ class Visualizer:
                 res = self.host_analyzer.output_queue.get_nowait()
                 if res.heatmap is not None:
                     self._append_gradcam(res.heatmap)
+                if self.emb_line is not None and res.dense_embedding is not None:
+                    self.emb_line.set_ydata(res.dense_embedding)
+                    ymin = float(np.min(res.dense_embedding))
+                    ymax = float(np.max(res.dense_embedding))
+                    if ymax > ymin:
+                        self.ax_emb.set_ylim(ymin - 0.2, ymax + 0.2)
                 if res.host_class_id is not None:
                     h_cls = CLASS_NAMES[res.host_class_id] if 0 <= res.host_class_id < len(CLASS_NAMES) else str(res.host_class_id)
                     status += f" | Host: {h_cls} ({res.host_confidence * 100:.0f}%)"
@@ -1566,6 +1604,11 @@ def parse_args() -> argparse.Namespace:
         help="Enable live Grad-CAM explainability heatmap computation.",
     )
     parser.add_argument(
+        "--enable-dense",
+        action="store_true",
+        help="Enable live 256-dim dense embedding feature visualization panel.",
+    )
+    parser.add_argument(
         "--export-anomalies",
         action="store_true",
         help="Automatically export misclassifications and low-confidence frames.",
@@ -1685,6 +1728,7 @@ def main() -> int:
         refresh_ms=args.refresh_ms,
         local_model=args.local_model,
         enable_gradcam=args.enable_gradcam,
+        enable_dense=args.enable_dense,
         export_anomalies=args.export_anomalies,
         anomaly_dir=args.anomaly_dir,
     )
