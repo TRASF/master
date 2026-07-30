@@ -10,6 +10,7 @@ import queue
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
 import numpy as np
 
@@ -30,7 +31,12 @@ def _load_or_build_model(model_path: str):
     if tf is None:
         return None
 
-    path = str(model_path)
+    path_obj = Path(model_path).resolve()
+    if not path_obj.exists():
+        print(f"[HostAnalyzer Error]: Model file not found at '{model_path}' (Resolved: '{path_obj}')")
+        return None
+
+    path = str(path_obj)
     if not path.endswith(".weights.h5"):
         try:
             return tf.keras.models.load_model(path)
@@ -40,7 +46,6 @@ def _load_or_build_model(model_path: str):
     try:
         from wingbeat_ml.models import MosSongPlusModel
         import yaml
-        from pathlib import Path
 
         cfg_path = Path("configs/models/mossong_plus.yaml")
         if cfg_path.exists():

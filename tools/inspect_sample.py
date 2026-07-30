@@ -46,16 +46,27 @@ CLASS_NAMES = [
 
 def load_analysis_model(weights_path: str) -> tf.keras.Model:
     import yaml
+    weights_p = Path(weights_path).resolve()
+    if not weights_p.exists():
+        raise FileNotFoundError(
+            f"Weights file not found at: '{weights_path}'\n"
+            f"Absolute path checked: '{weights_p}'\n"
+            f"Current directory: '{Path.cwd()}'\n"
+            "Please verify the model weights file path."
+        )
+
     cfg_path = Path("configs/models/mossong_plus.yaml")
-    if cfg_path.exists():
-        with open(cfg_path, "r", encoding="utf-8") as f:
-            model_cfg = yaml.safe_load(f)
-    else:
-        raise FileNotFoundError("configs/models/mossong_plus.yaml not found")
+    if not cfg_path.exists():
+        cfg_path = _repo_src.parent / "configs/models/mossong_plus.yaml"
+    if not cfg_path.exists():
+        raise FileNotFoundError(f"Configuration file not found at {cfg_path}")
+
+    with open(cfg_path, "r", encoding="utf-8") as f:
+        model_cfg = yaml.safe_load(f)
 
     builder = MosSongPlusModel(model_cfg)
     model = builder.build(input_shape=(2400, 1), output_units=11, output_activation=None)
-    model.load_weights(weights_path)
+    model.load_weights(str(weights_p))
     return model
 
 
