@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 import argparse
+import os
 import queue
 import re
 import struct
+import sys
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
+
+# Ensure 'src' is in sys.path for direct script execution
+_repo_src = Path(__file__).resolve().parent / "src"
+if _repo_src.exists() and str(_repo_src) not in sys.path:
+    sys.path.insert(0, str(_repo_src))
 
 import matplotlib.pyplot as plt
 import numpy as np
