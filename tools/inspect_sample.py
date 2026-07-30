@@ -103,6 +103,8 @@ def generate_diagnostic_report(
     else:
         class_color = "#808080"
 
+    fig.suptitle(f"MOSQUITOSONG+ DUAL-ENGINE DIAGNOSTIC REPORT — {pred_cls_name} ({diag.predicted_confidence*100:.1f}%)", fontsize=15, fontweight="bold", color=class_color)
+
     # Subplot 1: STFT Spectrogram
     ax_spec = fig.add_subplot(grid[0, 0])
     freqs, times, spec = compute_spectrogram(audio, sample_rate=sample_rate)
@@ -115,7 +117,7 @@ def generate_diagnostic_report(
         vmin=-100,
         vmax=-20,
     )
-    ax_spec.set_title(f"Audio STFT Spectrogram (Estimated f0: {harmonics['f0_hz']:.1f} Hz)")
+    ax_spec.set_title(f"[INPUT SIGNAL] STFT Spectrogram (Dominant f0: {harmonics['f0_hz']:.1f} Hz, Power: {harmonics['peak_power_db']:.1f} dBFS)")
     ax_spec.set_ylabel("Frequency (Hz)")
     fig.colorbar(im_spec, ax=ax_spec, pad=0.01)
 
@@ -144,7 +146,7 @@ def generate_diagnostic_report(
         vmin=0.0,
         vmax=1.0,
     )
-    ax_cam.set_title(f"Grad-CAM Frequency Attention Map (Predicted: {pred_cls_name} - {diag.predicted_confidence*100:.1f}%)", color=class_color)
+    ax_cam.set_title(f"[HOST CONV ANALYSIS] Grad-CAM Frequency Attention Map — {pred_cls_name}", color=class_color)
     ax_cam.set_xlabel("Time (seconds)")
     ax_cam.set_ylabel("Frequency (Hz)")
     fig.colorbar(im_cam, ax=ax_cam, pad=0.01)
@@ -158,14 +160,14 @@ def generate_diagnostic_report(
     ax_prob.set_yticklabels(CLASS_NAMES, fontsize=9)
     ax_prob.invert_yaxis()
     ax_prob.set_xlabel("Confidence (%)")
-    ax_prob.set_title("Output Class Probabilities")
+    ax_prob.set_title("[HOST CLASSIFICATION] Output Class Confidence", color=class_color)
     ax_prob.set_xlim(0, 100)
 
     # Subplot 4: Dense Embedding Activations
     ax_emb = fig.add_subplot(grid[2, 0])
     emb_dim = len(diag.dense_embedding)
     ax_emb.plot(diag.dense_embedding, color=class_color, linewidth=1.2)
-    ax_emb.set_title(f"Dense Bottleneck Embedding ({emb_dim}-dim, L2 Norm: {diag.embedding_l2_norm:.2f}) — {pred_cls_name}", color=class_color)
+    ax_emb.set_title(f"[HOST DENSE FEATURE LAYER] Bottleneck Embedding ({emb_dim}-dim, L2 Norm: {diag.embedding_l2_norm:.2f})", color=class_color)
     ax_emb.set_xlabel(f"Neuron Index (0-{emb_dim - 1})")
     ax_emb.set_ylabel("Activation")
     ax_emb.grid(True, alpha=0.2)

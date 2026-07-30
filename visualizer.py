@@ -934,8 +934,20 @@ class Visualizer:
             transform=self.ax_wave.transAxes,
             va="top",
             ha="left",
-            fontsize=10,
-            bbox={"facecolor": "black", "alpha": 0.65, "edgecolor": "none"},
+            fontsize=9.5,
+            family="monospace",
+            bbox={"facecolor": "black", "alpha": 0.75, "edgecolor": "#505050", "pad": 4},
+        )
+        self.host_info = self.ax_wave.text(
+            0.988,
+            0.93,
+            "─── [ HOST DEEP MODEL ANALYSIS ] ───\nWaiting for host inference...",
+            transform=self.ax_wave.transAxes,
+            va="top",
+            ha="right",
+            fontsize=9.5,
+            family="monospace",
+            bbox={"facecolor": "black", "alpha": 0.75, "edgecolor": "#00d6b4", "pad": 4},
         )
 
         # Spectrogram
@@ -1361,14 +1373,11 @@ class Visualizer:
             else f"{packet.class_age_ms} ms"
         )
         self.wave_info.set_text(
-            f"class={packet.class_id}: {class_name}\n"
-            f"confidence={packet.confidence:.3f}   "
-            f"infer={infer_ms:.2f} ms   class_age={class_age}   "
-            f"class_seq={packet.classifier_seq}   audio_seq={packet.seq}\n"
-            f"RMS={rms:.4f}   peak={peak:.4f}   "
-            f"dominant≈{peak_frequency:.1f} Hz\n"
-            f"wave_view={min(self.valid_live_wave_samples / self.fs, self.live_wave_seconds):.2f}s   "
-            f"Y=±{self.current_wave_y_limit:.4f}"
+            f"─── [ DEVICE MCU EDGE TELEMETRY ] ───\n"
+            f"MCU Prediction : {class_name} ({packet.confidence * 100.0:.1f}%)\n"
+            f"Inference Time : {infer_ms:.2f} ms | Age: {class_age}\n"
+            f"Packet Seq     : #{packet.seq} | Classifier Seq: #{packet.classifier_seq}\n"
+            f"Signal Metrics : RMS={rms:.4f} | Peak={peak:.4f} | f0≈{peak_frequency:.1f} Hz"
         )
         self.wave_info.set_color(color if is_detection else "white")
 
@@ -1438,6 +1447,16 @@ class Visualizer:
                     if self.emb_line is not None:
                         self.emb_line.set_color(clr)
                         self.ax_emb.set_title(f"Dense Embedding ({len(res.dense_embedding if res.dense_embedding is not None else [])}-dim) — {h_cls}", color=clr)
+
+                    disc_str = "⚠️ DISCREPANCY DETECTED" if res.discrepancy else "✓ MCU-Host Agreement"
+                    self.host_info.set_text(
+                        f"─── [ HOST DEEP MODEL ANALYSIS ] ───\n"
+                        f"Host Prediction: {h_cls} ({res.host_confidence * 100.0:.1f}%)\n"
+                        f"Parity Status  : {disc_str}\n"
+                        f"STFT / Grad-CAM: Active (Frequency-Weighted)\n"
+                        f"Dominant PSD f0: {res.f0_hz:.1f} Hz ({res.peak_power_db:.1f} dB)"
+                    )
+                    self.host_info.set_color(clr)
                     status += f" | Host: {h_cls} ({res.host_confidence * 100:.0f}%)"
                     if res.discrepancy:
                         status += " [DISCREPANCY]"
