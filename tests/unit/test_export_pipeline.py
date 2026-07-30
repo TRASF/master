@@ -154,6 +154,44 @@ class TestExportModules(unittest.TestCase):
         self.assertIn("g_test_model_len = 4", content)
         self.assertIn("0xff", content)
 
+    def test_bundle_generates_ota_config_json(self):
+        bundle = require_module(
+            self,
+            "wingbeat_ml.export.bundle",
+        )
+        tflite = require_module(
+            self,
+            "wingbeat_ml.export.tflite",
+        )
+        import json
+
+        def rep_ds():
+            yield [np.full((1, 2400, 1), 0.05, dtype=np.float32)]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_path = os.path.join(tmpdir, "model_full_int8.tflite")
+            json_path = os.path.join(tmpdir, "config_ota.json")
+
+            tflite.convert_full_int8_tflite(
+                make_model(),
+                rep_ds,
+                model_path,
+            )
+
+            bundle.export_ota_config_json(
+                model_path,
+                json_path,
+                amplitude_range=0.03,
+                class_names=["cls1", "cls2"],
+            )
+
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            self.assertIn("quantization", data)
+            self.assertIn("input_scale", data["quantization"])
+            self.assertEqual(data["classes"], ["cls1", "cls2"])
+
     def test_pipeline_requires_real_calibration_by_default(self):
         pipeline = require_module(
             self,
