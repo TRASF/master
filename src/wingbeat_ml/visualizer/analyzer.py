@@ -19,9 +19,11 @@ from wingbeat_ml.visualizer.exporter import export_anomaly_frame
 try:
     import tensorflow as tf
     from wingbeat_ml.evaluation.gradcam import compute_gradcam
+    from wingbeat_ml.evaluation.diagnostics import analyze_model_sample
 except ImportError:  # pragma: no cover
     tf = None
     compute_gradcam = None
+    analyze_model_sample = None
 
 
 def _load_or_build_model(model_path: str):
@@ -84,6 +86,7 @@ class AnalysisResult:
     peak_power_db: float
     heatmap: Optional[np.ndarray]
     timestamp: float
+    dense_embedding: Optional[np.ndarray] = None
 
 
 class HostAnalyzer(threading.Thread):
@@ -139,10 +142,11 @@ class HostAnalyzer(threading.Thread):
             f0_hz = harmonics["f0_hz"]
             peak_power_db = harmonics["peak_power_db"]
 
-            # 2. Host model inference & Grad-CAM
+            # 2. Host model inference & Grad-CAM & Dense Analysis
             host_class_id = None
             host_confidence = None
             heatmap = None
+            dense_embedding = None
 
             audio_float = audio_i16.astype(np.float32) / 32768.0
             audio_float = audio_float - np.mean(audio_float)
@@ -152,19 +156,38 @@ class HostAnalyzer(threading.Thread):
 
             if self.model is not None:
                 inp_tensor = np.reshape(audio_float, (1, -1, 1))
-                if self.enable_gradcam and compute_gradcam is not None:
+                if analyze_model_sample is not None:
+                    try:
+                        diag = analyze_model_sample(self.model, inp_tensor)
+                        host_class_id = diag.predicted_class_id
+                        host_confidence = diag.predicted_confidence
+                        heatmap = diag.gradcam_heatmap
+                        dense_embedding = diag.dense_embedding
+                    except Exception:
+                        if self.enable_gradcam and compute_gradcam is not None:
+                            heatmap, host_class_id, host_confidence = compute_gradcam(
+                                self.model, inp_tensor, class_idx=None
+                            )
+                        else:
+                            logits = self.model.predict(inp_tensor, verbose=0)[0]
+                            probs = tf.nn.softmax(logits).numpy()
+                            host_class_id = int(np.argmax(probs))
+                            host_confidence = float(probs[host_class_id])
+                elif self.enable_gradcam and compute_gradcam is not None:
                     try:
                         heatmap, host_class_id, host_confidence = compute_gradcam(
                             self.model, inp_tensor, class_idx=None
                         )
                     except Exception:
-                        preds = self.model.predict(inp_tensor, verbose=0)[0]
-                        host_class_id = int(np.argmax(preds))
-                        host_confidence = float(preds[host_class_id])
+                        logits = self.model.predict(inp_tensor, verbose=0)[0]
+                        probs = tf.nn.softmax(logits).numpy()
+                        host_class_id = int(np.argmax(probs))
+                        host_confidence = float(probs[host_class_id])
                 else:
-                    preds = self.model.predict(inp_tensor, verbose=0)[0]
-                    host_class_id = int(np.argmax(preds))
-                    host_confidence = float(preds[host_class_id])
+                    logits = self.model.predict(inp_tensor, verbose=0)[0]
+                    probs = tf.nn.softmax(logits).numpy()
+                    host_class_id = int(np.argmax(probs))
+                    host_confidence = float(probs[host_class_id])
 
             # 3. Discrepancy detection
             discrepancy = False
@@ -207,6 +230,7 @@ class HostAnalyzer(threading.Thread):
                 peak_power_db=peak_power_db,
                 heatmap=heatmap,
                 timestamp=received_at,
+                dense_embedding=dense_embedding,
             )
 
             try:
