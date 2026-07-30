@@ -109,5 +109,28 @@ class TestHostAnalyzer(unittest.TestCase):
             self.assertIsNotNone(analyzer.model)
 
 
+class TestModelDiagnostics(unittest.TestCase):
+    def test_analyze_model_sample(self):
+        if tf is None:
+            self.skipTest("TensorFlow not installed")
+
+        from wingbeat_ml.evaluation.diagnostics import analyze_model_sample, DiagnosticResult
+
+        inp = tf.keras.layers.Input(shape=(2400, 1))
+        x = tf.keras.layers.Conv1D(filters=8, kernel_size=7, activation="relu", name="conv1d_target")(inp)
+        x = tf.keras.layers.GlobalAveragePooling1D()(x)
+        emb = tf.keras.layers.Dense(16, activation="relu", name="dense_emb")(x)
+        out = tf.keras.layers.Dense(11, activation="softmax", name="dense_out")(emb)
+        model = tf.keras.Model(inputs=inp, outputs=out)
+
+        dummy_audio = np.random.randn(2400).astype(np.float32)
+        res = analyze_model_sample(model, dummy_audio)
+
+        self.assertIsInstance(res, DiagnosticResult)
+        self.assertEqual(len(res.dense_embedding), 16)
+        self.assertEqual(res.class_contributions.shape, (16, 11))
+        self.assertEqual(len(res.top_positive_features), 5)
+
+
 if __name__ == "__main__":
     unittest.main()
