@@ -52,18 +52,27 @@ def compute_gradcam(
     if layer_name is None:
         layer_name = find_last_conv_layer(model)
 
+    # Use pre-softmax logits if model ends with softmax to prevent gradient saturation
+    target_output = model.output
+    last_layer = model.layers[-1]
+    if hasattr(last_layer, "activation") and last_layer.activation.__name__ == "softmax":
+        try:
+            target_output = last_layer.input
+        except AttributeError:
+            pass
+
     grad_model = tf.keras.Model(
         inputs=model.inputs,
-        outputs=[model.get_layer(layer_name).output, model.output],
+        outputs=[model.get_layer(layer_name).output, target_output, model.output],
     )
 
     with tf.GradientTape() as tape:
         tape.watch(inputs)
-        conv_outputs, predictions = grad_model(inputs)
+        conv_outputs, logits, predictions = grad_model(inputs)
         if class_idx is None:
             class_idx = int(tf.argmax(predictions[0]))
         confidence = float(predictions[0][class_idx])
-        loss = predictions[:, class_idx]
+        loss = logits[:, class_idx]
 
     grads = tape.gradient(loss, conv_outputs)
 
@@ -77,7 +86,10 @@ def compute_gradcam(
     heatmap = tf.maximum(heatmap, 0.0)
 
     max_val = tf.reduce_max(heatmap)
-    if max_val > 0:
+    min_val = tf.reduce_min(heatmap)
+    if max_val > min_val:
+        heatmap = (heatmap - min_val) / (max_val - min_val)
+    elif max_val > 0:
         heatmap /= max_val
 
     return heatmap.numpy(), class_idx, confidence
