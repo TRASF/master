@@ -1551,7 +1551,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--baud", type=int, default=2_000_000)
     parser.add_argument("--fs", type=int, default=8_000)
     parser.add_argument("--samples", type=int, default=2_400)
-    parser.add_argument("--history", type=float, default=12.0)
+    parser.add_argument("--history", type=float, default=5.0)
     parser.add_argument("--threshold", type=float, default=0.60)
     parser.add_argument("--min-frequency", type=float, default=0.0)
     parser.add_argument("--max-frequency", type=float, default=4_000.0)
