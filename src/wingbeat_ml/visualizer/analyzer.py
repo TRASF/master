@@ -135,105 +135,108 @@ class HostAnalyzer(threading.Thread):
             except queue.Empty:
                 continue
 
-            seq, mcu_class_id, mcu_confidence, audio_i16, received_at = packet
+            try:
+                seq, mcu_class_id, mcu_confidence, audio_i16, received_at = packet
 
-            # 1. Harmonic analysis
-            harmonics = analyze_harmonics(audio_i16, sample_rate=self.sample_rate)
-            f0_hz = harmonics["f0_hz"]
-            peak_power_db = harmonics["peak_power_db"]
+                # 1. Harmonic analysis
+                harmonics = analyze_harmonics(audio_i16, sample_rate=self.sample_rate)
+                f0_hz = harmonics["f0_hz"]
+                peak_power_db = harmonics["peak_power_db"]
 
-            # 2. Host model inference & Grad-CAM & Dense Analysis
-            host_class_id = None
-            host_confidence = None
-            heatmap = None
-            dense_embedding = None
+                # 2. Host model inference & Grad-CAM & Dense Analysis
+                host_class_id = None
+                host_confidence = None
+                heatmap = None
+                dense_embedding = None
 
-            audio_float = audio_i16.astype(np.float32) / 32768.0
-            audio_float = audio_float - np.mean(audio_float)
-            peak = np.max(np.abs(audio_float))
-            if peak > 1e-6:
-                audio_float = (audio_float / peak) * 0.95
+                audio_float = audio_i16.astype(np.float32) / 32768.0
+                audio_float = audio_float - np.mean(audio_float)
+                peak = np.max(np.abs(audio_float))
+                if peak > 1e-6:
+                    audio_float = (audio_float / peak) * 0.95
 
-            if self.model is not None:
-                inp_tensor = np.reshape(audio_float, (1, -1, 1))
-                if analyze_model_sample is not None:
-                    try:
-                        diag = analyze_model_sample(self.model, inp_tensor)
-                        host_class_id = diag.predicted_class_id
-                        host_confidence = diag.predicted_confidence
-                        heatmap = diag.gradcam_heatmap
-                        dense_embedding = diag.dense_embedding
-                    except Exception:
-                        if self.enable_gradcam and compute_gradcam is not None:
+                if self.model is not None:
+                    inp_tensor = np.reshape(audio_float, (1, -1, 1))
+                    if analyze_model_sample is not None:
+                        try:
+                            diag = analyze_model_sample(self.model, inp_tensor)
+                            host_class_id = diag.predicted_class_id
+                            host_confidence = diag.predicted_confidence
+                            heatmap = diag.gradcam_heatmap
+                            dense_embedding = diag.dense_embedding
+                        except Exception as err:
+                            if self.enable_gradcam and compute_gradcam is not None:
+                                heatmap, host_class_id, host_confidence = compute_gradcam(
+                                    self.model, inp_tensor, class_idx=None
+                                )
+                            else:
+                                logits = self.model.predict(inp_tensor, verbose=0)[0]
+                                probs = tf.nn.softmax(logits).numpy()
+                                host_class_id = int(np.argmax(probs))
+                                host_confidence = float(probs[host_class_id])
+                    elif self.enable_gradcam and compute_gradcam is not None:
+                        try:
                             heatmap, host_class_id, host_confidence = compute_gradcam(
                                 self.model, inp_tensor, class_idx=None
                             )
-                        else:
+                        except Exception:
                             logits = self.model.predict(inp_tensor, verbose=0)[0]
                             probs = tf.nn.softmax(logits).numpy()
                             host_class_id = int(np.argmax(probs))
                             host_confidence = float(probs[host_class_id])
-                elif self.enable_gradcam and compute_gradcam is not None:
-                    try:
-                        heatmap, host_class_id, host_confidence = compute_gradcam(
-                            self.model, inp_tensor, class_idx=None
-                        )
-                    except Exception:
+                    else:
                         logits = self.model.predict(inp_tensor, verbose=0)[0]
                         probs = tf.nn.softmax(logits).numpy()
                         host_class_id = int(np.argmax(probs))
                         host_confidence = float(probs[host_class_id])
-                else:
-                    logits = self.model.predict(inp_tensor, verbose=0)[0]
-                    probs = tf.nn.softmax(logits).numpy()
-                    host_class_id = int(np.argmax(probs))
-                    host_confidence = float(probs[host_class_id])
 
-            # 3. Discrepancy detection
-            discrepancy = False
-            if host_class_id is not None:
-                if host_class_id != mcu_class_id or abs(host_confidence - mcu_confidence) > 0.35:
+                # 3. Discrepancy detection
+                discrepancy = False
+                if host_class_id is not None:
+                    if host_class_id != mcu_class_id or abs(host_confidence - mcu_confidence) > 0.35:
+                        discrepancy = True
+                elif mcu_confidence < 0.50:
                     discrepancy = True
-            elif mcu_confidence < 0.50:
-                discrepancy = True
 
-            # 4. Anomaly Export
-            if self.export_anomalies and discrepancy:
-                meta = {
-                    "seq": seq,
-                    "mcu_class_id": mcu_class_id,
-                    "mcu_confidence": mcu_confidence,
-                    "host_class_id": host_class_id,
-                    "host_confidence": host_confidence,
-                    "f0_hz": f0_hz,
-                    "peak_power_db": peak_power_db,
-                    "discrepancy": discrepancy,
-                    "timestamp": received_at,
-                }
-                export_anomaly_frame(
-                    audio_i16,
-                    self.sample_rate,
-                    meta,
-                    output_dir=self.anomaly_output_dir,
+                # 4. Anomaly Export
+                if self.export_anomalies and discrepancy:
+                    meta = {
+                        "seq": seq,
+                        "mcu_class_id": mcu_class_id,
+                        "mcu_confidence": mcu_confidence,
+                        "host_class_id": host_class_id,
+                        "host_confidence": host_confidence,
+                        "f0_hz": f0_hz,
+                        "peak_power_db": peak_power_db,
+                        "discrepancy": discrepancy,
+                        "timestamp": received_at,
+                    }
+                    export_anomaly_frame(
+                        audio_i16,
+                        self.sample_rate,
+                        meta,
+                        output_dir=self.anomaly_output_dir,
+                        heatmap=heatmap,
+                    )
+
+                res = AnalysisResult(
+                    seq=seq,
+                    audio=audio_i16,
+                    mcu_class_id=mcu_class_id,
+                    mcu_confidence=mcu_confidence,
+                    host_class_id=host_class_id,
+                    host_confidence=host_confidence,
+                    discrepancy=discrepancy,
+                    f0_hz=f0_hz,
+                    peak_power_db=peak_power_db,
                     heatmap=heatmap,
+                    timestamp=received_at,
+                    dense_embedding=dense_embedding,
                 )
 
-            res = AnalysisResult(
-                seq=seq,
-                audio=audio_i16,
-                mcu_class_id=mcu_class_id,
-                mcu_confidence=mcu_confidence,
-                host_class_id=host_class_id,
-                host_confidence=host_confidence,
-                discrepancy=discrepancy,
-                f0_hz=f0_hz,
-                peak_power_db=peak_power_db,
-                heatmap=heatmap,
-                timestamp=received_at,
-                dense_embedding=dense_embedding,
-            )
-
-            try:
-                self.output_queue.put_nowait(res)
-            except queue.Full:
-                pass
+                try:
+                    self.output_queue.put_nowait(res)
+                except queue.Full:
+                    pass
+            except Exception as err:
+                print(f"[HostAnalyzer Worker Exception]: {err}")
