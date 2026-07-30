@@ -12,6 +12,7 @@ import tensorflow as tf
 
 from wingbeat_ml.export.bundle import (
     export_input_quantization_header,
+    export_ota_config_json,
     export_tflite_to_c_header,
     write_esp32_readme,
 )
@@ -122,6 +123,12 @@ def run_basic_quantization_suite(
             out_dir / "model_input_quantization.h",
             amplitude_range=input_amplitude_range,
         )
+    )
+    paths["ota_config"] = export_ota_config_json(
+        paths["int8"],
+        out_dir / "config_ota.json",
+        amplitude_range=input_amplitude_range,
+        class_names=class_names,
     )
     paths["readme"] = write_esp32_readme(
         out_dir,

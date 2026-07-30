@@ -39,6 +39,48 @@ def export_input_quantization_header(
     return out_h_path
 
 
+def export_ota_config_json(
+    tflite_path: str | Path,
+    out_json_path: str | Path,
+    amplitude_range: float = 0.03,
+    sample_rate: int = 8000,
+    segment_length: int = 2400,
+    detection_threshold: float = 0.60,
+    class_names: Sequence[str] | None = None,
+) -> Path:
+    import json
+    import time
+
+    interpreter = tf.lite.Interpreter(model_path=str(tflite_path))
+    interpreter.allocate_tensors()
+    input_detail = interpreter.get_input_details()[0]
+    scale, zero_point = input_detail["quantization"]
+
+    out_json_path = Path(out_json_path)
+    out_json_path.parent.mkdir(parents=True, exist_ok=True)
+
+    config_data = {
+        "model_version": time.strftime("%Y%m%d_%H%M%S"),
+        "audio": {
+            "sample_rate": sample_rate,
+            "segment_length": segment_length,
+            "amplitude_range": amplitude_range,
+        },
+        "quantization": {
+            "input_scale": float(scale),
+            "input_zero_point": int(zero_point),
+        },
+        "inference": {
+            "detection_threshold": detection_threshold,
+        },
+        "classes": list(class_names) if class_names else [],
+    }
+
+    out_json_path.write_text(json.dumps(config_data, indent=2), encoding="utf-8")
+    print(f"Exported OTA config JSON: {out_json_path}")
+    return out_json_path
+
+
 def export_tflite_to_c_header(
     tflite_path: str | Path,
     out_h_path: str | Path,
