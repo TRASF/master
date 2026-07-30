@@ -63,7 +63,7 @@ def _load_or_build_model(model_path: str):
             }
 
         builder = MosSongPlusModel(model_cfg)
-        model = builder.build(input_shape=(2400, 1), output_units=11, output_activation="softmax")
+        model = builder.build(input_shape=(2400, 1), output_units=11, output_activation=None)
         model.load_weights(path)
         return model
     except Exception as err:
