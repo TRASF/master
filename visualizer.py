@@ -1416,9 +1416,14 @@ class Visualizer:
                 if res.heatmap is not None:
                     self._append_gradcam(res.heatmap)
                 if self.emb_line is not None and res.dense_embedding is not None:
-                    self.emb_line.set_ydata(res.dense_embedding)
-                    ymin = float(np.min(res.dense_embedding))
-                    ymax = float(np.max(res.dense_embedding))
+                    emb = res.dense_embedding
+                    if len(self.emb_line.get_xdata()) != len(emb):
+                        self.emb_line.set_xdata(np.arange(len(emb)))
+                        self.ax_emb.set_xlim(0, max(1, len(emb) - 1))
+                        self.ax_emb.set_title(f"Dense Embedding ({len(emb)}-dim)")
+                    self.emb_line.set_ydata(emb)
+                    ymin = float(np.min(emb))
+                    ymax = float(np.max(emb))
                     if ymax > ymin:
                         self.ax_emb.set_ylim(ymin - 0.2, ymax + 0.2)
                 if res.host_class_id is not None:

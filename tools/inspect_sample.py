@@ -138,11 +138,12 @@ def generate_diagnostic_report(
     ax_prob.set_title("Output Class Probabilities")
     ax_prob.set_xlim(0, 100)
 
-    # Subplot 4: Dense Embedding Activations (256-dim)
+    # Subplot 4: Dense Embedding Activations
     ax_emb = fig.add_subplot(grid[2, 0])
+    emb_dim = len(diag.dense_embedding)
     ax_emb.plot(diag.dense_embedding, color="#00d6b4", linewidth=1.2)
-    ax_emb.set_title(f"Dense Bottleneck Embedding (256-dim, L2 Norm: {diag.embedding_l2_norm:.2f})")
-    ax_emb.set_xlabel("Neuron Index (0-255)")
+    ax_emb.set_title(f"Dense Bottleneck Embedding ({emb_dim}-dim, L2 Norm: {diag.embedding_l2_norm:.2f})")
+    ax_emb.set_xlabel(f"Neuron Index (0-{emb_dim - 1})")
     ax_emb.set_ylabel("Activation")
     ax_emb.grid(True, alpha=0.2)
 
