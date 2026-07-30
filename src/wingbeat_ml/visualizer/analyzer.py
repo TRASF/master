@@ -145,6 +145,10 @@ class HostAnalyzer(threading.Thread):
             heatmap = None
 
             audio_float = audio_i16.astype(np.float32) / 32768.0
+            audio_float = audio_float - np.mean(audio_float)
+            peak = np.max(np.abs(audio_float))
+            if peak > 1e-6:
+                audio_float = (audio_float / peak) * 0.95
 
             if self.model is not None:
                 inp_tensor = np.reshape(audio_float, (1, -1, 1))
