@@ -23,6 +23,7 @@ class TestTrainingEntrypoints(unittest.TestCase):
         from wingbeat_ml.pipelines.fine_tune import train_finetune
         from wingbeat_ml.pipelines.linear_probe import train_linear_probe
         from wingbeat_ml.pipelines.pretrain import train_supervised
+        from wingbeat_ml.pipelines.ssl_tf import run_tf_ssl_pipeline
 
         self.assertIs(
             get_training_entrypoint("pretrain"),
@@ -35,6 +36,10 @@ class TestTrainingEntrypoints(unittest.TestCase):
         self.assertIs(
             get_training_entrypoint("finetune"),
             train_finetune,
+        )
+        self.assertIs(
+            get_training_entrypoint("ssl_tf"),
+            run_tf_ssl_pipeline,
         )
 
         with self.assertRaises(ValueError):
