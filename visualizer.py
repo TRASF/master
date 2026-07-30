@@ -1039,7 +1039,7 @@ class Visualizer:
         peak_index = band_indices[int(np.argmax(spectrum[band]))]
         return float(frequencies[peak_index])
 
-    def _append_spectrogram(self, audio: np.ndarray) -> None:
+    def _append_spectrogram(self, audio: np.ndarray) -> np.ndarray:
         new_columns = compute_stft_db(
             audio,
             n_fft=self.n_fft,
@@ -1056,7 +1056,7 @@ class Visualizer:
         self.spec_column_remainder = exact_columns - expected_columns
 
         if expected_columns <= 0:
-            return
+            return new_columns
 
         column_count = min(
             expected_columns,
@@ -1072,8 +1072,9 @@ class Visualizer:
             self.spec_matrix[:, -column_count:] = newest
 
         self.spec_image.set_data(self.spec_matrix)
+        return newest
 
-    def _append_gradcam(self, heatmap: np.ndarray) -> None:
+    def _append_gradcam(self, heatmap: np.ndarray, stft_cols: Optional[np.ndarray] = None) -> None:
         if not self.enable_gradcam or self.gradcam_image is None:
             return
 
@@ -1084,7 +1085,13 @@ class Visualizer:
                 np.arange(len(heatmap)),
                 heatmap,
             )
-            slice_2d = np.tile(h_interp, (len(self.freqs), 1))
+            if stft_cols is not None and stft_cols.shape[1] >= cols_per_packet:
+                # STFT frequency spectral magnitude * temporal Grad-CAM attention (PSD fashion)
+                stft_new = stft_cols[:, -cols_per_packet:]
+                norm_stft = np.clip((stft_new - self.floor_db) / (self.ceiling_db - self.floor_db), 0.0, 1.0)
+                slice_2d = norm_stft * h_interp[np.newaxis, :]
+            else:
+                slice_2d = np.tile(h_interp, (len(self.freqs), 1))
         elif heatmap.ndim == 2:
             slice_2d = heatmap
         else:
@@ -1365,7 +1372,7 @@ class Visualizer:
         )
         self.wave_info.set_color(color if is_detection else "white")
 
-        self._append_spectrogram(audio)
+        self.latest_stft = self._append_spectrogram(audio)
         if is_detection:
             self._add_spec_box(
                 class_name=class_name,
@@ -1414,13 +1421,12 @@ class Visualizer:
             try:
                 res = self.host_analyzer.output_queue.get_nowait()
                 if res.heatmap is not None:
-                    self._append_gradcam(res.heatmap)
+                    self._append_gradcam(res.heatmap, getattr(self, "latest_stft", None))
                 if self.emb_line is not None and res.dense_embedding is not None:
                     emb = res.dense_embedding
                     if len(self.emb_line.get_xdata()) != len(emb):
                         self.emb_line.set_xdata(np.arange(len(emb)))
                         self.ax_emb.set_xlim(0, max(1, len(emb) - 1))
-                        self.ax_emb.set_title(f"Dense Embedding ({len(emb)}-dim)")
                     self.emb_line.set_ydata(emb)
                     ymin = float(np.min(emb))
                     ymax = float(np.max(emb))
@@ -1428,6 +1434,10 @@ class Visualizer:
                         self.ax_emb.set_ylim(ymin - 0.2, ymax + 0.2)
                 if res.host_class_id is not None:
                     h_cls = CLASS_NAMES[res.host_class_id] if 0 <= res.host_class_id < len(CLASS_NAMES) else str(res.host_class_id)
+                    clr = class_color(h_cls)
+                    if self.emb_line is not None:
+                        self.emb_line.set_color(clr)
+                        self.ax_emb.set_title(f"Dense Embedding ({len(res.dense_embedding if res.dense_embedding is not None else [])}-dim) — {h_cls}", color=clr)
                     status += f" | Host: {h_cls} ({res.host_confidence * 100:.0f}%)"
                     if res.discrepancy:
                         status += " [DISCREPANCY]"

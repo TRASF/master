@@ -93,6 +93,16 @@ def generate_diagnostic_report(
     diag = analyze_model_sample(model, inp_tensor)
     harmonics = analyze_harmonics(audio, sample_rate=sample_rate)
 
+    pred_cls_name = CLASS_NAMES[diag.predicted_class_id]
+    if pred_cls_name.startswith("Ae"):
+        class_color = "#00d6b4"
+    elif pred_cls_name.startswith("An"):
+        class_color = "#ff4d73"
+    elif pred_cls_name.startswith("Cx"):
+        class_color = "#f2c94c"
+    else:
+        class_color = "#808080"
+
     # Subplot 1: STFT Spectrogram
     ax_spec = fig.add_subplot(grid[0, 0])
     freqs, times, spec = compute_spectrogram(audio, sample_rate=sample_rate)
@@ -109,9 +119,22 @@ def generate_diagnostic_report(
     ax_spec.set_ylabel("Frequency (Hz)")
     fig.colorbar(im_spec, ax=ax_spec, pad=0.01)
 
-    # Subplot 2: Grad-CAM Attention Heatmap
+    # Subplot 2: Grad-CAM Attention Heatmap (PSD-weighted Time-Frequency Attention)
     ax_cam = fig.add_subplot(grid[1, 0])
-    cam_2d = np.tile(diag.gradcam_heatmap, (len(freqs), 1))
+    norm_spec = np.clip((spec - (-100.0)) / ((-20.0) - (-100.0)), 0.0, 1.0)
+    
+    # Resample 1D heatmap over STFT time columns
+    if len(diag.gradcam_heatmap) != norm_spec.shape[1]:
+        h_interp = np.interp(
+            np.linspace(0, len(diag.gradcam_heatmap) - 1, norm_spec.shape[1]),
+            np.arange(len(diag.gradcam_heatmap)),
+            diag.gradcam_heatmap,
+        )
+    else:
+        h_interp = diag.gradcam_heatmap
+
+    cam_2d = norm_spec * h_interp[np.newaxis, :]
+
     im_cam = ax_cam.imshow(
         cam_2d,
         origin="lower",
@@ -121,7 +144,7 @@ def generate_diagnostic_report(
         vmin=0.0,
         vmax=1.0,
     )
-    ax_cam.set_title(f"Grad-CAM Attention Map (Predicted: {CLASS_NAMES[diag.predicted_class_id]} - {diag.predicted_confidence*100:.1f}%)")
+    ax_cam.set_title(f"Grad-CAM Frequency Attention Map (Predicted: {pred_cls_name} - {diag.predicted_confidence*100:.1f}%)", color=class_color)
     ax_cam.set_xlabel("Time (seconds)")
     ax_cam.set_ylabel("Frequency (Hz)")
     fig.colorbar(im_cam, ax=ax_cam, pad=0.01)
@@ -129,7 +152,7 @@ def generate_diagnostic_report(
     # Subplot 3: Class Probabilities Bar Chart
     ax_prob = fig.add_subplot(grid[0:2, 1])
     y_pos = np.arange(len(CLASS_NAMES))
-    colors = ["#00d6b4" if i == diag.predicted_class_id else "#404040" for i in range(len(CLASS_NAMES))]
+    colors = [class_color if i == diag.predicted_class_id else "#404040" for i in range(len(CLASS_NAMES))]
     ax_prob.barh(y_pos, diag.probabilities * 100.0, color=colors, align="center")
     ax_prob.set_yticks(y_pos)
     ax_prob.set_yticklabels(CLASS_NAMES, fontsize=9)
@@ -141,8 +164,8 @@ def generate_diagnostic_report(
     # Subplot 4: Dense Embedding Activations
     ax_emb = fig.add_subplot(grid[2, 0])
     emb_dim = len(diag.dense_embedding)
-    ax_emb.plot(diag.dense_embedding, color="#00d6b4", linewidth=1.2)
-    ax_emb.set_title(f"Dense Bottleneck Embedding ({emb_dim}-dim, L2 Norm: {diag.embedding_l2_norm:.2f})")
+    ax_emb.plot(diag.dense_embedding, color=class_color, linewidth=1.2)
+    ax_emb.set_title(f"Dense Bottleneck Embedding ({emb_dim}-dim, L2 Norm: {diag.embedding_l2_norm:.2f}) — {pred_cls_name}", color=class_color)
     ax_emb.set_xlabel(f"Neuron Index (0-{emb_dim - 1})")
     ax_emb.set_ylabel("Activation")
     ax_emb.grid(True, alpha=0.2)
@@ -152,10 +175,10 @@ def generate_diagnostic_report(
     top_pos_indices = [item[0] for item in diag.top_positive_features]
     top_pos_values = [item[1] for item in diag.top_positive_features]
 
-    ax_contrib.bar(range(len(top_pos_indices)), top_pos_values, color="#ff4d73")
+    ax_contrib.bar(range(len(top_pos_indices)), top_pos_values, color=class_color)
     ax_contrib.set_xticks(range(len(top_pos_indices)))
     ax_contrib.set_xticklabels([f"N#{idx}" for idx in top_pos_indices], fontsize=9)
-    ax_contrib.set_title("Top Positive Neuron Contributions")
+    ax_contrib.set_title("Top Positive Neuron Contributions", color=class_color)
     ax_contrib.set_ylabel("Logit Impact")
 
     fig.tight_layout()
