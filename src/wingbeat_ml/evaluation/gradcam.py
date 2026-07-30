@@ -52,26 +52,28 @@ def compute_gradcam(
     if layer_name is None:
         layer_name = find_last_conv_layer(model)
 
-    # Use pre-softmax logits if model ends with softmax to prevent gradient saturation
-    target_output = model.output
-    last_layer = model.layers[-1]
-    if hasattr(last_layer, "activation") and last_layer.activation.__name__ == "softmax":
-        try:
-            target_output = last_layer.input
-        except AttributeError:
-            pass
-
     grad_model = tf.keras.Model(
         inputs=model.inputs,
-        outputs=[model.get_layer(layer_name).output, target_output, model.output],
+        outputs=[model.get_layer(layer_name).output, model.output],
     )
 
     with tf.GradientTape() as tape:
         tape.watch(inputs)
-        conv_outputs, logits, predictions = grad_model(inputs)
+        conv_outputs, raw_outputs = grad_model(inputs)
+
+        last_layer = model.layers[-1]
+        is_softmax = hasattr(last_layer, "activation") and getattr(last_layer.activation, "__name__", "") == "softmax"
+
+        if is_softmax:
+            probs = raw_outputs
+            logits = tf.math.log(tf.maximum(probs, 1e-10))
+        else:
+            logits = raw_outputs
+            probs = tf.nn.softmax(logits)
+
         if class_idx is None:
-            class_idx = int(tf.argmax(predictions[0]))
-        confidence = float(predictions[0][class_idx])
+            class_idx = int(tf.argmax(probs[0]))
+        confidence = float(probs[0][class_idx])
         loss = logits[:, class_idx]
 
     grads = tape.gradient(loss, conv_outputs)
