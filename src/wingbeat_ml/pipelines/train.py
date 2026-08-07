@@ -100,6 +100,10 @@ def resolve_training_class_weights(
     if console != "quiet":
         print(f"Using class weights: {np.round(weights, 3).tolist()}")
 
+    if isinstance(config, dict):
+        raw_cfg = config
+        raw_cfg["resolved_class_weights"] = weights.tolist()
+
     if app_cfg.wandb.enabled:
         try:
             import wandb

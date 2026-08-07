@@ -16,6 +16,9 @@ class StrictBaseModel(BaseModel):
         validate_default=True,
     )
 
+    def __getitem__(self, item: str) -> Any:
+        return getattr(self, item)
+
 
 class TrainConfig(StrictBaseModel):
     epochs: int = 1000
@@ -25,27 +28,27 @@ class TrainConfig(StrictBaseModel):
     warmup_epochs: int = 15
     warmup_augment_p: float = 0.0
 
-    @field_validator("epochs")
+    @field_validator("epochs", mode="before")
     @classmethod
-    def validate_epochs(cls, v: Any) -> int:
+    def validate_epochs(cls, v: Any) -> Any:
         if not isinstance(v, int) or isinstance(v, bool):
             raise ValueError(f"Invalid train.epochs type: expected int, got {v}")
         if v <= 0:
             raise ValueError(f"Invalid train.epochs: must be a positive integer, got {v}")
         return v
 
-    @field_validator("batch_size")
+    @field_validator("batch_size", mode="before")
     @classmethod
-    def validate_batch_size(cls, v: Any) -> int:
+    def validate_batch_size(cls, v: Any) -> Any:
         if not isinstance(v, int) or isinstance(v, bool):
             raise ValueError(f"Invalid train.batch_size type: expected int, got {v}")
         if v <= 0:
             raise ValueError(f"Invalid train.batch_size: must be a positive integer, got {v}")
         return v
 
-    @field_validator("seed")
+    @field_validator("seed", mode="before")
     @classmethod
-    def validate_seed(cls, v: Any) -> int:
+    def validate_seed(cls, v: Any) -> Any:
         if not isinstance(v, int) or isinstance(v, bool):
             raise ValueError(f"Invalid train.seed type: expected int, got {v}")
         if v < 0:
@@ -312,6 +315,12 @@ class AugmentConfig(StrictBaseModel):
     )
     segment_overlap: SegmentOverlapConfig = Field(default_factory=SegmentOverlapConfig)
     max_segments_per_file: int = 100
+
+    @model_validator(mode="after")
+    def sync_noise_overlay(self) -> AugmentConfig:
+        if self.noise_overlay.p == 0:
+            object.__setattr__(self, "noise_banks", [])
+        return self
     time_masking: TimeMaskingConfig = Field(default_factory=TimeMaskingConfig)
     pre_emphasis: PreEmphasisConfig = Field(default_factory=PreEmphasisConfig)
     config: Optional[Dict[str, Any]] = None
@@ -508,7 +517,11 @@ class AppConfig(StrictBaseModel):
             raise ValueError(f"Invalid training mode '{v}', expected one of {sorted(valid)}")
         return v
 
-    @field_validator("classes")
+    @model_validator(mode="after")
+    def sync_seeds(self) -> AppConfig:
+        if self.reproducibility.seed != self.train.seed:
+            object.__setattr__(self.train, "seed", self.reproducibility.seed)
+        return self
     @classmethod
     def validate_classes(cls, v: List[str]) -> List[str]:
         if not v:
@@ -545,6 +558,11 @@ def validate_config(cfg: Union[AppConfig, Dict[str, Any]], *, strict_sections: b
     if not isinstance(cfg, dict):
         raise ValueError(f"Configuration root must be a mapping or AppConfig, got {type(cfg)}")
 
+    if "classes" in cfg and isinstance(cfg["classes"], list):
+        if len(set(cfg["classes"])) != len(cfg["classes"]):
+            raise ValueError("Class names must be unique")
+        cfg["num_classes"] = len(cfg["classes"])
+
     if strict_sections:
         required_sections = ["model", "training_mode", "audio", "train", "dataset"]
         for s in required_sections:
@@ -564,11 +582,19 @@ def validate_config(cfg: Union[AppConfig, Dict[str, Any]], *, strict_sections: b
             if in_len is not None and in_len != seg_len:
                 raise ValueError(f"Model input length {in_len} does not match segment_length {seg_len}")
 
+    if "classes" in cfg and isinstance(cfg["classes"], list):
+        cfg["num_classes"] = len(cfg["classes"])
+
     if "num_classes" in cfg and "classes" in cfg and isinstance(cfg["classes"], list):
         if cfg["num_classes"] != len(cfg["classes"]):
             raise ValueError(f"Invalid num_classes: expected {len(cfg['classes'])}, got {cfg['num_classes']}")
-    elif "num_classes" in cfg and cfg["num_classes"] != 11 and "classes" not in cfg:
-        raise ValueError(f"Invalid num_classes: expected 11, got {cfg['num_classes']}")
+    elif "num_classes" in cfg and "labels" in cfg and isinstance(cfg["labels"], dict):
+        if cfg["num_classes"] != len(cfg["labels"]):
+            raise ValueError(f"Invalid num_classes: expected {len(cfg['labels'])}, got {cfg['num_classes']}")
+    elif "num_classes" in cfg and "classes" not in cfg and "labels" not in cfg:
+        model_id = cfg.get("model", {}).get("id") if isinstance(cfg.get("model"), dict) else None
+        if (model_id is None or model_id == "mossong_plus") and cfg["num_classes"] != 11:
+            raise ValueError(f"Invalid num_classes: expected 11, got {cfg['num_classes']}")
     elif "classes" in cfg and isinstance(cfg["classes"], list):
         cfg["num_classes"] = len(cfg["classes"])
 
@@ -592,12 +618,14 @@ def validate_config(cfg: Union[AppConfig, Dict[str, Any]], *, strict_sections: b
         if "classes" not in normalized:
             default_dict["classes"] = list(normalized["labels"].keys())
             default_dict["num_classes"] = len(normalized["labels"])
-    elif "classes" in normalized:
-        default_dict["classes"] = normalized["classes"]
+            normalized["num_classes"] = len(normalized["labels"])
+    elif "classes" in normalized and isinstance(normalized["classes"], list):
+        if len(set(normalized["classes"])) != len(normalized["classes"]):
+            raise ValueError("Class names must be unique")
+        default_dict["classes"] = list(normalized["classes"])
+        default_dict["labels"] = {c: i for i, c in enumerate(normalized["classes"])}
         default_dict["num_classes"] = len(normalized["classes"])
-    elif "classes" in normalized:
-        default_dict["classes"] = normalized["classes"]
-        default_dict["num_classes"] = len(normalized["classes"])
+        normalized["num_classes"] = len(normalized["classes"])
 
     if "dataset" in normalized and isinstance(normalized["dataset"], dict):
         if "split_ratios" in normalized["dataset"] and isinstance(normalized["dataset"]["split_ratios"], dict):

@@ -20,7 +20,7 @@ class TestConfigSchema(unittest.TestCase):
         cfg = self.get_valid_config()
         cfg.pop("model")
         with self.assertRaises(ValueError) as ctx:
-            validate_config(cfg)
+            validate_config(cfg, strict_sections=True)
         self.assertIn("Missing required top-level section: 'model'", str(ctx.exception))
 
     def test_invalid_model_id(self):

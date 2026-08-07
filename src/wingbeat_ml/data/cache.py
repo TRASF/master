@@ -1,7 +1,10 @@
 """Stable, single-writer TensorFlow cache publication."""
 
 from contextlib import contextmanager
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 import hashlib
 import json
 import os
@@ -44,11 +47,13 @@ def exclusive_cache_lock(path):
     lock_path = Path(path)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+", encoding="utf-8") as stream:
-        fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+        if fcntl:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
         try:
             yield
         finally:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+            if fcntl:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
 
 def materialize_tensorflow_cache(dataset, prefix):

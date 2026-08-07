@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, Callable, Dict
+import numpy as np
 
 from wingbeat_ml.config.schema import AppConfig
 
@@ -114,7 +115,9 @@ def evaluate_training_run(
     )
     file_results = None
     train_file_results = None
-    file_enabled = app_cfg.evaluation.file_level.enabled
+    test_paths = getattr(dataset_builder, "test_paths", None)
+    has_test_paths = isinstance(test_paths, (list, tuple, np.ndarray)) and len(test_paths) > 0
+    file_enabled = app_cfg.evaluation.file_level.enabled or has_test_paths
 
     if file_enabled:
         common_file_args = {

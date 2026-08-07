@@ -213,9 +213,10 @@ def sync_ready_runs(
     """Copy ready runs, verify the owner copy, and retain local staging."""
     staging_root = Path(staging_root).expanduser().resolve()
     if owner:
-        destination_root = Path(destination_root)
-        if not destination_root.is_absolute():
+        dest_str = str(destination_root)
+        if not (Path(destination_root).is_absolute() or dest_str.startswith("/")):
             raise ValueError("remote artifact destination must be absolute")
+        destination_root = Path(destination_root)
     else:
         destination_root = Path(destination_root).expanduser().resolve()
     runs_root = staging_root / "runs"

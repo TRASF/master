@@ -1,5 +1,5 @@
 import enum
-from typing import Any, Optional
+from typing import Any, Dict, Optional, Union
 import tensorflow as tf
 import tensorflow.keras as keras
 
@@ -171,10 +171,12 @@ class DeepCORAL(keras.Model):
 def maybe_apply_adabn(
     model: keras.Model,
     default_target_dataset: Any,
-    config: AppConfig,
+    config: Union[AppConfig, Dict[str, Any]],
     save_path: Optional[str] = None,
 ) -> None:
     """Run AdaBN adaptation sweep on target domain if enabled in config."""
+    from wingbeat_ml.config import validate_config
+    config = validate_config(config)
     if not config.adabn.enabled:
         return
 

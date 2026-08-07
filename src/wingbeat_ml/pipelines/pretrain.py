@@ -6,6 +6,7 @@ import argparse
 import os
 from typing import Optional, Union
 
+from wingbeat_ml.config import validate_config
 from wingbeat_ml.pipelines.helpers import (
     build_supervised_components,
     evaluate_training_run,
@@ -41,8 +42,9 @@ def train_supervised(
         show_class_counts=True,
     )
 
-    epochs = config.train.epochs
-    print(f"Output activation: {config.model.output_activation}")
+    app_cfg = validate_config(config)
+    epochs = app_cfg.train.epochs
+    print(f"Output activation: {app_cfg.model.output_activation}")
     print(f"\nStarting training for {epochs} epochs...")
     run_training(
         components.model,

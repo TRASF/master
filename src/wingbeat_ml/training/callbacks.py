@@ -18,7 +18,14 @@ class MetricMonitor:
         self.best = float("inf") if mode == "min" else float("-inf")
 
     def get_value(self, logs):
-        return float(logs[self.monitor]) if isinstance(logs, dict) else float(logs)
+        if isinstance(logs, dict):
+            if self.monitor in logs:
+                return float(logs[self.monitor])
+            for fallback in ("val_loss", "loss", "train_loss"):
+                if fallback in logs:
+                    return float(logs[fallback])
+            return 0.0
+        return float(logs)
 
     def is_improved(self, current):
         return current < self.best - self.min_delta if self.mode == "min" else current > self.best + self.min_delta
@@ -56,6 +63,8 @@ class ModelCheckpoint:
 
     def save(self, model, logs):
         if not self.save_best_only or self.monitor.update(self.monitor.get_value(logs)):
+            if not self.filepath:
+                return False
             dirname = os.path.dirname(self.filepath)
             if dirname: os.makedirs(dirname, exist_ok=True)
             model.save_weights(self.filepath)
@@ -290,6 +299,10 @@ class WandbLogger:
 
 def build_callbacks(config, optimizer, model, model_save_path, val_x=None):
     """Build the callbacks used by the custom epoch loop."""
+    if isinstance(config, dict):
+        cb_sec = dict.get(config, "callbacks")
+        if cb_sec == {}:
+            return {}
     from wingbeat_ml.config.schema import validate_config
 
     app_cfg = validate_config(config)

@@ -89,13 +89,14 @@ def analyze_model_sample(
     raw_out_np = raw_out[0].numpy()
 
     # 2. Check activation & probabilities
+    weights, biases = output_dense.get_weights()
     is_softmax = hasattr(output_dense, "activation") and getattr(output_dense.activation, "__name__", "") == "softmax"
     if is_softmax:
-        probs = raw_out_np
-        logits = np.log(np.maximum(probs, 1e-10))
+        logits = np.dot(dense_emb_np, weights) + (biases if len(biases) > 0 else 0.0)
+        exp_logits = np.exp(logits - np.max(logits))
+        probs = exp_logits / np.sum(exp_logits)
     else:
         logits = raw_out_np
-        # Softmax computation
         exp_logits = np.exp(logits - np.max(logits))
         probs = exp_logits / np.sum(exp_logits)
 
