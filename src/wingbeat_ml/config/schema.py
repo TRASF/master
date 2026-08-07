@@ -198,12 +198,15 @@ class WandbConfig(StrictBaseModel):
     log_detailed_diagnostics: bool = False
     api_key: Optional[str] = None
 
-    @field_validator("api_key")
+    @field_validator("api_key", mode="before")
     @classmethod
-    def validate_no_secrets(cls, v: Optional[str]) -> Optional[str]:
-        if v is not None:
-            raise ValueError("Secrets are not allowed in configuration file")
-        return v
+    def validate_no_secrets(cls, value: Any) -> Any:
+        """Reject embedded credentials; normalize empty defaults to None."""
+        if value is None:
+            return None
+        if isinstance(value, str) and not value.strip():
+            return None
+        raise ValueError("Secrets are not allowed in configuration file")
 
 
 class ReproducibilityConfig(StrictBaseModel):
@@ -436,7 +439,7 @@ DEFAULT_LABELS: Dict[str, int] = {
     "An_minimus_Male": 7,
     "Cx_quin_Female": 8,
     "Cx_quin_Male": 9,
-    "No.mos": 10,
+    "No.Mos": 10,
 }
 
 DEFAULT_CLASSES: List[str] = list(DEFAULT_LABELS.keys())
@@ -569,8 +572,11 @@ def validate_config(cfg: Union[AppConfig, Dict[str, Any]], *, strict_sections: b
             if s not in cfg:
                 raise ValueError(f"Missing required top-level section: '{s}'")
 
-    if "wandb" in cfg and isinstance(cfg["wandb"], dict) and "api_key" in cfg["wandb"]:
-        raise ValueError("Secrets are not allowed in configuration file")
+    if "wandb" in cfg and isinstance(cfg["wandb"], dict):
+        api_key = cfg["wandb"].get("api_key")
+        if api_key is not None:
+            if not isinstance(api_key, str) or api_key.strip():
+                raise ValueError("Secrets are not allowed in configuration file")
 
     if "model" in cfg and isinstance(cfg["model"], dict):
         m = cfg["model"]
