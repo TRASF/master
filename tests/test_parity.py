@@ -227,7 +227,8 @@ class TestMosSongPlusParity(unittest.TestCase):
             baseline = json.load(f)
 
         pretrain_paths = resolve_experiment_paths(self.cfg, "Pretrain_test_exp")
-        self.assertEqual(pretrain_paths, baseline["pretrain"])
+        pretrain_paths_posix = {k: v.replace("\\", "/") for k, v in pretrain_paths.items()}
+        self.assertEqual(pretrain_paths_posix, baseline["pretrain"])
 
     def test_wandb_keys(self):
         with open(os.path.join(self.baseline_dir, "wandb_keys.json"), "r") as f:

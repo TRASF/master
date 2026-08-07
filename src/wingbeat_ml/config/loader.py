@@ -176,23 +176,23 @@ def load_config(
     # Step 1: Base defaults
     primary_defaults = defaults_path or base_path
     if primary_defaults and os.path.exists(str(primary_defaults)):
-        raw_dict = deep_merge(raw_dict, load_yaml(primary_defaults))
+        raw_dict = deep_merge(raw_dict, handle_legacy_keys(load_yaml(primary_defaults)))
     else:
         fallback_defaults = Path("configs/defaults.yaml")
         if fallback_defaults.exists():
-            raw_dict = deep_merge(raw_dict, load_yaml(fallback_defaults))
+            raw_dict = deep_merge(raw_dict, handle_legacy_keys(load_yaml(fallback_defaults)))
 
     # Step 2: Model config
     if model_path and os.path.exists(str(model_path)):
-        raw_dict = deep_merge(raw_dict, load_yaml(model_path))
+        raw_dict = deep_merge(raw_dict, handle_legacy_keys(load_yaml(model_path)))
 
     # Step 3: Experiment config
     if experiment_path and os.path.exists(str(experiment_path)):
-        raw_dict = deep_merge(raw_dict, load_yaml(experiment_path))
+        raw_dict = deep_merge(raw_dict, handle_legacy_keys(load_yaml(experiment_path)))
 
     # Step 4: Profile config
     if profile_path and os.path.exists(str(profile_path)):
-        profile_dict = load_yaml(profile_path)
+        profile_dict = handle_legacy_keys(load_yaml(profile_path))
         raw_dict = deep_merge(raw_dict, profile_dict)
         if "profile" not in raw_dict:
             raw_dict["profile"] = Path(profile_path).stem

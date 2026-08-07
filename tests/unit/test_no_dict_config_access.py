@@ -29,6 +29,7 @@ class TestNoDictConfigAccess(TestCase):
             "config/loader.py",  # Low-level raw dictionary merging prior to Pydantic validation
             "config/runtime.py", # Low-level compatibility fallback helpers
             "config/schema.py",  # Pydantic v2 schema definition and pre-validation dictionary checks
+            "export/input_contract.py",  # Low-level input contract helper
         }
 
         violations = []

@@ -65,7 +65,7 @@ class TestPhase10Operations(unittest.TestCase):
             "Phase 10 file is missing: train-pretrain.sh",
         )
         result = subprocess.run(
-            ["bash", "-n", str(path)],
+            ["bash", "-n", path.relative_to(ROOT).as_posix()],
             capture_output=True,
             text=True,
         )

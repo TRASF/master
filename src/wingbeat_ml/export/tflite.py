@@ -12,6 +12,8 @@ from typing import Callable, Dict, Sequence
 import numpy as np
 import tensorflow as tf
 
+from wingbeat_ml.export.input_contract import resolve_deployment_shape
+
 
 def _append_rmse_over_scale(path):
     """Append the derived debugger column using the CSV library."""
@@ -62,19 +64,11 @@ def make_representative_dataset(
     val_ds: tf.data.Dataset,
     max_samples: int = 500,
     seed: int = 42,
+    expected_shape: Sequence[int] | None = None,
 ) -> Callable:
     """
     Representative dataset for full-int8 calibration.
-
-    Expected val_ds item:
-        x: [batch, 2400, 1], float32
-        y: one-hot or integer label
-
-    Output required by TFLite converter:
-        yield [x_single_batch]
-        where x_single_batch is [1, 2400, 1], float32
     """
-
     rep_ds = (
         val_ds
         .unbatch()
@@ -87,11 +81,10 @@ def make_representative_dataset(
         for x, _ in rep_ds:
             x = tf.cast(x, tf.float32)
 
-            # Defensive shape/range checks. The dataset must already be in
-            # model space: DC removed, scaled by the configured amplitude range,
-            # and clipped to [-1, 1].
-            if x.shape.rank != 3:
-                raise ValueError(f"Expected rank-3 input [1, 2400, 1], got {x.shape}")
+            if expected_shape is not None and list(x.shape) != list(expected_shape):
+                raise ValueError(f"Expected input shape {list(expected_shape)}, got {list(x.shape)}")
+            elif x.shape.rank != 3:
+                raise ValueError(f"Expected rank-3 input shape [1, T, C], got {x.shape}")
 
             min_value = float(tf.reduce_min(x))
             max_value = float(tf.reduce_max(x))
@@ -109,10 +102,13 @@ def make_representative_dataset(
 def convert_float_tflite(
     keras_model: tf.keras.Model,
     out_path: str | Path,
+    input_shape: Sequence[int] | None = None,
+    config: Any | None = None,
 ) -> Path:
+    shape = resolve_deployment_shape(keras_model, input_shape=input_shape, config=config)
     run_model = tf.function(lambda x: keras_model(x))
     concrete_func = run_model.get_concrete_function(
-        tf.TensorSpec([1, 2400, 1], tf.float32)
+        tf.TensorSpec(shape, tf.float32)
     )
     converter = tf.lite.TFLiteConverter.from_concrete_functions([concrete_func])
     tflite_model = converter.convert()
@@ -122,14 +118,17 @@ def convert_float_tflite(
 def convert_dynamic_range_tflite(
     keras_model: tf.keras.Model,
     out_path: str | Path,
+    input_shape: Sequence[int] | None = None,
+    config: Any | None = None,
 ) -> Path:
     """
     Weight-focused post-training quantization.
     Useful as an intermediate diagnostic, not the final ESP32 target.
     """
+    shape = resolve_deployment_shape(keras_model, input_shape=input_shape, config=config)
     run_model = tf.function(lambda x: keras_model(x))
     concrete_func = run_model.get_concrete_function(
-        tf.TensorSpec([1, 2400, 1], tf.float32)
+        tf.TensorSpec(shape, tf.float32)
     )
     converter = tf.lite.TFLiteConverter.from_concrete_functions([concrete_func])
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
@@ -141,6 +140,8 @@ def convert_full_int8_tflite(
     keras_model: tf.keras.Model,
     representative_dataset: Callable,
     out_path: str | Path,
+    input_shape: Sequence[int] | None = None,
+    config: Any | None = None,
 ) -> Path:
     """
     Main ESP32-S3 / TFLite Micro target.
@@ -150,9 +151,10 @@ def convert_full_int8_tflite(
         int8 output
         int8 built-in ops only, if conversion succeeds
     """
+    shape = resolve_deployment_shape(keras_model, input_shape=input_shape, config=config)
     run_model = tf.function(lambda x: keras_model(x))
     concrete_func = run_model.get_concrete_function(
-        tf.TensorSpec([1, 2400, 1], tf.float32)
+        tf.TensorSpec(shape, tf.float32)
     )
     converter = tf.lite.TFLiteConverter.from_concrete_functions([concrete_func])
 

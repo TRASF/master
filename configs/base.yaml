@@ -144,7 +144,7 @@ augment:
   max_segments_per_file: 100
 
 class_weights:
-  mode: manual
+  mode: auto
   values:
     - 1
     - 1.25
