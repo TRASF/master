@@ -186,26 +186,25 @@ def resolve_class_weights(
         resolved_weights = np.asarray(fallback_weights, dtype=np.float32)
     elif mode == "manual":
         if isinstance(values, dict):
-            if not labels_dict:
-                raise ValueError("Manual class weights require the canonical label map")
-            canonical_names = {
-                str(name).casefold(): (str(name), int(index))
-                for name, index in labels_dict.items()
-            }
-            resolved_weights = np.empty(num_classes, dtype=np.float32)
+            resolved_weights = np.ones(num_classes, dtype=np.float32)
             assigned = set()
+            canonical_names = (
+                {str(name).casefold(): int(index) for name, index in labels_dict.items()}
+                if labels_dict
+                else {}
+            )
             for supplied_name, weight in values.items():
-                match = canonical_names.get(str(supplied_name).casefold())
-                if match is None:
+                key_str = str(supplied_name).casefold()
+                if key_str in canonical_names:
+                    class_index = canonical_names[key_str]
+                elif str(supplied_name).isdigit() and 0 <= int(supplied_name) < num_classes:
+                    class_index = int(supplied_name)
+                else:
                     raise ValueError(f"Unknown class weight name: {supplied_name!r}")
-                _, class_index = match
                 if class_index in assigned:
                     raise ValueError(f"Duplicate class weight for index {class_index}")
                 assigned.add(class_index)
                 resolved_weights[class_index] = float(weight)
-            missing = sorted(set(range(num_classes)) - assigned)
-            if missing:
-                raise ValueError(f"Manual class weights are missing class indices: {missing}")
         elif values is None or len(values) != num_classes:
             size = 0 if values is None else len(values)
             raise ValueError(f"class_weights must contain {num_classes} values, got {size}")

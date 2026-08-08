@@ -498,13 +498,6 @@ class AudioAugmentor:
                 if tf.random.stateless_uniform([], seed=mask_toss_seed) < self.mask_p:
                     audio = self.apply_time_masking(audio, seed=mask_val_seed)
 
-            # Random Gain
-            if self.gain_p > 0.0:
-                gain_toss_seed = tf.stack([seed_0, seed_1 ^ tf.constant(60, dtype=tf.int64)])
-                gain_val_seed = tf.stack([seed_0, seed_1 ^ tf.constant(61, dtype=tf.int64)])
-                if tf.random.stateless_uniform([], seed=gain_toss_seed) < self.gain_p:
-                    audio = self.random_gain(audio, self.gain_cfg.gain_db, seed=gain_val_seed)
-
             # Gaussian Noise
             if self.gauss_p > 0.0:
                 gauss_toss_seed = tf.stack([seed_0, seed_1 ^ tf.constant(70, dtype=tf.int64)])
@@ -522,7 +515,7 @@ class AudioAugmentor:
         # ----------------------------------------------------
         # Phase 4: Final Standardization (The Capstone)
         # ----------------------------------------------------
-        # 1. First, normalize the energy so the model sees consistent volume
+        # 1. First, normalize energy so model sees consistent volume
         if self.preprocess_cfg.dc_removal:
             audio -= tf.reduce_mean(audio)
 
@@ -533,7 +526,14 @@ class AudioAugmentor:
             max_gain=self.rms_cfg.max_gain
         )
 
-        # 2. Finally, clip to prevent extreme outliers from crashing the model
+        # 2. Apply random gain AFTER RMS normalization so gain variation persists
+        if augment and self.gain_p > 0.0:
+            gain_toss_seed = tf.stack([seed_0, seed_1 ^ tf.constant(60, dtype=tf.int64)])
+            gain_val_seed = tf.stack([seed_0, seed_1 ^ tf.constant(61, dtype=tf.int64)])
+            if tf.random.stateless_uniform([], seed=gain_toss_seed) < self.gain_p:
+                audio = self.random_gain(audio, self.gain_cfg.gain_db, seed=gain_val_seed)
+
+        # 3. Finally, clip to prevent extreme outliers
         audio = tf.clip_by_value(audio, -1.0, 1.0)
 
         audio.set_shape([self.segment_length])

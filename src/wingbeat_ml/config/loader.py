@@ -39,6 +39,42 @@ LEGACY_MAPPINGS: Dict[str, str] = {
 }
 
 
+KNOWN_SECTION_PREFIXES = (
+    "train.",
+    "reproducibility.",
+    "augment.",
+    "dataset.",
+    "model.",
+    "loss.",
+    "optimizer.",
+    "performance.",
+    "logging.",
+    "evaluation.",
+    "cache.",
+    "wandb.",
+    "preprocess.",
+    "class_weights.",
+)
+
+
+def expand_dotted_keys(d: Dict[str, Any], parent_key: str = "") -> Dict[str, Any]:
+    """Expand dotted keys into nested dictionary structures."""
+    if not isinstance(d, dict) or parent_key in {"labels", "values"}:
+        return d
+    result: Dict[str, Any] = {}
+    for key, value in d.items():
+        if isinstance(value, dict):
+            value = expand_dotted_keys(value, parent_key=key)
+        if "." in key and (not parent_key and key.startswith(KNOWN_SECTION_PREFIXES) or parent_key):
+            set_nested_value(result, key, value)
+        else:
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = deep_merge(result[key], value)
+            else:
+                result[key] = value
+    return result
+
+
 def load_yaml(path: Union[str, Path]) -> Dict[str, Any]:
     """Load raw YAML file into dictionary."""
     path_str = str(path)
@@ -50,7 +86,7 @@ def load_yaml(path: Union[str, Path]) -> Dict[str, Any]:
             return {}
         if not isinstance(data, dict):
             raise ValueError(f"Configuration root in file must be a mapping: {path_str}")
-        return data
+        return expand_dotted_keys(data)
 
 
 def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
