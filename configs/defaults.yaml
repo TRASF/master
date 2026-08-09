@@ -159,7 +159,7 @@ dataset:
   outdoor: dataset/MSB/Outdoor
   val_dir: null
   test_dir: null
-  train_dir: dataset/MSB/Indoor
+  train_dir: dataset/MSB/Outdoor
   manifest_sha256: null
   split_list:
     - 0.8
