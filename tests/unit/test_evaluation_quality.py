@@ -67,27 +67,7 @@ class TestCanonicalEvaluation(unittest.TestCase):
         self.assertIn("macro_f1", results["metrics"])
         self.assertEqual(len(results["y_true"]), 4)
 
-    def test_legacy_evaluator_and_report_are_wrappers(self):
-        canonical_evaluator = require_module(
-            self,
-            "wingbeat_ml.evaluation.evaluator",
-        )
-        canonical_report = require_module(
-            self,
-            "wingbeat_ml.evaluation.report",
-        )
 
-        from src.evaluation.evaluate import ModelEvaluator
-        from src.evaluation.report import report_results
-
-        self.assertIs(
-            ModelEvaluator,
-            canonical_evaluator.ModelEvaluator,
-        )
-        self.assertIs(
-            report_results,
-            canonical_report.report_results,
-        )
 
     def test_training_pipelines_use_canonical_evaluation(self):
         for name in (

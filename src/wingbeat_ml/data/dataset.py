@@ -398,7 +398,7 @@ class SupervisedDataset:
         if not augment and cache_enabled:
             dataset = materialize_tensorflow_cache(dataset, cache_file)
 
-        dataset = dataset.batch(batch_size)
+        dataset = dataset.batch(batch_size, drop_remainder=augment)
 
         mixup_cfg = self.augmentor.aug_cfg.mixup
         mixup_probability = mixup_cfg.p
@@ -421,6 +421,30 @@ class SupervisedDataset:
 
         return self._with_deterministic_options(dataset)
 
+    def _get_allowed_mixup_tensor(self, mixup_cfg):
+        if not hasattr(self, "_allowed_mixup_tensor") or self._allowed_mixup_tensor is None:
+            num_classes = self.data_loader.num_classes
+            allowed = np.zeros((num_classes, num_classes), dtype=bool)
+            mappings = (
+                getattr(mixup_cfg, "class_mappings", None)
+                if not isinstance(mixup_cfg, dict)
+                else mixup_cfg.get("class_mappings", {})
+            )
+            has_mappings = bool(mappings)
+            if has_mappings:
+                for src_class_str, allowed_list in mappings.items():
+                    src_class = int(src_class_str)
+                    for dst_class in allowed_list:
+                        allowed[src_class, int(dst_class)] = True
+                        allowed[int(dst_class), src_class] = True
+            else:
+                allowed = np.ones((num_classes, num_classes), dtype=bool)
+
+            self._allowed_mixup_tensor = tf.constant(allowed, dtype=tf.bool)
+            self._has_mixup_mappings = has_mappings
+
+        return self._allowed_mixup_tensor, self._has_mixup_mappings
+
     @tf.function
     def _apply_targeted_mixup(self, x, y, mixup_cfg, seed):
         p = float(mixup_cfg.p) if hasattr(mixup_cfg, "p") else float(mixup_cfg.get("p", 1.0))
@@ -439,26 +463,13 @@ class SupervisedDataset:
         label1 = tf.argmax(y, axis=1, output_type=tf.int32)
         label2 = tf.argmax(y2, axis=1, output_type=tf.int32)
 
-        num_classes = self.data_loader.num_classes
-        allowed = np.zeros((num_classes, num_classes), dtype=bool)
-
-        mappings = getattr(mixup_cfg, "class_mappings", None) if not isinstance(mixup_cfg, dict) else mixup_cfg.get('class_mappings', {})
-        if mappings:
-            for src_class_str, allowed_list in mappings.items():
-                src_class = int(src_class_str)
-                for dst_class in allowed_list:
-                    allowed[src_class, int(dst_class)] = True
-                    allowed[int(dst_class), src_class] = True
-        else:
-            allowed = np.ones((num_classes, num_classes), dtype=bool)
-
-        allowed_tensor = tf.constant(allowed, dtype=tf.bool)
+        allowed_tensor, has_mappings = self._get_allowed_mixup_tensor(mixup_cfg)
 
         pair_indices = tf.stack([label1, label2], axis=1)
         is_mapped_pair = tf.gather_nd(allowed_tensor, pair_indices)
 
         outside_prob_scale = float(getattr(mixup_cfg, "outside_prob_scale", 0.2)) if not isinstance(mixup_cfg, dict) else float(mixup_cfg.get("outside_prob_scale", 0.2))
-        if mappings:
+        if has_mappings:
             prob_scale = tf.where(is_mapped_pair, tf.ones([batch_size]), tf.fill([batch_size], outside_prob_scale))
         else:
             prob_scale = tf.ones([batch_size])

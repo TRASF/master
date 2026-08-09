@@ -47,7 +47,7 @@ wandb:
   prediction_table_max_rows: 0
 
 labels:
-  No.mos: 10
+  No.Mos: 10
   Cx_quin_Male: 9
   An_dirus_Male: 5
   Cx_quin_Female: 8
@@ -60,7 +60,7 @@ labels:
   Ae_albopictus_Female: 2
 
 ssl:
-  enabled: true
+  enabled: false
   method: "fixmatch"
   tau: 0.95
   lambda_u: 1.0
@@ -151,7 +151,7 @@ classes:
   - An_minimus_Male
   - Cx_quin_Female
   - Cx_quin_Male
-  - No.mos
+  - No.Mos
 
 dataset:
   indoor: dataset/MSB/Indoor
@@ -220,9 +220,9 @@ class_weights:
   mode: auto
 
 performance:
-  precision: float32
+  precision: mixed_float16
   steps_per_call: 20
-  jit_compile: false
+  jit_compile: true
   profiler:
     enabled: false
     start_step: 10
@@ -230,7 +230,7 @@ performance:
 
 logging:
   console: normal
-  epoch_interval: 1
+  epoch_interval: 5
   model_summary: false
   classification_report: file
   jsonl: true
@@ -249,8 +249,8 @@ cache:
 reproducibility:
   seed: 48
   enabled: true
-  deterministic_ops: true
-  deterministic_data: true
+  deterministic_ops: false
+  deterministic_data: false
 
 # # Flattened autoresearch override keys logged in W&B config
 # train.seed: 48
@@ -278,12 +278,12 @@ reproducibility:
 # wandb.log_prediction_audio: false
 # wandb.prediction_table_max_rows: 0
 
-# dataset.indoor: dataset/MSB/Indoor
+# dataset.indoor: dataset/MSB_Indoor_with_NoMos
 # dataset.mosLab: dataset/Philip
 # dataset.outdoor: dataset/MSB/Outdoor
 # dataset.val_dir: null
 # dataset.test_dir: null
-# dataset.train_dir: dataset/MSB/Indoor
+# dataset.train_dir: dataset/MSB_Indoor_with_NoMos
 
 # augment.mixup.p: 1
 # augment.mixup.alpha: 0.4

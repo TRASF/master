@@ -45,17 +45,7 @@ class TestTrainingEntrypoints(unittest.TestCase):
         with self.assertRaises(ValueError):
             get_training_entrypoint("unknown")
 
-    def test_legacy_wrappers_export_canonical_functions(self):
-        from src.framework.supervised.train import train_supervised as old_pretrain
-        from src.framework.supervised.train_finetune import train_finetune as old_finetune
-        from src.framework.supervised.train_linear_probe import train_linear_probe as old_probe
-        from wingbeat_ml.pipelines.fine_tune import train_finetune
-        from wingbeat_ml.pipelines.linear_probe import train_linear_probe
-        from wingbeat_ml.pipelines.pretrain import train_supervised
 
-        self.assertIs(old_pretrain, train_supervised)
-        self.assertIs(old_probe, train_linear_probe)
-        self.assertIs(old_finetune, train_finetune)
 
     def test_canonical_modules_do_not_import_legacy_framework(self):
         modules = (
@@ -109,11 +99,7 @@ class TestTrainingEntrypoints(unittest.TestCase):
             self.assertNotIn("SupervisedDataset(", source)
             self.assertNotIn("MosSongPlusModel(", source)
 
-    def test_legacy_config_import_is_preserved(self):
-        from configs import mos_config
-        from wingbeat_ml.config import runtime
 
-        self.assertIs(mos_config.load_config, runtime.load_config)
 
 
 if __name__ == "__main__":

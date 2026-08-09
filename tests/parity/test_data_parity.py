@@ -46,7 +46,7 @@ class TestAudioLoadingParity(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_load_audio_matches_file_loader(self):
-        from src.io.loader import FileLoader
+        from wingbeat_ml.data.audio import FileLoader
         from wingbeat_ml.data.audio import load_audio
 
         legacy = FileLoader(self.wav_path, 8000).load()

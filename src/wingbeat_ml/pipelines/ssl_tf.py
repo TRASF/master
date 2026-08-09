@@ -105,6 +105,9 @@ def run_tf_ssl_pipeline(
 
     # 3. Setup optimizer & loss modules
     optimizer = tf.keras.optimizers.Adam(learning_rate=app_cfg.optimizer.learning_rate)
+    if tf.keras.mixed_precision.global_policy().compute_dtype == "float16":
+        optimizer = tf.keras.mixed_precision.LossScaleOptimizer(optimizer)
+
     flex_layer = None
     if method == "flexmatch":
         flex_layer = TFFlexMatchLoss(
@@ -125,6 +128,9 @@ def run_tf_ssl_pipeline(
 
         if method in ("supervised_small", "full_supervised"):
             # Standard supervised training step loop
+            is_loss_scale = isinstance(
+                optimizer, tf.keras.mixed_precision.LossScaleOptimizer
+            )
             for x_l, y_l in labeled_train_ds:
                 with tf.GradientTape() as tape:
                     logits = model(x_l, training=True)
@@ -136,7 +142,16 @@ def run_tf_ssl_pipeline(
                         loss_s = tf.reduce_mean(
                             tf.keras.losses.sparse_categorical_crossentropy(y_l, logits, from_logits=True)
                         )
-                grads = tape.gradient(loss_s, model.trainable_variables)
+                    scaled_loss = (
+                        optimizer.get_scaled_loss(loss_s) if is_loss_scale else loss_s
+                    )
+
+                scaled_grads = tape.gradient(scaled_loss, model.trainable_variables)
+                grads = (
+                    optimizer.get_unscaled_gradients(scaled_grads)
+                    if is_loss_scale
+                    else scaled_grads
+                )
                 optimizer.apply_gradients(zip(grads, model.trainable_variables))
 
                 total_loss += float(loss_s.numpy())

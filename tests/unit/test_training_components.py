@@ -216,10 +216,7 @@ class TestTrainingPipeline(unittest.TestCase):
         np.testing.assert_array_equal(weights, [1.0, 2.0])
         self.assertEqual(config["resolved_class_weights"], [1.0, 2.0])
 
-    def test_legacy_trainer_import_is_preserved(self):
-        from src.framework.supervised.train_step import Train
 
-        self.assertIs(Train, Trainer)
 
 
 class TestTrainingRuntime(unittest.TestCase):

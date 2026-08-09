@@ -10,8 +10,8 @@ tf.config.set_visible_devices([], 'GPU')
 # Add project root to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from configs.mos_config import load_config, normalize_config, apply_reproducibility_environment, resolve_experiment_paths
-from src.framework.supervised.dataset import SupervisedDataset
+from wingbeat_ml.config import load_config, validate_config as normalize_config, apply_reproducibility_environment, resolve_experiment_paths
+from wingbeat_ml.data.dataset import SupervisedDataset
 from wingbeat_ml.models import MosSongPlusModel
 
 def capture_baselines():

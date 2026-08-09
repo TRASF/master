@@ -1,1 +1,3 @@
 training_mode: pretrain
+ssl:
+  enabled: false

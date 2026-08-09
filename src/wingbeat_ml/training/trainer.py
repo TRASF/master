@@ -80,6 +80,9 @@ class Trainer:
     @tf.function
     def train_step(self, x, y):
         sample_weight = self._get_sample_weights(y)
+        is_loss_scale = isinstance(
+            self.optimizer, tf.keras.mixed_precision.LossScaleOptimizer
+        )
 
         with tf.GradientTape() as tape:
             predictions = self.model(x, training=True)
@@ -89,7 +92,18 @@ class Trainer:
             if len(loss.shape) > 0:
                 loss = tf.reduce_mean(loss)
 
-        gradients = tape.gradient(loss, self.model.trainable_variables)
+            scaled_loss = (
+                self.optimizer.get_scaled_loss(loss) if is_loss_scale else loss
+            )
+
+        scaled_gradients = tape.gradient(
+            scaled_loss, self.model.trainable_variables
+        )
+        gradients = (
+            self.optimizer.get_unscaled_gradients(scaled_gradients)
+            if is_loss_scale
+            else scaled_gradients
+        )
         self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
 
         self.train_loss_metric.update_state(loss)

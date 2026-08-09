@@ -56,19 +56,7 @@ class TestExportModules(unittest.TestCase):
         ):
             require_module(self, name)
 
-    def test_legacy_wrapper_exports_canonical_converter(self):
-        canonical = require_module(
-            self,
-            "wingbeat_ml.export.tflite",
-        )
-        from src.quantization.tf_quantize import (
-            convert_full_int8_tflite,
-        )
 
-        self.assertIs(
-            convert_full_int8_tflite,
-            canonical.convert_full_int8_tflite,
-        )
 
     def test_float_and_int8_conversion_and_agreement(self):
         tflite = require_module(

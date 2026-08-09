@@ -119,7 +119,7 @@ class TestConfigurationContracts(unittest.TestCase):
                     validate_config(config)
 
     def test_default_policy_is_sample_only_auto_weighted(self):
-        config = yaml.safe_load((ROOT / "configs" / "base.yaml").read_text())
+        config = yaml.safe_load((ROOT / "configs" / "defaults.yaml").read_text())
         self.assertEqual(config["class_weights"]["mode"], "auto")
         self.assertTrue(config["evaluation"]["sample_level"]["enabled"])
         self.assertFalse(config["evaluation"]["file_level"]["enabled"])

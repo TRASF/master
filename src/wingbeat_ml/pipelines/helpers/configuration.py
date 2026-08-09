@@ -22,7 +22,7 @@ def find_project_root(start: Optional[Union[str, Path]] = None) -> Path:
 
     for candidate in (starting_path, *starting_path.parents, source_root):
         if (
-            (candidate / "configs" / "base.yaml").is_file()
+            (candidate / "configs" / "defaults.yaml").is_file()
             and (
                 candidate
                 / "configs"
@@ -33,7 +33,7 @@ def find_project_root(start: Optional[Union[str, Path]] = None) -> Path:
             return candidate
 
     raise FileNotFoundError(
-        "Could not find configs/base.yaml. Run from a MosSongPlus "
+        "Could not find configs/defaults.yaml. Run from a MosSongPlus "
         "checkout or provide explicit configuration paths."
     )
 
@@ -54,7 +54,7 @@ def _override(path: str, value: Any) -> str:
 
 def load_pipeline_configuration(
     defaults_path: Union[str, Path] = "configs/defaults.yaml",
-    model_config_path: Union[str, Path] = "configs/model.yaml",
+    model_config_path: Union[str, Path] = "configs/models/mossong_plus.yaml",
 ) -> Tuple[AppConfig, Dict[str, Any]]:
     """Load the canonical configuration pair used by entrypoints."""
     config = load_config(
@@ -101,7 +101,7 @@ def prepare_default_pilot(
 ) -> Tuple[Path, Path, Path]:
     """Resolve the configured pilot profile for a bare invocation."""
     root = find_project_root(project_root)
-    base_path = root / "configs" / "base.yaml"
+    base_path = root / "configs" / "defaults.yaml"
     model_path = root / "configs" / "models" / "mossong_plus.yaml"
     experiment_path = root / "configs" / "experiments" / "pretrain.yaml"
     profile_path = root / "configs" / "profiles" / "pilot.yaml"

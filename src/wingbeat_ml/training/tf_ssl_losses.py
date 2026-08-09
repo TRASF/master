@@ -236,6 +236,9 @@ def train_tf_fixmatch_step(
     lambda_u: float = 1.0,
 ) -> Dict[str, float]:
     """Execute one TensorFlow FixMatch training step using tf.GradientTape."""
+    is_loss_scale = isinstance(
+        optimizer, tf.keras.mixed_precision.LossScaleOptimizer
+    )
     with tf.GradientTape() as tape:
         labeled_logits = model(x_l, training=True)
         unlabeled_weak_logits = tf.stop_gradient(model(x_u_w, training=True))
@@ -250,8 +253,16 @@ def train_tf_fixmatch_step(
             lambda_u=lambda_u,
         )
         total_loss = loss_res["total_loss"]
+        scaled_loss = (
+            optimizer.get_scaled_loss(total_loss) if is_loss_scale else total_loss
+        )
 
-    grads = tape.gradient(total_loss, model.trainable_variables)
+    scaled_grads = tape.gradient(scaled_loss, model.trainable_variables)
+    grads = (
+        optimizer.get_unscaled_gradients(scaled_grads)
+        if is_loss_scale
+        else scaled_grads
+    )
     optimizer.apply_gradients(zip(grads, model.trainable_variables))
 
     return {
@@ -272,6 +283,9 @@ def train_tf_flexmatch_step(
     x_u_s: tf.Tensor,
 ) -> Dict[str, float]:
     """Execute one TensorFlow FlexMatch training step using tf.GradientTape."""
+    is_loss_scale = isinstance(
+        optimizer, tf.keras.mixed_precision.LossScaleOptimizer
+    )
     with tf.GradientTape() as tape:
         labeled_logits = model(x_l, training=True)
         unlabeled_weak_logits = tf.stop_gradient(model(x_u_w, training=True))
@@ -284,8 +298,16 @@ def train_tf_flexmatch_step(
             unlabeled_strong_logits=unlabeled_strong_logits,
         )
         total_loss = loss_res["total_loss"]
+        scaled_loss = (
+            optimizer.get_scaled_loss(total_loss) if is_loss_scale else total_loss
+        )
 
-    grads = tape.gradient(total_loss, model.trainable_variables)
+    scaled_grads = tape.gradient(scaled_loss, model.trainable_variables)
+    grads = (
+        optimizer.get_unscaled_gradients(scaled_grads)
+        if is_loss_scale
+        else scaled_grads
+    )
     optimizer.apply_gradients(zip(grads, model.trainable_variables))
 
     return {
