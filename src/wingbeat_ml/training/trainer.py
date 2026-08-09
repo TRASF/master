@@ -98,16 +98,24 @@ class Trainer:
 
         self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
 
-        self.train_loss_metric.update_state(loss)
+        correct = (
+            tf.reduce_sum(
+                tf.cast(
+                    tf.equal(tf.argmax(y, axis=-1), tf.argmax(predictions, axis=-1)),
+                    tf.float32,
+                )
+            )
+            if not self.is_contrastive
+            else tf.constant(0.0, dtype=tf.float32)
+        )
 
-        if not self.is_contrastive:
-            self.train_acc_metric.update_state(y, predictions)
-
-        return loss
+        return loss, correct
 
     def _train_steps(self, iterator, num_steps):
         batches = tf.zeros((), dtype=tf.int32)
         examples = tf.zeros((), dtype=tf.int32)
+        sum_loss = tf.zeros((), dtype=tf.float32)
+        sum_correct = tf.zeros((), dtype=tf.float32)
 
         for _ in tf.range(num_steps):
             optional_element = iterator.get_next_as_optional()
@@ -115,19 +123,21 @@ class Trainer:
                 break
 
             x, y = optional_element.get_value()
-            self.train_step(x, y)
+            loss, correct = self.train_step(x, y)
 
+            batch_size_i = tf.shape(x)[0]
             batches = tf.add(batches, tf.constant(1, dtype=tf.int32))
-            examples = tf.add(examples, tf.cast(tf.shape(x)[0], tf.int32))
+            examples = tf.add(examples, tf.cast(batch_size_i, tf.int32))
+            sum_loss = tf.add(sum_loss, loss * tf.cast(batch_size_i, tf.float32))
+            sum_correct = tf.add(sum_correct, correct)
 
-        return batches, examples
+        return batches, examples, sum_loss, sum_correct
 
     def train_epoch(self):
-        self.train_loss_metric.reset_state()
-        self.train_acc_metric.reset_state()
-
         batches = 0
         examples = 0
+        total_loss_sum = 0.0
+        total_correct_sum = 0.0
         iterator = iter(self.train_ds)
         while True:
             call_steps = self.steps_per_call
@@ -147,7 +157,7 @@ class Trainer:
                 elif self._profiler_active:
                     call_steps = min(call_steps, end_step - current_step)
 
-            b, e = self._compiled_train_steps(
+            b, e, l_sum, c_sum = self._compiled_train_steps(
                 iterator,
                 tf.constant(call_steps, dtype=tf.int32),
             )
@@ -155,6 +165,8 @@ class Trainer:
                 break
             batches += int(b)
             examples += int(e)
+            total_loss_sum += float(l_sum)
+            total_correct_sum += float(c_sum)
 
             current_step = self.global_step + batches
             if self._profiler_active:
@@ -172,9 +184,12 @@ class Trainer:
 
         self.global_step += batches
 
+        avg_loss = (total_loss_sum / examples) if examples > 0 else 0.0
+        avg_acc = (total_correct_sum / examples) if (examples > 0 and not self.is_contrastive) else 0.0
+
         return {
-            "loss": float(self.train_loss_metric.result()),
-            "accuracy": float(self.train_acc_metric.result()),
+            "loss": avg_loss,
+            "accuracy": avg_acc,
             "batches": batches,
             "examples": examples,
             "global_step": self.global_step,
