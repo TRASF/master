@@ -456,7 +456,6 @@ class SupervisedDataset:
 
         return self._allowed_mixup_tensor, self._has_mixup_mappings
 
-    @tf.function
     def _apply_targeted_mixup(self, x, y, mixup_cfg, seed):
         p = float(mixup_cfg.p) if hasattr(mixup_cfg, "p") else float(mixup_cfg.get("p", 1.0))
         alpha = float(mixup_cfg.alpha) if hasattr(mixup_cfg, "alpha") else float(mixup_cfg.get("alpha", 0.2))

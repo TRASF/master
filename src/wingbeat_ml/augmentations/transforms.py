@@ -66,7 +66,6 @@ class AudioAugmentor:
         else:
             self.hpf_taps = None
 
-    @tf.function
     def pre_emphasis(self, x, coeff=0.97):
         """
         Applies pre-emphasis filter: y[t] = x[t] - coeff * x[t-1]
@@ -74,7 +73,6 @@ class AudioAugmentor:
         x = tf.cast(x, tf.float32)
         return tf.concat([x[:1], x[1:] - coeff * x[:-1]], axis=0)
 
-    @tf.function
     def rms_normalize(self, audio, target_rms=0., min_gain=0.1, max_gain=10.0):
         rms = tf.sqrt(tf.reduce_mean(tf.square(audio)) + 1e-8)
         gain = target_rms / rms
@@ -83,7 +81,6 @@ class AudioAugmentor:
         audio.set_shape([self.segment_length])
         return audio
 
-    @tf.function
     def delta_waveform(self, x):
         """
         Computes the delta (first-order difference) of the waveform.
@@ -92,7 +89,6 @@ class AudioAugmentor:
         delta = tf.concat([[0.0], x[1:] - x[:-1]], axis=0)
         return delta
 
-    @tf.function
     def apply_time_masking(self, audio, seed=None):
         """
         Applies time masking by setting a random segment of the audio to zero.
@@ -133,7 +129,6 @@ class AudioAugmentor:
             audio = audio * mask
         return audio
 
-    @tf.function
     def random_segment(self, audio, seed=None):
         if seed is None:
             stateless_seed = tf.constant([0, 42], dtype=tf.int64)
@@ -303,7 +298,6 @@ class AudioAugmentor:
         return noise_ds.with_options(options)
 
 
-    @tf.function
     def sample_noise_snr(self, fallback_range, seed):
         distribution = self.noise_cfg.snr_distribution
         if not distribution:
@@ -330,7 +324,6 @@ class AudioAugmentor:
             exclusive=False,
         )
 
-    @tf.function
     def apply_noise_envelope(self, noise, seed):
         min_gain = float(self.noise_envelope_cfg[0])
         max_gain = float(self.noise_envelope_cfg[1])
@@ -341,7 +334,6 @@ class AudioAugmentor:
         envelope = tf.linspace(start_gain, end_gain, tf.shape(noise)[0])
         return noise * envelope
 
-    @tf.function
     def add_noise(self, audio, noise, snr_range, seed):
         env_seed = tf.stack([tf.gather(seed, 0), tf.constant(301, dtype=tf.int64)])
         snr_seed = tf.stack([tf.gather(seed, 0), tf.constant(302, dtype=tf.int64)])
@@ -367,7 +359,6 @@ class AudioAugmentor:
         peak = tf.reduce_max(tf.abs(augmented)) + 1e-8
         return tf.cond(peak > 0.95, lambda: augmented / peak * 0.95, lambda: augmented)
 
-    @tf.function
     def pitch_shift(self, audio, semitones_range, seed):
         """
         Approximates pitch shift via resampling using tf.image.resize.
@@ -390,7 +381,6 @@ class AudioAugmentor:
         final.set_shape([self.segment_length])
         return final
 
-    @tf.function
     def time_shift(self, audio, rate_range, seed):
         rate = tf.random.stateless_uniform([], seed=seed, minval=float(rate_range[0]), maxval=float(rate_range[1]))
         shift = tf.cast(tf.cast(self.segment_length, tf.float32) * rate, tf.int32)
@@ -411,13 +401,11 @@ class AudioAugmentor:
             exclusive=True
         )
 
-    @tf.function
     def random_gain(self, audio, gain_db_range, seed):
         gain_db = tf.random.stateless_uniform([], seed=seed, minval=float(gain_db_range[0]), maxval=float(gain_db_range[1]))
         gain = tf.pow(10.0, gain_db / 20.0)
         return audio * gain
 
-    @tf.function
     def add_gaussian_noise(self, audio, snr_range, seed):
         audio_rms = tf.sqrt(tf.reduce_mean(tf.square(audio)) + 1e-9)
         snr_seed = tf.stack([tf.gather(seed, 0), tf.constant(1001, dtype=tf.int64)])
@@ -428,7 +416,6 @@ class AudioAugmentor:
         noise = tf.random.stateless_normal(tf.shape(audio), seed=noise_seed, mean=0.0, stddev=noise_rms)
         return audio + noise
 
-    @tf.function
     def apply_hpf(self, audio):
         if self.hpf_taps is None:
             return audio
@@ -439,7 +426,6 @@ class AudioAugmentor:
         filtered = tf.nn.conv1d(audio_padded, taps, stride=1, padding='SAME')
         return tf.reshape(filtered, [self.segment_length])
 
-    @tf.function
     def apply_post_processing(self, audio, label, seed=None, noise=None, augment=True):
         if seed is None:
             seed = tf.constant([0, 0], dtype=tf.int64)
