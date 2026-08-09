@@ -1,0 +1,7 @@
+training_mode: ssl
+ssl:
+  enabled: true
+  method: fixmatch
+  tau: 0.95
+  lambda_u: 1.0
+  mapping: convex
