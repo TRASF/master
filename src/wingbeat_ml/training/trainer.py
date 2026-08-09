@@ -30,6 +30,7 @@ class Trainer:
         self._profiler_finished = False
         self._compiled_train_steps = tf.function(
             self._train_steps,
+            reduce_retracing=True,
             jit_compile=bool(jit_compile),
         )
 
@@ -77,7 +78,6 @@ class Trainer:
 
         return tf.reduce_sum(y * self.class_weights, axis=-1)
 
-    @tf.function
     def train_step(self, x, y):
         sample_weight = self._get_sample_weights(y)
         is_loss_scale = isinstance(
@@ -113,7 +113,6 @@ class Trainer:
 
         return loss
 
-    @tf.function
     def _train_steps(self, iterator, num_steps):
         batches = tf.zeros((), dtype=tf.int32)
         examples = tf.zeros((), dtype=tf.int32)

@@ -86,6 +86,7 @@ def load_yaml(path: Union[str, Path]) -> Dict[str, Any]:
             return {}
         if not isinstance(data, dict):
             raise ValueError(f"Configuration root in file must be a mapping: {path_str}")
+        data = handle_legacy_keys(data)
         return expand_dotted_keys(data)
 
 
@@ -211,8 +212,9 @@ def load_config(
 
     # Step 1: Base defaults
     primary_defaults = defaults_path or base_path
-    if primary_defaults and os.path.exists(str(primary_defaults)):
-        raw_dict = deep_merge(raw_dict, handle_legacy_keys(load_yaml(primary_defaults)))
+    if primary_defaults:
+        if os.path.exists(str(primary_defaults)):
+            raw_dict = deep_merge(raw_dict, handle_legacy_keys(load_yaml(primary_defaults)))
     else:
         fallback_defaults = Path("configs/defaults.yaml")
         if fallback_defaults.exists():

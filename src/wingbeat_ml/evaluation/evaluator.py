@@ -33,21 +33,29 @@ class ModelEvaluator:
         self.val_loss_metric.update_state(loss)
         if not self.is_contrastive:
             self.val_acc_metric.update_state(y, predictions)
-        return loss, predictions
+            y_true_idx = tf.cast(tf.argmax(y, axis=1), tf.int32)
+            y_pred_idx = tf.cast(tf.argmax(predictions, axis=1), tf.int32)
+            return y_true_idx, y_pred_idx
+        return tf.zeros([tf.shape(x)[0]], dtype=tf.int32), tf.zeros([tf.shape(x)[0]], dtype=tf.int32)
 
     def _collect_predictions(self, dataset: tf.data.Dataset) -> Tuple[np.ndarray, np.ndarray]:
         """
         Helper to run the model on a dataset and return true/pred indices.
         """
-        y_true = []
-        y_pred = []
+        y_true_list = []
+        y_pred_list = []
 
         for x, y in dataset:
-            _, preds = self.val_step(x, y)
-            y_true.extend(np.argmax(y.numpy(), axis=1))
-            y_pred.extend(np.argmax(preds.numpy(), axis=1))
+            yt, yp = self.val_step(x, y)
+            y_true_list.append(yt)
+            y_pred_list.append(yp)
 
-        return np.array(y_true), np.array(y_pred)
+        if not y_true_list:
+            return np.array([], dtype=np.int32), np.array([], dtype=np.int32)
+
+        y_true = tf.concat(y_true_list, axis=0).numpy()
+        y_pred = tf.concat(y_pred_list, axis=0).numpy()
+        return y_true, y_pred
 
     def _to_probabilities(self, predictions):
         if getattr(self.loss_fn, "from_logits", False):

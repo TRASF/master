@@ -26,7 +26,7 @@ class TestMosSongPlusParity(unittest.TestCase):
 
         # Load configs
         cls.defaults_path = "configs/defaults.yaml"
-        cls.model_cfg_path = "configs/model.yaml"
+        cls.model_cfg_path = "configs/models/mossong_plus.yaml" if os.path.exists("configs/models/mossong_plus.yaml") else "configs/model.yaml"
 
         cls.defaults_raw = load_yaml(cls.defaults_path)
         cls.defaults_raw["dataset"]["train_dir"] = "tests/fixtures/audio_11class"

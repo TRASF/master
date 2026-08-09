@@ -171,6 +171,7 @@ class SupervisedDataset:
 
     def _with_deterministic_options(self, dataset):
         options = tf.data.Options()
+        options.deterministic = self.deterministic
         options.experimental_deterministic = self.deterministic
         return dataset.with_options(options)
 
@@ -418,6 +419,16 @@ class SupervisedDataset:
             )
 
         dataset = dataset.prefetch(self.prefetch_buffer)
+
+        def _set_static_shape(audio, label):
+            audio.set_shape([None, self.segment_length, 1])
+            return audio, label
+
+        dataset = dataset.map(
+            _set_static_shape,
+            num_parallel_calls=self.pure_parallel_calls,
+            deterministic=self.deterministic,
+        )
 
         return self._with_deterministic_options(dataset)
 

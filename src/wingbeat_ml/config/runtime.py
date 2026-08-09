@@ -128,6 +128,8 @@ def configure_training_runtime(
         random.seed(seed)
         np.random.seed(seed)
         tf.random.set_seed(seed)
+        if hasattr(tf.keras.utils, "set_random_seed"):
+            tf.keras.utils.set_random_seed(seed)
         if console_str == "verbose":
             print(f"Reproducibility enabled. Seed: {seed}")
 

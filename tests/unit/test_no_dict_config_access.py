@@ -30,6 +30,8 @@ class TestNoDictConfigAccess(TestCase):
             "config/runtime.py", # Low-level compatibility fallback helpers
             "config/schema.py",  # Pydantic v2 schema definition and pre-validation dictionary checks
             "export/input_contract.py",  # Low-level input contract helper
+            "models/mossong_plus.py",  # Keras layer get_config / from_config dictionaries
+            "models/layers/rep_conv1d.py",  # Keras layer get_config / from_config dictionaries
         }
 
         violations = []
