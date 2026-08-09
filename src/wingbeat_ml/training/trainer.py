@@ -38,12 +38,7 @@ class Trainer:
             if isinstance(class_weights, dict):
                 class_weights = [class_weights[k] for k in sorted(class_weights.keys())]
 
-            self.class_weights = tf.Variable(
-                class_weights,
-                dtype=tf.float32,
-                trainable=False,
-                name="class_weights",
-            )
+            self.class_weights = tf.constant(class_weights, dtype=tf.float32)
         else:
             self.class_weights = None
 
@@ -54,20 +49,14 @@ class Trainer:
         """
         Allows dynamic class-weight updates between epochs.
         """
+        if class_weights is None:
+            self.class_weights = None
+            return
+
         if isinstance(class_weights, dict):
             class_weights = [class_weights[k] for k in sorted(class_weights.keys())]
 
-        class_weights = tf.constant(class_weights, dtype=tf.float32)
-
-        if self.class_weights is None:
-            self.class_weights = tf.Variable(
-                class_weights,
-                dtype=tf.float32,
-                trainable=False,
-                name="class_weights",
-            )
-        else:
-            self.class_weights.assign(class_weights)
+        self.class_weights = tf.constant(class_weights, dtype=tf.float32)
 
     def _get_sample_weights(self, y):
         """
@@ -76,7 +65,8 @@ class Trainer:
         if self.class_weights is None:
             return None
 
-        return tf.reduce_sum(y * self.class_weights, axis=-1)
+        weights = tf.cast(self.class_weights, y.dtype)
+        return tf.reduce_sum(y * weights, axis=-1)
 
     def train_step(self, x, y):
         sample_weight = self._get_sample_weights(y)
