@@ -28,8 +28,8 @@ class Trainer:
         self.profiler_logdir = profiler_logdir
         self._profiler_active = False
         self._profiler_finished = False
-        self._compiled_train_steps = tf.function(
-            self._train_steps,
+        self._compiled_train_step = tf.function(
+            self.train_step,
             reduce_retracing=True,
             jit_compile=bool(jit_compile),
         )
@@ -111,36 +111,13 @@ class Trainer:
 
         return loss, correct
 
-    def _train_steps(self, iterator, num_steps):
-        batches = tf.zeros((), dtype=tf.int32)
-        examples = tf.zeros((), dtype=tf.int32)
-        sum_loss = tf.zeros((), dtype=tf.float32)
-        sum_correct = tf.zeros((), dtype=tf.float32)
-
-        for _ in tf.range(num_steps):
-            optional_element = iterator.get_next_as_optional()
-            if not optional_element.has_value():
-                break
-
-            x, y = optional_element.get_value()
-            loss, correct = self.train_step(x, y)
-
-            batch_size_i = tf.shape(x)[0]
-            batches = tf.add(batches, tf.constant(1, dtype=tf.int32))
-            examples = tf.add(examples, tf.cast(batch_size_i, tf.int32))
-            sum_loss = tf.add(sum_loss, loss * tf.cast(batch_size_i, tf.float32))
-            sum_correct = tf.add(sum_correct, correct)
-
-        return batches, examples, sum_loss, sum_correct
-
     def train_epoch(self):
         batches = 0
         examples = 0
         total_loss_sum = 0.0
         total_correct_sum = 0.0
-        iterator = iter(self.train_ds)
-        while True:
-            call_steps = self.steps_per_call
+
+        for x, y in self.train_ds:
             current_step = self.global_step + batches
             if self.profiler.get("enabled") and not self._profiler_finished:
                 start_step = int(self.profiler.get("start_step", 10))
@@ -152,21 +129,13 @@ class Trainer:
                         )
                     tf.profiler.experimental.start(str(self.profiler_logdir))
                     self._profiler_active = True
-                if current_step < start_step:
-                    call_steps = min(call_steps, start_step - current_step)
-                elif self._profiler_active:
-                    call_steps = min(call_steps, end_step - current_step)
 
-            b, e, l_sum, c_sum = self._compiled_train_steps(
-                iterator,
-                tf.constant(call_steps, dtype=tf.int32),
-            )
-            if b == 0:
-                break
-            batches += int(b)
-            examples += int(e)
-            total_loss_sum += float(l_sum)
-            total_correct_sum += float(c_sum)
+            loss, correct = self._compiled_train_step(x, y)
+            batch_size_i = int(tf.shape(x)[0])
+            batches += 1
+            examples += batch_size_i
+            total_loss_sum += float(loss) * batch_size_i
+            total_correct_sum += float(correct)
 
             current_step = self.global_step + batches
             if self._profiler_active:
