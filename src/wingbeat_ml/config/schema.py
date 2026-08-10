@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import os
 import warnings
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Literal, Optional, Sequence, Union
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
@@ -297,6 +297,175 @@ class SegmentOverlapConfig(StrictBaseModel):
         return self
 
 
+class RandomMicEQConfig(StrictBaseModel):
+    """Random smooth microphone-like magnitude response."""
+
+    p: float = 0.0
+
+    # Total control points including 0 Hz and Nyquist.
+    num_points: List[int] = Field(default_factory=lambda: [3, 7])
+
+    # Gain applied independently at each control point.
+    gain_db: List[float] = Field(default_factory=lambda: [-4.0, 4.0])
+
+    # Controls random widths of adjacent frequency sections.
+    # 1.0 means equal width; this range makes sections irregular.
+    section_width_weights: List[float] = Field(
+        default_factory=lambda: [0.6, 1.4]
+    )
+
+    # Reflection padding before FFT-domain filtering.
+    fft_pad_samples: int = 256
+
+    # Remove average dB offset so this augmentation mostly changes
+    # spectral shape; random_gain remains responsible for volume.
+    zero_mean_db: bool = True
+
+    @model_validator(mode="after")
+    def validate_values(self) -> "RandomMicEQConfig":
+        if not 0.0 <= self.p <= 1.0:
+            raise ValueError("random_mic_eq.p must be in [0, 1]")
+
+        if (
+            len(self.num_points) != 2
+            or self.num_points[0] < 2
+            or self.num_points[1] < self.num_points[0]
+        ):
+            raise ValueError(
+                "random_mic_eq.num_points must be [min, max] with min >= 2"
+            )
+
+        if len(self.gain_db) != 2 or self.gain_db[1] < self.gain_db[0]:
+            raise ValueError(
+                "random_mic_eq.gain_db must be [min_db, max_db]"
+            )
+
+        if (
+            len(self.section_width_weights) != 2
+            or self.section_width_weights[0] <= 0.0
+            or self.section_width_weights[1]
+            < self.section_width_weights[0]
+        ):
+            raise ValueError(
+                "random_mic_eq.section_width_weights must be "
+                "positive [min, max]"
+            )
+
+        if self.fft_pad_samples < 0:
+            raise ValueError(
+                "random_mic_eq.fft_pad_samples must be >= 0"
+            )
+
+        return self
+
+
+class DeviceIRConfig(StrictBaseModel):
+    """Measured microphone/device/enclosure impulse-response augmentation."""
+
+    p: float = 0.0
+
+    # Directories or individual .wav/.npy files.
+    banks: List[str] = Field(default_factory=list)
+
+    # Keep the useful early portion of each measured IR.
+    max_ir_ms: float = 50.0
+
+    # Keep a tiny amount before the detected IR peak.
+    pre_peak_ms: float = 1.0
+
+    # 1.0 = entirely transformed signal.
+    wet: List[float] = Field(default_factory=lambda: [1.0, 1.0])
+
+    normalize: Literal["l2", "peak", "none"] = "l2"
+
+    @model_validator(mode="after")
+    def validate_values(self) -> "DeviceIRConfig":
+        if not 0.0 <= self.p <= 1.0:
+            raise ValueError("device_ir.p must be in [0, 1]")
+
+        if self.max_ir_ms <= 0:
+            raise ValueError("device_ir.max_ir_ms must be > 0")
+
+        if self.pre_peak_ms < 0:
+            raise ValueError("device_ir.pre_peak_ms must be >= 0")
+
+        if (
+            len(self.wet) != 2
+            or not 0.0 <= self.wet[0] <= 1.0
+            or not 0.0 <= self.wet[1] <= 1.0
+            or self.wet[1] < self.wet[0]
+        ):
+            raise ValueError(
+                "device_ir.wet must be [min, max] inside [0, 1]"
+            )
+
+        if self.p > 0.0 and not self.banks:
+            raise ValueError(
+                "device_ir.banks cannot be empty when device_ir.p > 0"
+            )
+
+        return self
+
+
+class ElectronicsConfig(StrictBaseModel):
+    """Random recording-chain / ADC distortion."""
+
+    p: float = 0.0
+
+    soft_clip_p: float = 0.5
+    hard_clip_p: float = 0.25
+    quantize_p: float = 0.25
+
+    # Soft saturation drive.
+    drive_db: List[float] = Field(default_factory=lambda: [0.0, 6.0])
+
+    # Hard clipping threshold relative to [-1, +1].
+    clip_level: List[float] = Field(default_factory=lambda: [0.6, 0.98])
+
+    # Simulated ADC resolution.
+    bits: List[int] = Field(default_factory=lambda: [10, 16])
+
+    @model_validator(mode="after")
+    def validate_values(self) -> "ElectronicsConfig":
+        probabilities = [
+            self.p,
+            self.soft_clip_p,
+            self.hard_clip_p,
+            self.quantize_p,
+        ]
+
+        if any(not 0.0 <= x <= 1.0 for x in probabilities):
+            raise ValueError(
+                "electronics probabilities must be in [0, 1]"
+            )
+
+        if len(self.drive_db) != 2 or self.drive_db[1] < self.drive_db[0]:
+            raise ValueError(
+                "electronics.drive_db must be [min, max]"
+            )
+
+        if (
+            len(self.clip_level) != 2
+            or self.clip_level[0] <= 0.0
+            or self.clip_level[1] > 1.0
+            or self.clip_level[1] < self.clip_level[0]
+        ):
+            raise ValueError(
+                "electronics.clip_level must be inside (0, 1]"
+            )
+
+        if (
+            len(self.bits) != 2
+            or self.bits[0] < 2
+            or self.bits[1] < self.bits[0]
+        ):
+            raise ValueError(
+                "electronics.bits must be [min_bits, max_bits]"
+            )
+
+        return self
+
+
 class AugmentConfig(StrictBaseModel):
     mixup: MixupConfig = Field(default_factory=MixupConfig)
     rms_norm: RMSNormConfig = Field(default_factory=RMSNormConfig)
@@ -305,6 +474,15 @@ class AugmentConfig(StrictBaseModel):
     time_shift: TimeShiftConfig = Field(default_factory=TimeShiftConfig)
     pitch_shift: PitchShiftConfig = Field(default_factory=PitchShiftConfig)
     random_gain: RandomGainConfig = Field(default_factory=RandomGainConfig)
+    random_mic_eq: RandomMicEQConfig = Field(
+        default_factory=RandomMicEQConfig
+    )
+    device_ir: DeviceIRConfig = Field(
+        default_factory=DeviceIRConfig
+    )
+    electronics: ElectronicsConfig = Field(
+        default_factory=ElectronicsConfig
+    )
     noise_overlay: NoiseOverlayConfig = Field(default_factory=NoiseOverlayConfig)
     gaussian_noise: GaussianNoiseConfig = Field(default_factory=GaussianNoiseConfig)
     noise_banks: List[str] = Field(

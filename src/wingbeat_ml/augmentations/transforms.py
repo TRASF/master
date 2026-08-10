@@ -1,5 +1,6 @@
 """Canonical TensorFlow audio augmentation implementation."""
 
+import math
 from pathlib import Path
 from typing import Mapping
 
@@ -13,12 +14,19 @@ class AudioAugmentor:
     def __init__(
         self,
         segment_length: int = 2400,
+        sample_rate: int | None = 8000,
         config: AugmentConfig | Mapping[str, object] | None = None,
         seed: int | None = None,
         deterministic: bool = False,
         nomos_index: int | None = None,
     ):
-        self.segment_length = segment_length
+        if sample_rate is None or isinstance(sample_rate, (AugmentConfig, Mapping)):
+            if isinstance(sample_rate, (AugmentConfig, Mapping)):
+                config = sample_rate
+            sample_rate = 8000
+
+        self.segment_length = int(segment_length)
+        self.sample_rate = int(sample_rate)
         self.aug_cfg = (
             config
             if isinstance(config, AugmentConfig)
@@ -42,6 +50,11 @@ class AudioAugmentor:
         self.preprocess_cfg = self.aug_cfg.preprocess
         self.overlap_cfg = self.aug_cfg.segment_overlap
 
+        # NEW.
+        self.mic_eq_cfg = self.aug_cfg.random_mic_eq
+        self.device_ir_cfg = self.aug_cfg.device_ir
+        self.electronics_cfg = self.aug_cfg.electronics
+
         import scipy.signal
 
         self.hpf_p = self.hpf_cfg.p
@@ -53,18 +66,32 @@ class AudioAugmentor:
         self.gauss_p = self.gauss_cfg.p
         self.noise_p = self.noise_cfg.p
 
+        # NEW probabilities.
+        self.mic_eq_p = self.mic_eq_cfg.p
+        self.device_ir_p = self.device_ir_cfg.p
+        self.electronics_p = self.electronics_cfg.p
+
         fc = self.hpf_cfg.fc
         if fc > 0:
-            sr = 8000
             taps = scipy.signal.firwin(
                 101,
                 fc,
-                fs=sr,
+                fs=self.sample_rate,
                 pass_zero=False,
             )
             self.hpf_taps = tf.constant(taps, dtype=tf.float32)
         else:
             self.hpf_taps = None
+
+        self.device_ir_bank = None
+        self.device_ir_length = 0
+        self.device_ir_fft_length = 0
+
+        if self.device_ir_p > 0.0:
+            self.device_ir_bank = self._load_device_ir_bank()
+            self.device_ir_length = int(self.device_ir_bank.shape[1])
+            required = self.segment_length + self.device_ir_length - 1
+            self.device_ir_fft_length = 1 << (required - 1).bit_length()
 
     def pre_emphasis(self, x, coeff=0.97):
         """
@@ -426,6 +453,632 @@ class AudioAugmentor:
         filtered = tf.nn.conv1d(audio_padded, taps, stride=1, padding='SAME')
         return tf.reshape(filtered, [self.segment_length])
 
+    def random_mic_eq(
+        self,
+        audio: tf.Tensor,
+        seed: tf.Tensor,
+    ) -> tf.Tensor:
+        """Apply a smooth random frequency-dependent gain curve."""
+        audio = tf.cast(audio, tf.float32)
+        seed = tf.cast(seed, tf.int64)
+
+        cfg = self.mic_eq_cfg
+
+        min_points = int(cfg.num_points[0])
+        max_points = int(cfg.num_points[1])
+
+        min_gain_db = float(cfg.gain_db[0])
+        max_gain_db = float(cfg.gain_db[1])
+
+        min_width = float(cfg.section_width_weights[0])
+        max_width = float(cfg.section_width_weights[1])
+
+        n_seed = tf.stack([
+            tf.gather(seed, 0),
+            tf.gather(seed, 1) ^ tf.constant(1101, tf.int64),
+        ])
+
+        n_points = tf.random.stateless_uniform(
+            [],
+            seed=n_seed,
+            minval=min_points,
+            maxval=max_points + 1,
+            dtype=tf.int32,
+        )
+
+        n_sections = n_points - 1
+
+        width_seed = tf.stack([
+            tf.gather(seed, 0),
+            tf.gather(seed, 1) ^ tf.constant(1102, tf.int64),
+        ])
+
+        all_widths = tf.random.stateless_uniform(
+            [max_points - 1],
+            seed=width_seed,
+            minval=min_width,
+            maxval=max_width,
+            dtype=tf.float32,
+        )
+
+        widths = all_widths[:n_sections]
+
+        cumulative = tf.cumsum(widths)
+
+        nyquist = tf.constant(
+            self.sample_rate / 2.0,
+            dtype=tf.float32,
+        )
+
+        internal_freqs = (
+            cumulative[:-1]
+            / cumulative[-1]
+            * nyquist
+        )
+
+        anchor_freqs = tf.concat(
+            [
+                tf.constant([0.0], tf.float32),
+                internal_freqs,
+                tf.reshape(nyquist, [1]),
+            ],
+            axis=0,
+        )
+
+        gain_seed = tf.stack([
+            tf.gather(seed, 0),
+            tf.gather(seed, 1) ^ tf.constant(1103, tf.int64),
+        ])
+
+        all_gains_db = tf.random.stateless_uniform(
+            [max_points],
+            seed=gain_seed,
+            minval=min_gain_db,
+            maxval=max_gain_db,
+            dtype=tf.float32,
+        )
+
+        anchor_gains_db = all_gains_db[:n_points]
+
+        if cfg.zero_mean_db:
+            anchor_gains_db -= tf.reduce_mean(
+                anchor_gains_db
+            )
+
+        pad = min(
+            int(cfg.fft_pad_samples),
+            max(self.segment_length - 1, 0),
+        )
+
+        if pad > 0:
+            padded = tf.pad(
+                audio,
+                [[pad, pad]],
+                mode="REFLECT",
+            )
+        else:
+            padded = audio
+
+        fft_length = tf.reshape(
+            tf.shape(padded)[0],
+            [1],
+        )
+
+        spectrum = tf.signal.rfft(
+            padded,
+            fft_length=fft_length,
+        )
+
+        n_bins = tf.shape(spectrum)[0]
+
+        frequencies = tf.linspace(
+            tf.constant(0.0, tf.float32),
+            nyquist,
+            n_bins,
+        )
+
+        indices = tf.searchsorted(
+            anchor_freqs,
+            frequencies,
+            side="right",
+        ) - 1
+
+        indices = tf.clip_by_value(
+            indices,
+            0,
+            n_points - 2,
+        )
+
+        f0 = tf.gather(anchor_freqs, indices)
+        f1 = tf.gather(anchor_freqs, indices + 1)
+
+        g0 = tf.gather(anchor_gains_db, indices)
+        g1 = tf.gather(anchor_gains_db, indices + 1)
+
+        alpha = (
+            (frequencies - f0)
+            / tf.maximum(f1 - f0, 1e-6)
+        )
+
+        response_db = g0 + alpha * (g1 - g0)
+
+        response_linear = tf.pow(
+            tf.constant(10.0, tf.float32),
+            response_db / 20.0,
+        )
+
+        filtered_spectrum = (
+            spectrum
+            * tf.cast(response_linear, spectrum.dtype)
+        )
+
+        filtered = tf.signal.irfft(
+            filtered_spectrum,
+            fft_length=fft_length,
+        )
+
+        if pad > 0:
+            filtered = filtered[
+                pad : pad + self.segment_length
+            ]
+        else:
+            filtered = filtered[: self.segment_length]
+
+        filtered.set_shape([self.segment_length])
+
+        return filtered
+
+    @staticmethod
+    def _pcm_to_float32(data: np.ndarray) -> np.ndarray:
+        if np.issubdtype(data.dtype, np.floating):
+            return data.astype(np.float32)
+
+        if data.dtype == np.uint8:
+            return (
+                (data.astype(np.float32) - 128.0)
+                / 128.0
+            )
+
+        if np.issubdtype(data.dtype, np.integer):
+            info = np.iinfo(data.dtype)
+            scale = float(
+                max(abs(info.min), abs(info.max))
+            )
+
+            return (
+                data.astype(np.float32)
+                / scale
+            )
+
+        raise TypeError(
+            f"Unsupported IR dtype: {data.dtype}"
+        )
+
+    def _load_single_ir(
+        self,
+        path: Path,
+    ) -> np.ndarray:
+        import scipy.signal
+        from scipy.io import wavfile
+
+        suffix = path.suffix.lower()
+
+        if suffix == ".wav":
+            source_sr, ir = wavfile.read(path)
+
+            ir = self._pcm_to_float32(
+                np.asarray(ir)
+            )
+
+            if ir.ndim == 2:
+                ir = np.mean(
+                    ir,
+                    axis=1,
+                    dtype=np.float32,
+                )
+
+            if source_sr != self.sample_rate:
+                gcd = math.gcd(
+                    int(source_sr),
+                    self.sample_rate,
+                )
+
+                up = self.sample_rate // gcd
+                down = int(source_sr) // gcd
+
+                ir = scipy.signal.resample_poly(
+                    ir,
+                    up=up,
+                    down=down,
+                ).astype(np.float32)
+
+        elif suffix == ".npy":
+            ir = np.load(
+                path,
+                allow_pickle=False,
+            ).astype(np.float32)
+
+            ir = np.squeeze(ir)
+
+            if ir.ndim != 1:
+                raise ValueError(
+                    f"IR array must be mono/1-D: {path}"
+                )
+
+        else:
+            raise ValueError(
+                f"Unsupported IR file: {path}"
+            )
+
+        if ir.size == 0:
+            raise ValueError(
+                f"Empty impulse response: {path}"
+            )
+
+        if not np.all(np.isfinite(ir)):
+            raise ValueError(
+                f"Non-finite values in impulse response: {path}"
+            )
+
+        peak_index = int(
+            np.argmax(np.abs(ir))
+        )
+
+        pre_peak_samples = int(
+            round(
+                self.device_ir_cfg.pre_peak_ms
+                * self.sample_rate
+                / 1000.0
+            )
+        )
+
+        start = max(
+            0,
+            peak_index - pre_peak_samples,
+        )
+
+        max_samples = max(
+            1,
+            int(
+                round(
+                    self.device_ir_cfg.max_ir_ms
+                    * self.sample_rate
+                    / 1000.0
+                )
+            ),
+        )
+
+        ir = ir[
+            start : start + max_samples
+        ]
+
+        if ir.size < max_samples:
+            ir = np.pad(
+                ir,
+                (0, max_samples - ir.size),
+            )
+
+        mode = self.device_ir_cfg.normalize
+
+        if mode == "l2":
+            denominator = np.sqrt(
+                np.sum(ir * ir)
+            )
+
+        elif mode == "peak":
+            denominator = np.max(
+                np.abs(ir)
+            )
+
+        else:
+            denominator = 1.0
+
+        if denominator > 1e-8:
+            ir = ir / denominator
+
+        return ir.astype(np.float32)
+
+    def _load_device_ir_bank(
+        self,
+    ) -> tf.Tensor:
+        paths: list[Path] = []
+
+        for item in self.device_ir_cfg.banks:
+            path = Path(item)
+
+            if path.is_dir():
+                paths.extend(
+                    path.rglob("*.wav")
+                )
+                paths.extend(
+                    path.rglob("*.npy")
+                )
+
+            elif path.is_file():
+                if path.suffix.lower() in {
+                    ".wav",
+                    ".npy",
+                }:
+                    paths.append(path)
+
+        paths = sorted(
+            set(paths)
+        )
+
+        if not paths:
+            raise ValueError(
+                "device_ir is enabled but no "
+                ".wav/.npy impulse responses were found"
+            )
+
+        impulse_responses = [
+            self._load_single_ir(path)
+            for path in paths
+        ]
+
+        bank = np.stack(
+            impulse_responses,
+            axis=0,
+        )
+
+        return tf.constant(
+            bank,
+            dtype=tf.float32,
+        )
+
+    def apply_device_ir(
+        self,
+        audio: tf.Tensor,
+        seed: tf.Tensor,
+    ) -> tf.Tensor:
+        if self.device_ir_bank is None:
+            return audio
+
+        audio = tf.cast(
+            audio,
+            tf.float32,
+        )
+
+        seed = tf.cast(
+            seed,
+            tf.int64,
+        )
+
+        select_seed = tf.stack([
+            tf.gather(seed, 0),
+            tf.gather(seed, 1)
+            ^ tf.constant(1201, tf.int64),
+        ])
+
+        wet_seed = tf.stack([
+            tf.gather(seed, 0),
+            tf.gather(seed, 1)
+            ^ tf.constant(1202, tf.int64),
+        ])
+
+        n_ir = tf.shape(
+            self.device_ir_bank
+        )[0]
+
+        index = tf.random.stateless_uniform(
+            [],
+            seed=select_seed,
+            minval=0,
+            maxval=n_ir,
+            dtype=tf.int32,
+        )
+
+        ir = tf.gather(
+            self.device_ir_bank,
+            index,
+        )
+
+        wet = tf.random.stateless_uniform(
+            [],
+            seed=wet_seed,
+            minval=float(
+                self.device_ir_cfg.wet[0]
+            ),
+            maxval=float(
+                self.device_ir_cfg.wet[1]
+            ),
+            dtype=tf.float32,
+        )
+
+        fft_length = [
+            self.device_ir_fft_length
+        ]
+
+        audio_spectrum = tf.signal.rfft(
+            audio,
+            fft_length=fft_length,
+        )
+
+        ir_spectrum = tf.signal.rfft(
+            ir,
+            fft_length=fft_length,
+        )
+
+        convolved = tf.signal.irfft(
+            audio_spectrum * ir_spectrum,
+            fft_length=fft_length,
+        )
+
+        convolved = convolved[
+            : self.segment_length
+        ]
+
+        output = (
+            (1.0 - wet) * audio
+            + wet * convolved
+        )
+
+        output.set_shape([
+            self.segment_length
+        ])
+
+        return output
+
+    def apply_electronics(
+        self,
+        audio: tf.Tensor,
+        seed: tf.Tensor,
+    ) -> tf.Tensor:
+        audio = tf.cast(
+            audio,
+            tf.float32,
+        )
+
+        cfg = self.electronics_cfg
+
+        seed = tf.cast(
+            seed,
+            tf.int64,
+        )
+
+        soft_toss_seed = tf.stack([
+            tf.gather(seed, 0),
+            tf.gather(seed, 1)
+            ^ tf.constant(1301, tf.int64),
+        ])
+
+        soft_value_seed = tf.stack([
+            tf.gather(seed, 0),
+            tf.gather(seed, 1)
+            ^ tf.constant(1302, tf.int64),
+        ])
+
+        def soft_clip() -> tf.Tensor:
+            drive_db = tf.random.stateless_uniform(
+                [],
+                seed=soft_value_seed,
+                minval=float(cfg.drive_db[0]),
+                maxval=float(cfg.drive_db[1]),
+            )
+
+            drive = tf.pow(
+                10.0,
+                drive_db / 20.0,
+            )
+
+            normalizer = tf.maximum(
+                tf.tanh(drive),
+                1e-6,
+            )
+
+            return (
+                tf.tanh(audio * drive)
+                / normalizer
+            )
+
+        audio = tf.cond(
+            tf.random.stateless_uniform(
+                [],
+                seed=soft_toss_seed,
+            ) < cfg.soft_clip_p,
+            soft_clip,
+            lambda: audio,
+        )
+
+        hard_toss_seed = tf.stack([
+            tf.gather(seed, 0),
+            tf.gather(seed, 1)
+            ^ tf.constant(1311, tf.int64),
+        ])
+
+        hard_value_seed = tf.stack([
+            tf.gather(seed, 0),
+            tf.gather(seed, 1)
+            ^ tf.constant(1312, tf.int64),
+        ])
+
+        def hard_clip() -> tf.Tensor:
+            threshold = (
+                tf.random.stateless_uniform(
+                    [],
+                    seed=hard_value_seed,
+                    minval=float(
+                        cfg.clip_level[0]
+                    ),
+                    maxval=float(
+                        cfg.clip_level[1]
+                    ),
+                )
+            )
+
+            return tf.clip_by_value(
+                audio,
+                -threshold,
+                threshold,
+            )
+
+        audio = tf.cond(
+            tf.random.stateless_uniform(
+                [],
+                seed=hard_toss_seed,
+            ) < cfg.hard_clip_p,
+            hard_clip,
+            lambda: audio,
+        )
+
+        quant_toss_seed = tf.stack([
+            tf.gather(seed, 0),
+            tf.gather(seed, 1)
+            ^ tf.constant(1321, tf.int64),
+        ])
+
+        quant_value_seed = tf.stack([
+            tf.gather(seed, 0),
+            tf.gather(seed, 1)
+            ^ tf.constant(1322, tf.int64),
+        ])
+
+        def quantize() -> tf.Tensor:
+            bits = tf.random.stateless_uniform(
+                [],
+                seed=quant_value_seed,
+                minval=int(cfg.bits[0]),
+                maxval=int(cfg.bits[1]) + 1,
+                dtype=tf.int32,
+            )
+
+            levels = (
+                tf.pow(
+                    2.0,
+                    tf.cast(
+                        bits - 1,
+                        tf.float32,
+                    ),
+                )
+                - 1.0
+            )
+
+            clipped = tf.clip_by_value(
+                audio,
+                -1.0,
+                1.0,
+            )
+
+            return (
+                tf.round(clipped * levels)
+                / levels
+            )
+
+        audio = tf.cond(
+            tf.random.stateless_uniform(
+                [],
+                seed=quant_toss_seed,
+            ) < cfg.quantize_p,
+            quantize,
+            lambda: audio,
+        )
+
+        audio.set_shape([
+            self.segment_length
+        ])
+
+        return audio
+
     def apply_post_processing(self, audio, label, seed=None, noise=None, augment=True):
         if seed is None:
             seed = tf.constant([0, 0], dtype=tf.int64)
@@ -484,6 +1137,20 @@ class AudioAugmentor:
                 if tf.random.stateless_uniform([], seed=mask_toss_seed) < self.mask_p:
                     audio = self.apply_time_masking(audio, seed=mask_val_seed)
 
+            # Random Mic EQ
+            if self.mic_eq_p > 0.0:
+                mic_eq_toss_seed = tf.stack([seed_0, seed_1 ^ tf.constant(90, dtype=tf.int64)])
+                mic_eq_val_seed = tf.stack([seed_0, seed_1 ^ tf.constant(91, dtype=tf.int64)])
+                if tf.random.stateless_uniform([], seed=mic_eq_toss_seed) < self.mic_eq_p:
+                    audio = self.random_mic_eq(audio, mic_eq_val_seed)
+
+            # Device IR
+            if self.device_ir_p > 0.0 and self.device_ir_bank is not None:
+                ir_toss_seed = tf.stack([seed_0, seed_1 ^ tf.constant(100, dtype=tf.int64)])
+                ir_val_seed = tf.stack([seed_0, seed_1 ^ tf.constant(101, dtype=tf.int64)])
+                if tf.random.stateless_uniform([], seed=ir_toss_seed) < self.device_ir_p:
+                    audio = self.apply_device_ir(audio, ir_val_seed)
+
             # Gaussian Noise
             if self.gauss_p > 0.0:
                 gauss_toss_seed = tf.stack([seed_0, seed_1 ^ tf.constant(70, dtype=tf.int64)])
@@ -497,6 +1164,13 @@ class AudioAugmentor:
                 noise_val_seed = tf.stack([seed_0, seed_1 ^ tf.constant(81, dtype=tf.int64)])
                 if tf.random.stateless_uniform([], seed=noise_toss_seed) < self.noise_p:
                     audio = self.add_noise(audio, noise, self.noise_cfg.snr_db, seed=noise_val_seed)
+
+            # Electronics
+            if self.electronics_p > 0.0:
+                electronics_toss_seed = tf.stack([seed_0, seed_1 ^ tf.constant(110, dtype=tf.int64)])
+                electronics_val_seed = tf.stack([seed_0, seed_1 ^ tf.constant(111, dtype=tf.int64)])
+                if tf.random.stateless_uniform([], seed=electronics_toss_seed) < self.electronics_p:
+                    audio = self.apply_electronics(audio, electronics_val_seed)
 
         # ----------------------------------------------------
         # Phase 4: Final Standardization (The Capstone)

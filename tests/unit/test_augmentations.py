@@ -247,6 +247,130 @@ class TestAddGaussianNoise(unittest.TestCase):
         np.testing.assert_array_equal(out1.numpy(), out2.numpy())
 
 
+class TestRandomMicEQ(unittest.TestCase):
+    def test_shape_preserved(self):
+        import tensorflow as tf
+        from wingbeat_ml.augmentations.transforms import AudioAugmentor
+
+        cfg = {
+            "random_mic_eq": {
+                "p": 1.0,
+                "num_points": [3, 7],
+                "gain_db": [-4.0, 4.0],
+            }
+        }
+        aug = AudioAugmentor(
+            segment_length=2400,
+            sample_rate=8000,
+            config=cfg,
+            seed=42,
+        )
+        audio = _make_audio(2400)
+        output = aug.random_mic_eq(audio, _make_seed(10, 20))
+        self.assertEqual(output.shape, audio.shape)
+
+    def test_deterministic(self):
+        from wingbeat_ml.augmentations.transforms import AudioAugmentor
+
+        cfg = {
+            "random_mic_eq": {
+                "p": 1.0,
+                "num_points": [3, 7],
+                "gain_db": [-4.0, 4.0],
+            }
+        }
+        aug = AudioAugmentor(config=cfg, seed=42)
+        audio = _make_audio(2400)
+        seed = _make_seed(99, 11)
+        a = aug.random_mic_eq(audio, seed)
+        b = aug.random_mic_eq(audio, seed)
+        np.testing.assert_allclose(a.numpy(), b.numpy(), rtol=0.0, atol=0.0)
+
+    def test_zero_db_is_identity(self):
+        from wingbeat_ml.augmentations.transforms import AudioAugmentor
+
+        cfg = {
+            "random_mic_eq": {
+                "p": 1.0,
+                "num_points": [3, 7],
+                "gain_db": [0.0, 0.0],
+            }
+        }
+        aug = AudioAugmentor(config=cfg)
+        audio = _make_audio(2400)
+        output = aug.random_mic_eq(audio, _make_seed(1, 2))
+        np.testing.assert_allclose(audio.numpy(), output.numpy(), atol=1e-5, rtol=1e-5)
+
+
+class TestDeviceIR(unittest.TestCase):
+    def test_identity_ir(self):
+        import tempfile
+        from pathlib import Path
+        from wingbeat_ml.augmentations.transforms import AudioAugmentor
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "identity.npy"
+            ir = np.zeros(400, dtype=np.float32)
+            ir[0] = 1.0
+            np.save(path, ir)
+
+            cfg = {
+                "device_ir": {
+                    "p": 1.0,
+                    "banks": [str(path)],
+                    "max_ir_ms": 50.0,
+                    "pre_peak_ms": 0.0,
+                    "wet": [1.0, 1.0],
+                    "normalize": "l2",
+                }
+            }
+
+            aug = AudioAugmentor(
+                segment_length=2400,
+                sample_rate=8000,
+                config=cfg,
+            )
+            audio = _make_audio(2400)
+            output = aug.apply_device_ir(audio, _make_seed(1, 2))
+            np.testing.assert_allclose(audio.numpy(), output.numpy(), atol=1e-5, rtol=1e-5)
+
+
+class TestElectronics(unittest.TestCase):
+    def test_shape_preserved(self):
+        from wingbeat_ml.augmentations.transforms import AudioAugmentor
+
+        cfg = {
+            "electronics": {
+                "p": 1.0,
+                "soft_clip_p": 1.0,
+                "hard_clip_p": 1.0,
+                "quantize_p": 1.0,
+            }
+        }
+        aug = AudioAugmentor(config=cfg)
+        audio = _make_audio(2400)
+        output = aug.apply_electronics(audio, _make_seed(4, 5))
+        self.assertEqual(output.shape, audio.shape)
+
+    def test_deterministic(self):
+        from wingbeat_ml.augmentations.transforms import AudioAugmentor
+
+        cfg = {
+            "electronics": {
+                "p": 1.0,
+                "soft_clip_p": 1.0,
+                "hard_clip_p": 1.0,
+                "quantize_p": 1.0,
+            }
+        }
+        aug = AudioAugmentor(config=cfg)
+        audio = _make_audio(2400)
+        seed = _make_seed(9, 7)
+        a = aug.apply_electronics(audio, seed)
+        b = aug.apply_electronics(audio, seed)
+        np.testing.assert_array_equal(a.numpy(), b.numpy())
+
+
 class TestApplyPostProcessingNoop(unittest.TestCase):
     """Test apply_post_processing with all transforms disabled (p=0)."""
 
@@ -317,7 +441,8 @@ class TestPipeline(unittest.TestCase):
         from wingbeat_ml.augmentations.pipeline import TRANSFORMS
         expected = [
             "high_pass", "pre_emphasis", "pitch_shift", "time_shift",
-            "time_masking", "random_gain", "gaussian_noise", "noise_overlay",
+            "time_masking", "random_mic_eq", "device_ir", "electronics",
+            "random_gain", "gaussian_noise", "noise_overlay",
         ]
         for key in expected:
             self.assertIn(key, TRANSFORMS)

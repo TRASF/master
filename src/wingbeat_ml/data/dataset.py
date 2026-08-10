@@ -98,8 +98,9 @@ class SupervisedDataset:
                     break
 
         self.augmentor = AudioAugmentor(
-            segment_length,
-            augment_cfg,
+            segment_length=segment_length,
+            sample_rate=self.sample_rate,
+            config=augment_cfg,
             seed=seed,
             deterministic=deterministic,
             nomos_index=self.nomos_index,

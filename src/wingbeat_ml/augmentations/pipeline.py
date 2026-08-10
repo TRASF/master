@@ -42,6 +42,12 @@ TRANSFORMS: dict[str, str] = {
     "pitch_shift": "pitch_shift",
     "time_shift": "time_shift",
     "time_masking": "apply_time_masking",
+
+    # NEW
+    "random_mic_eq": "random_mic_eq",
+    "device_ir": "apply_device_ir",
+    "electronics": "apply_electronics",
+
     "random_gain": "random_gain",
     "gaussian_noise": "add_gaussian_noise",
     "noise_overlay": "add_noise",
@@ -52,6 +58,7 @@ TRANSFORMS: dict[str, str] = {
 def build_augmentor(
     augment_cfg: AugmentConfig | Mapping[str, object],
     segment_length: int = 2400,
+    sample_rate: int = 8000,
     seed: int = 42,
     deterministic: bool = False,
     nomos_index: int | None = None,
@@ -98,6 +105,7 @@ def build_augmentor(
 
     return AudioAugmentor(
         segment_length=segment_length,
+        sample_rate=sample_rate,
         config=config,
         seed=seed,
         deterministic=deterministic,

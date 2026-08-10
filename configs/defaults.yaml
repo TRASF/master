@@ -114,6 +114,31 @@ augment:
       - -3
       - 3
 
+  random_mic_eq:
+    p: 0.0
+    num_points: [3, 7]
+    gain_db: [-4.0, 4.0]
+    section_width_weights: [0.6, 1.4]
+    fft_pad_samples: 256
+    zero_mean_db: true
+
+  device_ir:
+    p: 0.0
+    banks: []
+    max_ir_ms: 50.0
+    pre_peak_ms: 1.0
+    wet: [1.0, 1.0]
+    normalize: l2
+
+  electronics:
+    p: 0.0
+    soft_clip_p: 0.5
+    hard_clip_p: 0.25
+    quantize_p: 0.25
+    drive_db: [0.0, 6.0]
+    clip_level: [0.6, 0.98]
+    bits: [10, 16]
+
   noise_overlay:
     p: 0.22
     snr_db:
