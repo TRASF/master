@@ -92,6 +92,7 @@ def evaluate_training_run(
     dataset_builder: Any,
     config: Any,
     checkpoint_path: str,
+    training_checkpoint_path: Optional[Union[str, Path]] = None,
     results_dir: str,
     artifact_name: str,
     validation_dataset: Any,
@@ -136,12 +137,24 @@ def evaluate_training_run(
 
         if console != "quiet":
             print("\nRunning file-level evaluation on training set...")
+        if (
+            training_checkpoint_path
+            and training_checkpoint_path != checkpoint_path
+            and Path(training_checkpoint_path).exists()
+        ):
+            model.load_weights(str(training_checkpoint_path))
         train_file_results = evaluator.evaluate_files(
             file_paths=dataset_builder.train_paths,
             labels=dataset_builder.train_labels,
             filename="train_file_level_results.yaml",
             **common_file_args,
         )
+        if (
+            training_checkpoint_path
+            and training_checkpoint_path != checkpoint_path
+            and Path(checkpoint_path).exists()
+        ):
+            model.load_weights(str(checkpoint_path))
 
     report_results(
         model=model,

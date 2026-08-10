@@ -18,6 +18,9 @@ model:
   bn_dense1: false
   bn_dense2: false
 
+adabn:
+  enabled: false
+
 training_mode: pretrain
 train:
   seed: 48

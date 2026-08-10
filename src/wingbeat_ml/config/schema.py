@@ -171,18 +171,9 @@ class LoggingConfig(StrictBaseModel):
 
 
 class AdaBNConfig(StrictBaseModel):
+    """Offline target-domain BatchNorm calibration."""
+
     enabled: bool = False
-    mode: str = "adhoc"
-    target_dir: Optional[str] = None
-
-    @field_validator("mode")
-    @classmethod
-    def validate_mode(cls, v: str) -> str:
-        valid = {"adhoc", "otf"}
-        if v.lower() not in valid:
-            raise ValueError(f"Invalid AdaBN mode '{v}', expected one of {sorted(valid)}")
-        return v.lower()
-
 
 class WandbConfig(StrictBaseModel):
     project: str = "MosSongPlus"
