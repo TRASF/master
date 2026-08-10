@@ -182,9 +182,9 @@ dataset:
   indoor: dataset/MSB/Indoor
   mosLab: dataset/Philip
   outdoor: dataset/MSB/Outdoor
-  val_dir: null
+  val_dir: dataset/MSB/Outdoor
   test_dir: null
-  train_dir: dataset/MSB/Outdoor
+  train_dir: dataset/MSB/Indoor
   manifest_sha256: null
   split_list:
     - 0.8
