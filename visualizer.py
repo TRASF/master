@@ -24,10 +24,17 @@ from matplotlib import patches
 from matplotlib.animation import FuncAnimation
 from serial.tools import list_ports
 
+HOST_ANALYZER_IMPORT_ERROR = None
+
 try:
     from wingbeat_ml.visualizer.analyzer import HostAnalyzer
-except ImportError:
+except Exception as exc:
+    import traceback
+
     HostAnalyzer = None
+    HOST_ANALYZER_IMPORT_ERROR = exc
+    print("[Visualizer] HostAnalyzer import failed:")
+    traceback.print_exc()
 
 CLASS_NAMES = [
     "Ae_aegypti_Female",
@@ -43,12 +50,14 @@ CLASS_NAMES = [
     "No_Mos",
 ]
 
+# Restrained semantic colors. Species identity remains visible without making
+# the interface look like a neon/cyber dashboard.
 CLASS_COLORS = {
-    "Ae": "#00d6b4",
-    "An": "#ff4d73",
-    "Cx": "#f2c94c",
-    "No": "#808080",
-    "Unknown": "#ffffff",
+    "Ae": "#5B8FF9",
+    "An": "#D97588",
+    "Cx": "#CDA349",
+    "No": "#7E8794",
+    "Unknown": "#AEB6C2",
 }
 
 
@@ -87,7 +96,7 @@ def cobs_decode(encoded: bytes) -> bytes:
     return bytes(decoded)
 
 
-HEADER_FORMAT = "<IIBfIII"
+HEADER_FORMAT = "<IIBf11fIII"
 HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
 
 
@@ -97,6 +106,7 @@ class TelemetryPacket:
     audio_timestamp_us: int
     class_id: int
     confidence: float
+    class_probability: tuple[float, ...]
     inference_time_us: int
     class_age_ms: int
     classifier_seq: int
@@ -161,15 +171,15 @@ class TelemetryReader(threading.Thread):
             self.stats.length_errors += 1
             return
 
-        (
-            seq,
-            audio_timestamp_us,
-            class_id,
-            confidence,
-            inference_time_us,
-            class_age_ms,
-            classifier_seq,
-        ) = struct.unpack_from(HEADER_FORMAT, payload, 0)
+        unpacked = struct.unpack_from(HEADER_FORMAT, payload, 0)
+        seq = unpacked[0]
+        audio_timestamp_us = unpacked[1]
+        class_id = unpacked[2]
+        confidence = unpacked[3]
+        class_probability = unpacked[4:15]
+        inference_time_us = unpacked[15]
+        class_age_ms = unpacked[16]
+        classifier_seq = unpacked[17]
 
         if not np.isfinite(confidence):
             self.stats.value_errors += 1
@@ -187,6 +197,7 @@ class TelemetryReader(threading.Thread):
             audio_timestamp_us=audio_timestamp_us,
             class_id=class_id,
             confidence=float(np.clip(confidence, 0.0, 1.0)),
+            class_probability=class_probability,
             inference_time_us=inference_time_us,
             class_age_ms=class_age_ms,
             classifier_seq=classifier_seq,
@@ -485,16 +496,10 @@ def _valid_telemetry_payload(payload: bytes, sample_count: int) -> bool:
         return False
 
     try:
-        (
-            _seq,
-            _audio_timestamp_us,
-            class_id,
-            confidence,
-            _inference_time_us,
-            _class_age_ms,
-            _classifier_seq,
-        ) = struct.unpack_from(HEADER_FORMAT, payload, 0)
-    except struct.error:
+        unpacked = struct.unpack_from(HEADER_FORMAT, payload, 0)
+        class_id = unpacked[2]
+        confidence = unpacked[3]
+    except (struct.error, IndexError):
         return False
 
     if not np.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
@@ -665,7 +670,9 @@ def discover_serial_connection(
 
     failures = []
     for candidate in ranked:
-        print(f"Probing {candidate.device}: {candidate.description or 'unknown device'}")
+        print(
+            f"Probing {candidate.device}: {candidate.description or 'unknown device'}"
+        )
         connection, reason = probe_telemetry_port(
             port=candidate.device,
             baud=baud,
@@ -697,8 +704,7 @@ def discover_serial_connection(
             return best.device, open_serial(best.device, baud)
 
     diagnostics = "\n".join(
-        f"  {format_port(port)}\n      probe: {reason}"
-        for port, reason in failures
+        f"  {format_port(port)}\n      probe: {reason}" for port, reason in failures
     )
     raise RuntimeError(
         "Serial ports were found, but none emitted a valid telemetry packet and "
@@ -831,11 +837,14 @@ class Visualizer:
         self.enable_dense = enable_dense or (local_model is not None)
 
         self.host_analyzer = None
-        if HostAnalyzer is not None and (local_model or enable_gradcam or export_anomalies):
+        if HostAnalyzer is not None and (
+            local_model or enable_gradcam or export_anomalies
+        ):
             self.host_analyzer = HostAnalyzer(
                 model_path=local_model,
                 sample_rate=sample_rate,
                 enable_gradcam=enable_gradcam,
+                enable_dense=self.enable_dense,
                 export_anomalies=export_anomalies,
                 anomaly_output_dir=anomaly_dir,
             )
@@ -870,39 +879,129 @@ class Visualizer:
         self.bytes_per_second = 0.0
         self.packets_per_second = 0.0
 
+        # Visual annotation throttling prevents overlapping labels from turning
+        # the spectrogram into a wall of boxes during sustained detections.
+        self.last_annotation_class: Optional[str] = None
+        self.last_annotation_at = 0.0
+
         self._build_figure()
 
-    def _build_figure(self) -> None:
-        plt.style.use("dark_background")
-        self.fig = plt.figure(figsize=(16, 8.5))
+    def _style_plot_axis(self, axis, title: str) -> None:
+        """Apply one quiet, consistent instrument-panel visual style."""
+        axis.set_facecolor(self.ui["panel"])
+        axis.set_title(
+            title,
+            loc="left",
+            color=self.ui["text"],
+            fontsize=11,
+            fontweight="medium",
+            pad=10,
+        )
+        axis.tick_params(colors=self.ui["muted"], labelsize=8)
+        axis.xaxis.label.set_color(self.ui["muted"])
+        axis.yaxis.label.set_color(self.ui["muted"])
+        axis.grid(True, color=self.ui["grid"], linewidth=0.65, alpha=0.70)
+        for spine in axis.spines.values():
+            spine.set_color(self.ui["border"])
+            spine.set_linewidth(0.8)
 
-        if self.enable_dense and self.enable_gradcam:
-            grid = self.fig.add_gridspec(3, 2, height_ratios=[1.0, 1.6, 1.2], width_ratios=[2.2, 1.0])
-            self.ax_wave = self.fig.add_subplot(grid[0, 0])
+    def _build_figure(self) -> None:
+        self.ui = {
+            "canvas": "#F8F9FA",
+            "panel": "#FFFFFF",
+            "panel_alt": "#F1F3F5",
+            "border": "#DEE2E6",
+            "grid": "#E9ECEF",
+            "text": "#212529",
+            "muted": "#6C757D",
+            "accent": "#0D6EFD",
+            "success": "#198754",
+            "warning": "#F5A623",
+            "danger": "#DC3545",
+        }
+
+        plt.rcParams.update(
+            {
+                "font.family": "DejaVu Sans",
+                "font.size": 10,
+                "axes.labelsize": 9,
+                "xtick.labelsize": 8,
+                "ytick.labelsize": 8,
+            }
+        )
+
+        self.fig = plt.figure(figsize=(16, 9), facecolor=self.ui["canvas"])
+        grid = self.fig.add_gridspec(
+            3,
+            2,
+            height_ratios=[0.55, 1.75, 1.0],
+            width_ratios=[3.0, 1.35],
+            left=0.05,
+            right=0.965,
+            bottom=0.08,
+            top=0.96,
+            hspace=0.28,
+            wspace=0.22,
+        )
+
+        self.ax_wave = self.fig.add_subplot(grid[0, 0])
+        if self.enable_gradcam:
             self.ax_spec = self.fig.add_subplot(grid[1, 0])
             self.ax_gradcam = self.fig.add_subplot(grid[2, 0])
-            self.ax_emb = self.fig.add_subplot(grid[0:2, 1])
-        elif self.enable_dense:
-            grid = self.fig.add_gridspec(2, 2, height_ratios=[1.0, 2.1], width_ratios=[2.2, 1.0])
-            self.ax_wave = self.fig.add_subplot(grid[0, 0])
-            self.ax_spec = self.fig.add_subplot(grid[1, 0])
-            self.ax_gradcam = None
-            self.ax_emb = self.fig.add_subplot(grid[0:2, 1])
-        elif self.enable_gradcam:
-            grid = self.fig.add_gridspec(3, 1, height_ratios=[1.0, 1.6, 1.2])
-            self.ax_wave = self.fig.add_subplot(grid[0])
-            self.ax_spec = self.fig.add_subplot(grid[1])
-            self.ax_gradcam = self.fig.add_subplot(grid[2])
-            self.ax_emb = None
         else:
-            grid = self.fig.add_gridspec(2, 1, height_ratios=[1.0, 2.1])
-            self.ax_wave = self.fig.add_subplot(grid[0])
-            self.ax_spec = self.fig.add_subplot(grid[1])
+            self.ax_spec = self.fig.add_subplot(grid[1:3, 0])
             self.ax_gradcam = None
+
+        self.ax_info = self.fig.add_subplot(grid[0, 1])
+
+        if self.enable_dense:
+            self.ax_probs = self.fig.add_subplot(grid[1, 1])
+            self.ax_emb = self.fig.add_subplot(grid[2, 1])
+        else:
+            self.ax_probs = self.fig.add_subplot(grid[1:3, 1])
             self.ax_emb = None
 
-        self.fig.canvas.manager.set_window_title("ESP32 Mosquito Edge-ML Monitor")
-        self.fig.suptitle("Waiting for telemetry...", fontsize=16, fontweight="bold")
+        self.fig.canvas.manager.set_window_title("Telemetry")
+
+        # Header: one stable title and one compact state indicator. The plots no
+        # longer flash or resize when the predicted class changes.
+        self.fig.text(
+            0.055,
+            0.944,
+            "",
+            color=self.ui["text"],
+            fontsize=18,
+            fontweight="medium",
+            ha="left",
+            va="center",
+        )
+        self.fig.text(
+            0.055,
+            0.912,
+            "",
+            color=self.ui["muted"],
+            fontsize=9.5,
+            ha="left",
+            va="center",
+        )
+        self.header_status = self.fig.text(
+            0.955,
+            0.928,
+            "WAITING",
+            color=self.ui["muted"],
+            fontsize=9,
+            fontweight="medium",
+            ha="right",
+            va="center",
+            bbox={
+                "boxstyle": "round,pad=0.38,rounding_size=0.9",
+                "facecolor": self.ui["panel_alt"],
+                "edgecolor": self.ui["border"],
+                "linewidth": 0.8,
+            },
+        )
+        self.header_status.set_visible(False)
+        # Header divider removed for compact layout
 
         # Waveform
         self.wave_time = (
@@ -913,42 +1012,16 @@ class Visualizer:
         (self.wave_line,) = self.ax_wave.plot(
             self.wave_time,
             self.live_wave_buffer,
-            linewidth=0.9,
+            color=self.ui["muted"],
+            linewidth=1.05,
+            solid_capstyle="round",
         )
         self.ax_wave.set_xlim(self.wave_time[0], 0.0)
-        self.ax_wave.set_ylim(
-            -self.current_wave_y_limit,
-            self.current_wave_y_limit,
-        )
-        axis_mode = []
-
-        mode_suffix = f" ({', '.join(axis_mode)})" if axis_mode else ""
-        self.ax_wave.set_title(f"Live rolling waveform{mode_suffix}")
+        self.ax_wave.set_ylim(-self.current_wave_y_limit, self.current_wave_y_limit)
+        self._style_plot_axis(self.ax_wave, "Waveform")
         self.ax_wave.set_xlabel("Time (s)")
         self.ax_wave.set_ylabel("Amplitude")
-        self.ax_wave.grid(True, alpha=0.18)
-        self.wave_info = self.ax_wave.text(
-            0.012,
-            0.93,
-            "",
-            transform=self.ax_wave.transAxes,
-            va="top",
-            ha="left",
-            fontsize=9.5,
-            family="monospace",
-            bbox={"facecolor": "black", "alpha": 0.75, "edgecolor": "#505050", "pad": 4},
-        )
-        self.host_info = self.ax_wave.text(
-            0.988,
-            0.93,
-            "─── [ HOST DEEP MODEL ANALYSIS ] ───\nWaiting for host inference...",
-            transform=self.ax_wave.transAxes,
-            va="top",
-            ha="right",
-            fontsize=9.5,
-            family="monospace",
-            bbox={"facecolor": "black", "alpha": 0.75, "edgecolor": "#00d6b4", "pad": 4},
-        )
+        self.ax_wave.axhline(0.0, color=self.ui["border"], linewidth=0.75)
 
         # Spectrogram
         self.spec_image = self.ax_spec.imshow(
@@ -957,23 +1030,25 @@ class Visualizer:
             aspect="auto",
             interpolation="nearest",
             extent=[-self.history_seconds, 0.0, 0.0, self.fs / 2.0],
-            cmap="inferno",
+            cmap="magma",
             vmin=self.floor_db,
             vmax=self.ceiling_db,
         )
         self.ax_spec.set_ylim(self.min_frequency, self.max_frequency)
-        self.ax_spec.set_title("Scrolling STFT spectrogram")
-        self.ax_spec.set_xlabel("History (seconds)")
+        self._style_plot_axis(self.ax_spec, "Frequency history")
+        self.ax_spec.set_xlabel("History (s)")
         self.ax_spec.set_ylabel("Frequency (Hz)")
         colorbar = self.fig.colorbar(
             self.spec_image,
             ax=self.ax_spec,
-            pad=0.01,
-            fraction=0.025,
+            pad=0.012,
+            fraction=0.024,
         )
-        colorbar.set_label("Magnitude (dBFS)")
+        colorbar.set_label("dBFS", color=self.ui["muted"], fontsize=8)
+        colorbar.ax.tick_params(colors=self.ui["muted"], labelsize=7)
+        colorbar.outline.set_edgecolor(self.ui["border"])
 
-        # Grad-CAM Attention Heatmap Subplot
+        # Grad-CAM uses a perceptually ordered map instead of rainbow/jet.
         self.gradcam_image = None
         if self.ax_gradcam is not None:
             self.gradcam_image = self.ax_gradcam.imshow(
@@ -982,49 +1057,233 @@ class Visualizer:
                 aspect="auto",
                 interpolation="nearest",
                 extent=[-self.history_seconds, 0.0, 0.0, self.fs / 2.0],
-                cmap="jet",
+                cmap="viridis",
                 vmin=0.0,
                 vmax=1.0,
             )
             self.ax_gradcam.set_ylim(self.min_frequency, self.max_frequency)
-            self.ax_gradcam.set_title("Grad-CAM Host Model Attention Heatmap")
-            self.ax_gradcam.set_xlabel("History (seconds)")
+            self._style_plot_axis(self.ax_gradcam, "Model attention")
+            self.ax_gradcam.set_xlabel("History (s)")
             self.ax_gradcam.set_ylabel("Frequency (Hz)")
-            cb_cam = self.fig.colorbar(
+            cam_bar = self.fig.colorbar(
                 self.gradcam_image,
                 ax=self.ax_gradcam,
-                pad=0.01,
-                fraction=0.025,
+                pad=0.012,
+                fraction=0.024,
             )
-            cb_cam.set_label("Attention")
+            cam_bar.set_label("Attention", color=self.ui["muted"], fontsize=8)
+            cam_bar.ax.tick_params(colors=self.ui["muted"], labelsize=7)
+            cam_bar.outline.set_edgecolor(self.ui["border"])
 
-        # Dense Embedding Subplot
+        # Right information panel
+        self.ax_info.set_facecolor(self.ui["panel"])
+        self.ax_info.set_xlim(0.0, 1.0)
+        self.ax_info.set_ylim(0.0, 1.0)
+        self.ax_info.set_xticks([])
+        self.ax_info.set_yticks([])
+        for spine in self.ax_info.spines.values():
+            spine.set_color(self.ui["border"])
+            spine.set_linewidth(0.8)
+
+        self.result_name = self.ax_info.text(
+            0.05,
+            0.88,
+            "Waiting for data",
+            color=self.ui["text"],
+            fontsize=12,
+            fontweight="medium",
+            ha="left",
+            va="top",
+            wrap=True,
+        )
+        self.result_confidence = self.ax_info.text(
+            0.05,
+            0.55,
+            "—",
+            color=self.ui["muted"],
+            fontsize=16,
+            fontweight="medium",
+            ha="left",
+            va="top",
+        )
+        self.result_badge = self.ax_info.text(
+            0.05,
+            0.20,
+            "NO TELEMETRY",
+            color=self.ui["muted"],
+            fontsize=7.5,
+            fontweight="medium",
+            ha="left",
+            va="center",
+            bbox={
+                "boxstyle": "round,pad=0.3,rounding_size=0.8",
+                "facecolor": self.ui["panel_alt"],
+                "edgecolor": self.ui["border"],
+                "linewidth": 0.8,
+            },
+        )
+        self.result_badge.set_visible(False)
+
+        self.wave_info = self.ax_info.text(
+            0.55,
+            0.88,
+            "DEVICE\nWaiting…",
+            color=self.ui["text"],
+            fontsize=7.5,
+            linespacing=1.2,
+            ha="left",
+            va="top",
+        )
+        self.host_info = self.ax_info.text(
+            0.55,
+            0.35,
+            (
+                "HOST MODEL\nNot enabled"
+                if self.host_analyzer is None
+                else "HOST MODEL\nLoaded"
+                if getattr(self.host_analyzer, "model_loaded", False)
+                else "HOST MODEL\nError"
+            ),
+            color=self.ui["muted"],
+            fontsize=7.5,
+            linespacing=1.2,
+            ha="left",
+            va="top",
+        )
+        self.host_badge = self.ax_info.text(
+            0.55,
+            0.08,
+            (
+                "HOST OFF"
+                if self.host_analyzer is None
+                else "MODEL LOADED"
+                if getattr(self.host_analyzer, "model_loaded", False)
+                else "MODEL ERROR"
+                if getattr(self.host_analyzer, "model_path", None)
+                else "ANALYZER READY"
+            ),
+            color=self.ui["muted"],
+            fontsize=7.0,
+            fontweight="medium",
+            ha="left",
+            va="center",
+            bbox={
+                "boxstyle": "round,pad=0.25,rounding_size=0.8",
+                "facecolor": self.ui["panel_alt"],
+                "edgecolor": self.ui["border"],
+                "linewidth": 0.8,
+            },
+        )
+
+        # Class probabilities horizontal bar chart subplot
+        self._style_plot_axis(self.ax_probs, "Class probabilities")
+        self.ax_probs.set_xlim(0, 115)
+        self.ax_probs.set_ylim(-0.7, 10.7)
+        y_pos = np.arange(10, -1, -1)
+        self.ax_probs.set_yticks(y_pos)
+        self.ax_probs.set_yticklabels(
+            [self._short_class_label(CLASS_NAMES[i]) for i in range(11)],
+            color=self.ui["text"],
+            fontsize=8.5,
+        )
+        self.ax_probs.xaxis.set_major_formatter(
+            plt.FuncFormatter(lambda x, _: f"{int(x)}%")
+        )
+
+        bar_height = 0.35
+        self.mcu_bars = self.ax_probs.barh(
+            y_pos + bar_height / 2,
+            np.zeros(11),
+            height=bar_height,
+            color=self.ui["accent"],
+            label="MCU",
+            alpha=0.88,
+        )
+        self.host_bars = self.ax_probs.barh(
+            y_pos - bar_height / 2,
+            np.zeros(11),
+            height=bar_height,
+            color=self.ui["success"],
+            label="Host",
+            alpha=0.88,
+        )
+        for bar in self.host_bars:
+            bar.set_visible(False)
+
+        self.mcu_bar_texts = [
+            self.ax_probs.text(
+                1.5,
+                y_pos[i] + bar_height / 2,
+                "",
+                va="center",
+                ha="left",
+                fontsize=7.5,
+                color=self.ui["accent"],
+                fontweight="bold",
+            )
+            for i in range(11)
+        ]
+        self.host_bar_texts = [
+            self.ax_probs.text(
+                1.5,
+                y_pos[i] - bar_height / 2,
+                "",
+                va="center",
+                ha="left",
+                fontsize=7.5,
+                color=self.ui["success"],
+                fontweight="bold",
+            )
+            for i in range(11)
+        ]
+        for t in self.host_bar_texts:
+            t.set_visible(False)
+
+        self.ax_probs.legend(
+            loc="lower right",
+            facecolor=self.ui["panel_alt"],
+            edgecolor=self.ui["border"],
+            fontsize=7.5,
+            labelcolor=self.ui["text"],
+            framealpha=0.85,
+        )
+
+        # Dense embedding panel
         self.emb_line = None
         if self.ax_emb is not None:
             (self.emb_line,) = self.ax_emb.plot(
                 np.arange(256),
                 np.zeros(256),
-                color="#00d6b4",
-                linewidth=1.2,
+                color=self.ui["accent"],
+                linewidth=1.0,
             )
             self.ax_emb.set_xlim(0, 255)
             self.ax_emb.set_ylim(-2.0, 2.0)
-            self.ax_emb.set_title("Dense Embedding (256-dim)")
-            self.ax_emb.set_xlabel("Neuron Index")
-            self.ax_emb.set_ylabel("Activation Level")
-            self.ax_emb.grid(True, alpha=0.18)
+            self._style_plot_axis(self.ax_emb, "Dense embedding")
+            self.ax_emb.set_xlabel("Neuron")
+            self.ax_emb.set_ylabel("Activation")
 
+        # Quiet footer: transport health only. Detailed values stay in the side panel.
+        self.fig.add_artist(
+            patches.Rectangle(
+                (0.055, 0.071),
+                0.91,
+                0.001,
+                transform=self.fig.transFigure,
+                facecolor=self.ui["border"],
+                edgecolor="none",
+            )
+        )
         self.status_text = self.fig.text(
-            0.01,
-            0.008,
-            "",
+            0.055,
+            0.043,
+            "Connecting…",
+            color=self.ui["muted"],
             ha="left",
-            va="bottom",
-            fontsize=9,
-            family="monospace",
+            va="center",
+            fontsize=8.5,
         )
 
-        self.fig.tight_layout(rect=(0.0, 0.035, 1.0, 0.96))
         self.fig.canvas.mpl_connect("close_event", self._on_close)
 
     def _on_close(self, _event) -> None:
@@ -1086,7 +1345,9 @@ class Visualizer:
         self.spec_image.set_data(self.spec_matrix)
         return newest
 
-    def _append_gradcam(self, heatmap: np.ndarray, stft_cols: Optional[np.ndarray] = None) -> None:
+    def _append_gradcam(
+        self, heatmap: np.ndarray, stft_cols: Optional[np.ndarray] = None
+    ) -> None:
         if not self.enable_gradcam or self.gradcam_image is None:
             return
 
@@ -1100,7 +1361,11 @@ class Visualizer:
             if stft_cols is not None and stft_cols.shape[1] >= cols_per_packet:
                 # STFT frequency spectral magnitude * temporal Grad-CAM attention (PSD fashion)
                 stft_new = stft_cols[:, -cols_per_packet:]
-                norm_stft = np.clip((stft_new - self.floor_db) / (self.ceiling_db - self.floor_db), 0.0, 1.0)
+                norm_stft = np.clip(
+                    (stft_new - self.floor_db) / (self.ceiling_db - self.floor_db),
+                    0.0,
+                    1.0,
+                )
                 slice_2d = norm_stft * h_interp[np.newaxis, :]
             else:
                 slice_2d = np.tile(h_interp, (len(self.freqs), 1))
@@ -1112,7 +1377,9 @@ class Visualizer:
         if cols_per_packet >= self.spec_columns:
             self.gradcam_matrix[:, :] = slice_2d[:, -self.spec_columns :]
         else:
-            self.gradcam_matrix[:, :-cols_per_packet] = self.gradcam_matrix[:, cols_per_packet:]
+            self.gradcam_matrix[:, :-cols_per_packet] = self.gradcam_matrix[
+                :, cols_per_packet:
+            ]
             self.gradcam_matrix[:, -cols_per_packet:] = slice_2d
 
         self.gradcam_image.set_data(self.gradcam_matrix)
@@ -1140,9 +1407,7 @@ class Visualizer:
             finite = current[np.isfinite(current)]
             if finite.size:
                 absolute = np.abs(finite)
-                robust_peak = float(
-                    np.percentile(absolute, self.wave_y_percentile)
-                )
+                robust_peak = float(np.percentile(absolute, self.wave_y_percentile))
                 target_limit = robust_peak * self.wave_y_headroom
                 target_limit = float(
                     np.clip(target_limit, self.wave_y_min, self.wave_y_max)
@@ -1218,13 +1483,14 @@ class Visualizer:
         if class_name == "Unknown":
             return "Unknown"
         if class_name == "No_Mos":
-            return "NoMos"
+            return "No Mos"
 
         parts = class_name.split("_")
         if len(parts) >= 3:
+            genus = parts[0][:2]
             species = parts[1]
-            sex = parts[2][0]
-            return f"{species} {sex}"
+            sex = "♀" if parts[2].startswith("F") else "♂"
+            return f"{genus}. {species} {sex}"
         return class_name
 
     def _detection_band(
@@ -1270,37 +1536,41 @@ class Visualizer:
         color: str,
         peak_frequency: float,
     ) -> None:
-        """Draw a full-frequency window bounding box over the newest spectrogram segment."""
-        low_f = self.min_frequency
-        high_f = self.max_frequency
-
-        x0 = -self.packet_advance_seconds
-        width = self.packet_advance_seconds
-        height = high_f - low_f
+        """Draw a clear, bold bounding box outline over the spectrogram segment."""
+        low_f, high_f = self._detection_band(class_name, peak_frequency)
+        box_width = max(self.window_seconds, self.packet_advance_seconds * 2.0)
+        x0 = -box_width
 
         rect = patches.Rectangle(
             (x0, low_f),
-            width,
-            height,
-            linewidth=1.5,
+            box_width,
+            high_f - low_f,
+            linewidth=2.2,
             edgecolor=color,
-            facecolor="none",
-            alpha=0.90,
+            facecolor=color,
+            alpha=0.15,
+            zorder=10,
         )
         self.ax_spec.add_patch(rect)
 
-        label = f"{self._short_class_label(class_name)}  {confidence * 100:.0f}%"
-        text_y = self.max_frequency - 40.0
+        label = f" {self._short_class_label(class_name)} · {confidence * 100:.0f}% "
         text = self.ax_spec.text(
             x0 + 0.01,
-            text_y,
+            high_f - 15.0,
             label,
-            color=color,
-            fontsize=8,
+            color="#FFFFFF",
+            fontsize=8.0,
             fontweight="bold",
             ha="left",
             va="top",
-            bbox={"facecolor": "black", "alpha": 0.65, "edgecolor": "none", "pad": 1.5},
+            zorder=11,
+            bbox={
+                "boxstyle": "round,pad=0.25,rounding_size=0.3",
+                "facecolor": color,
+                "alpha": 0.90,
+                "edgecolor": "#FFFFFF",
+                "linewidth": 0.8,
+            },
         )
 
         self.spec_annotations.append((rect, text))
@@ -1327,7 +1597,11 @@ class Visualizer:
             if 0 <= packet.class_id < len(CLASS_NAMES)
             else "Unknown"
         )
-        color = class_color(class_name)
+        display_name = class_name.replace("_", " ")
+        if class_name == "No_Mos":
+            display_name = "No mosquito"
+
+        class_tint = class_color(class_name)
         audio = packet.audio_i16.astype(np.float32) / 32768.0
 
         self._age_spec_annotations()
@@ -1341,55 +1615,117 @@ class Visualizer:
             and packet.confidence >= self.detection_threshold
         )
 
-        self._append_live_waveform(audio)
-        self.wave_line.set_color(color if is_detection else "#a0a0a0")
-
         if is_detection:
-            title = (
-                f"DETECTED: {class_name}  |  "
-                f"confidence {packet.confidence * 100.0:.1f}%"
-            )
-            self.fig.suptitle(title, color=color, fontsize=16, fontweight="bold")
-            self.ax_wave.set_facecolor("#151515")
+            state_label = "DETECTED"
+            state_color = class_tint
+            state_fill = "#1B2731"
         elif class_name == "No_Mos":
-            self.fig.suptitle(
-                f"No mosquito  |  confidence {packet.confidence * 100.0:.1f}%",
-                color="#a0a0a0",
-                fontsize=15,
-                fontweight="normal",
-            )
-            self.ax_wave.set_facecolor("#101010")
+            state_label = "NO DETECTION"
+            state_color = self.ui["muted"]
+            state_fill = self.ui["panel_alt"]
         else:
-            self.fig.suptitle(
-                f"Uncertain: {class_name}  |  confidence {packet.confidence * 100.0:.1f}%",
-                color="#dddddd",
-                fontsize=15,
-                fontweight="normal",
-            )
-            self.ax_wave.set_facecolor("#101010")
+            state_label = "LOW CONFIDENCE"
+            state_color = self.ui["warning"]
+            state_fill = "#2A2418"
+
+        self._append_live_waveform(audio)
+        self.wave_line.set_color(state_color)
+        self.ax_wave.spines["left"].set_color(state_color)
+        self.ax_wave.spines["left"].set_linewidth(1.8)
+
+        self.header_status.set_text(state_label)
+        self.header_status.set_color(state_color)
+        self.header_status.get_bbox_patch().set_facecolor(state_fill)
+        self.header_status.get_bbox_patch().set_edgecolor(state_color)
+
+        self.result_name.set_text(display_name)
+        self.result_name.set_color(state_color if is_detection else self.ui["text"])
+        self.result_confidence.set_text(f"{packet.confidence * 100.0:.1f}%")
+        self.result_confidence.set_color(state_color)
+        self.result_badge.set_text(state_label)
+        self.result_badge.set_color(state_color)
+        self.result_badge.get_bbox_patch().set_facecolor(state_fill)
+        self.result_badge.get_bbox_patch().set_edgecolor(state_color)
 
         infer_ms = packet.inference_time_us / 1000.0
         class_age = (
-            "none" if packet.class_age_ms == 0xFFFFFFFF
+            "Unavailable"
+            if packet.class_age_ms == 0xFFFFFFFF
             else f"{packet.class_age_ms} ms"
         )
         self.wave_info.set_text(
-            f"─── [ DEVICE MCU EDGE TELEMETRY ] ───\n"
-            f"MCU Prediction : {class_name} ({packet.confidence * 100.0:.1f}%)\n"
-            f"Inference Time : {infer_ms:.2f} ms | Age: {class_age}\n"
-            f"Packet Seq     : #{packet.seq} | Classifier Seq: #{packet.classifier_seq}\n"
-            f"Signal Metrics : RMS={rms:.4f} | Peak={peak:.4f} | f0≈{peak_frequency:.1f} Hz"
+            "DEVICE\n"
+            f"Inference       {infer_ms:.2f} ms\n"
+            f"Prediction age  {class_age}\n"
+            f"RMS / peak      {rms:.4f} / {peak:.4f}\n"
+            f"Dominant freq.  {peak_frequency:.1f} Hz\n"
+            f"Packet          {packet.seq} · classifier {packet.classifier_seq}"
         )
-        self.wave_info.set_color(color if is_detection else "white")
+        self.wave_info.set_color(self.ui["text"])
+
+        if (
+            hasattr(packet, "class_probability")
+            and packet.class_probability
+            and len(packet.class_probability) == len(CLASS_NAMES)
+        ):
+            mcu_p = np.array(packet.class_probability) * 100.0
+            host_p = getattr(self, "latest_host_probabilities", None)
+            has_host = (
+                host_p is not None
+                and len(host_p) == len(CLASS_NAMES)
+            )
+
+            if has_host:
+                host_p_pct = np.array(host_p) * 100.0
+            else:
+                host_p_pct = np.zeros(11)
+
+            y_pos = np.arange(10, -1, -1)
+            bar_height = 0.35 if has_host else 0.55
+
+            for i in range(11):
+                m_offset = bar_height / 2 if has_host else 0
+                self.mcu_bars[i].set_width(mcu_p[i])
+                self.mcu_bars[i].set_y(y_pos[i] + m_offset - bar_height / 2)
+                self.mcu_bars[i].set_height(bar_height)
+
+                val_text = f"{mcu_p[i]:.1f}%" if mcu_p[i] >= 0.5 else ""
+                self.mcu_bar_texts[i].set_text(val_text)
+                self.mcu_bar_texts[i].set_x(mcu_p[i] + 1.5)
+                self.mcu_bar_texts[i].set_y(y_pos[i] + m_offset)
+
+                if has_host:
+                    hp = host_p_pct[i]
+                    self.host_bars[i].set_width(hp)
+                    self.host_bars[i].set_y(y_pos[i] - bar_height / 2 - bar_height / 2)
+                    self.host_bars[i].set_height(bar_height)
+                    self.host_bars[i].set_visible(True)
+
+                    host_val_text = f"{hp:.1f}%" if hp >= 0.5 else ""
+                    self.host_bar_texts[i].set_text(host_val_text)
+                    self.host_bar_texts[i].set_x(hp + 1.5)
+                    self.host_bar_texts[i].set_y(y_pos[i] - bar_height / 2)
+                    self.host_bar_texts[i].set_visible(True)
+                else:
+                    self.host_bars[i].set_visible(False)
+                    self.host_bar_texts[i].set_visible(False)
 
         self.latest_stft = self._append_spectrogram(audio)
         if is_detection:
-            self._add_spec_box(
-                class_name=class_name,
-                confidence=packet.confidence,
-                color=color,
-                peak_frequency=peak_frequency,
+            annotation_interval = max(0.65, self.packet_advance_seconds * 3.0)
+            should_annotate = (
+                class_name != self.last_annotation_class
+                or packet.received_at - self.last_annotation_at >= annotation_interval
             )
+            if should_annotate:
+                self._add_spec_box(
+                    class_name=class_name,
+                    confidence=packet.confidence,
+                    color=class_tint,
+                    peak_frequency=peak_frequency,
+                )
+                self.last_annotation_class = class_name
+                self.last_annotation_at = packet.received_at
 
         if self.host_analyzer is not None:
             self.host_analyzer.submit_packet(
@@ -1414,24 +1750,27 @@ class Visualizer:
             age_text = f"{time.monotonic() - self.last_packet_time:.2f}s"
 
         status = (
-            f"{self.port} @ {self.baud:,} baud | "
-            f"{self.fs} Hz, {self.sample_count} samples/window "
-            f"({self.window_seconds * 1000.0:.0f} ms), "
-            f"step={self.packet_hop_samples} "
-            f"({self.packet_advance_seconds * 1000.0:.0f} ms) | "
-            f"valid={stats.valid_packets}  "
-            f"rate={self.packets_per_second:.2f} pkt/s  "
-            f"serial={self.bytes_per_second / 1024.0:.1f} KiB/s | "
-            f"COBS_err={stats.cobs_errors}  "
-            f"len_err={stats.length_errors}  "
-            f"dropped={stats.queue_drops}  "
-            f"last={age_text}"
+            f"{self.port}  ·  {self.baud / 1_000_000:.1f} Mbaud  ·  "
+            f"{self.fs:,} Hz / {self.window_seconds * 1000.0:.0f} ms  ·  "
+            f"{self.packets_per_second:.2f} pkt/s  ·  "
+            f"{self.bytes_per_second / 1024.0:.1f} KiB/s  ·  "
+            f"packets {stats.valid_packets:,}  ·  dropped {stats.queue_drops}  ·  "
+            f"decode errors {stats.cobs_errors + stats.length_errors}  ·  last {age_text}"
         )
-        if self.host_analyzer is not None and not self.host_analyzer.output_queue.empty():
+
+        if (
+            self.host_analyzer is not None
+            and not self.host_analyzer.output_queue.empty()
+        ):
             try:
                 res = self.host_analyzer.output_queue.get_nowait()
+                if res.host_class_probability is not None:
+                    self.latest_host_probabilities = res.host_class_probability
                 if res.heatmap is not None:
-                    self._append_gradcam(res.heatmap, getattr(self, "latest_stft", None))
+                    self._append_gradcam(
+                        res.heatmap,
+                        getattr(self, "latest_stft", None),
+                    )
                 if self.emb_line is not None and res.dense_embedding is not None:
                     emb = res.dense_embedding
                     if len(self.emb_line.get_xdata()) != len(emb):
@@ -1441,31 +1780,60 @@ class Visualizer:
                     ymin = float(np.min(emb))
                     ymax = float(np.max(emb))
                     if ymax > ymin:
-                        self.ax_emb.set_ylim(ymin - 0.2, ymax + 0.2)
+                        margin = max(0.15, 0.08 * (ymax - ymin))
+                        self.ax_emb.set_ylim(ymin - margin, ymax + margin)
+
                 if res.host_class_id is not None:
-                    h_cls = CLASS_NAMES[res.host_class_id] if 0 <= res.host_class_id < len(CLASS_NAMES) else str(res.host_class_id)
+                    h_cls = (
+                        CLASS_NAMES[res.host_class_id]
+                        if 0 <= res.host_class_id < len(CLASS_NAMES)
+                        else str(res.host_class_id)
+                    )
+                    h_display = h_cls.replace("_", " ")
+                    if h_cls == "No_Mos":
+                        h_display = "No mosquito"
                     clr = class_color(h_cls)
+
                     if self.emb_line is not None:
                         self.emb_line.set_color(clr)
-                        self.ax_emb.set_title(f"Dense Embedding ({len(res.dense_embedding if res.dense_embedding is not None else [])}-dim) — {h_cls}", color=clr)
+                        self.ax_emb.set_title(
+                            f"Dense embedding · {h_display}",
+                            loc="left",
+                            color=self.ui["text"],
+                            fontsize=11,
+                            fontweight="medium",
+                            pad=10,
+                        )
 
-                    disc_str = "⚠️ DISCREPANCY DETECTED" if res.discrepancy else "✓ MCU-Host Agreement"
-                    self.host_info.set_text(
-                        f"─── [ HOST DEEP MODEL ANALYSIS ] ───\n"
-                        f"Host Prediction: {h_cls} ({res.host_confidence * 100.0:.1f}%)\n"
-                        f"Parity Status  : {disc_str}\n"
-                        f"STFT / Grad-CAM: Active (Frequency-Weighted)\n"
-                        f"Dominant PSD f0: {res.f0_hz:.1f} Hz ({res.peak_power_db:.1f} dB)"
+                    agreement = "MISMATCH" if res.discrepancy else "MATCH"
+                    agreement_color = (
+                        self.ui["danger"] if res.discrepancy else self.ui["success"]
                     )
-                    self.host_info.set_color(clr)
-                    status += f" | Host: {h_cls} ({res.host_confidence * 100:.0f}%)"
-                    if res.discrepancy:
-                        status += " [DISCREPANCY]"
+                    gradcam_state = "Active" if self.enable_gradcam else "Disabled"
+                    self.host_info.set_text(
+                        "HOST MODEL\n"
+                        f"Prediction      {h_display}\n"
+                        f"Confidence      {res.host_confidence * 100.0:.1f}%\n"
+                        f"MCU agreement   {agreement}\n"
+                        f"Dominant freq.  {res.f0_hz:.1f} Hz\n"
+                        f"Grad-CAM        {gradcam_state}"
+                    )
+                    self.host_info.set_color(self.ui["text"])
+                    self.host_badge.set_text(agreement)
+                    self.host_badge.set_color(agreement_color)
+                    self.host_badge.get_bbox_patch().set_facecolor(
+                        "#2A1B20" if res.discrepancy else "#172720"
+                    )
+                    self.host_badge.get_bbox_patch().set_edgecolor(agreement_color)
             except queue.Empty:
                 pass
 
         if stats.last_error:
-            status += f" | SERIAL ERROR: {stats.last_error}"
+            self.header_status.set_text("SERIAL ERROR")
+            self.header_status.set_color(self.ui["danger"])
+            self.header_status.get_bbox_patch().set_facecolor("#2A1B20")
+            self.header_status.get_bbox_patch().set_edgecolor(self.ui["danger"])
+            status += f"  ·  serial error: {stats.last_error}"
 
         self.status_text.set_text(status)
 
@@ -1634,7 +2002,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--floor-db", type=float, default=-100.0)
     parser.add_argument("--ceiling-db", type=float, default=-20.0)
-    parser.add_argument("--refresh-ms", type=int, default=20)
+    parser.add_argument("--refresh-ms", type=int, default=50)
     parser.add_argument(
         "--local-model",
         type=str,
@@ -1714,7 +2082,9 @@ def main() -> int:
         raise ValueError("frequency limits must satisfy 0 <= min < max <= Nyquist")
 
     packet_hop_samples = (
-        args.samples // 2 if args.packet_hop_samples is None else args.packet_hop_samples
+        args.samples // 2
+        if args.packet_hop_samples is None
+        else args.packet_hop_samples
     )
     if not 0 < packet_hop_samples <= args.samples:
         raise ValueError("--packet-hop-samples must be between 1 and --samples")

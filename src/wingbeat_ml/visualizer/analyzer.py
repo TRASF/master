@@ -7,6 +7,7 @@ and MCU-Host discrepancy detection.
 from __future__ import annotations
 
 import queue
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -19,12 +20,27 @@ from wingbeat_ml.visualizer.exporter import export_anomaly_frame
 
 try:
     import tensorflow as tf
-    from wingbeat_ml.evaluation.gradcam import compute_gradcam
-    from wingbeat_ml.evaluation.diagnostics import analyze_model_sample
-except ImportError:  # pragma: no cover
+except Exception as err:  # pragma: no cover
     tf = None
+    TF_IMPORT_ERROR = err
+else:
+    TF_IMPORT_ERROR = None
+
+try:
+    from wingbeat_ml.evaluation.gradcam import compute_gradcam
+except Exception as err:  # pragma: no cover
     compute_gradcam = None
+    GRADCAM_IMPORT_ERROR = err
+else:
+    GRADCAM_IMPORT_ERROR = None
+
+try:
+    from wingbeat_ml.evaluation.diagnostics import analyze_model_sample
+except Exception as err:  # pragma: no cover
     analyze_model_sample = None
+    DIAGNOSTICS_IMPORT_ERROR = err
+else:
+    DIAGNOSTICS_IMPORT_ERROR = None
 
 
 class FastTFLiteModel:
@@ -38,7 +54,7 @@ class FastTFLiteModel:
         self.is_int8 = self.input_details["dtype"] == np.int8
         self.scale, self.zero_point = self.input_details["quantization"]
 
-    def predict_fast(self, audio_float: np.ndarray) -> Tuple[int, float]:
+    def predict_fast(self, audio_float: np.ndarray) -> Tuple[int, float, np.ndarray]:
         if self.is_int8:
             q_val = np.round(audio_float / self.scale) + self.zero_point
             q_val = np.clip(q_val, -128, 127).astype(np.int8)
@@ -58,7 +74,7 @@ class FastTFLiteModel:
         probs = exp_logits / np.sum(exp_logits)
         class_id = int(np.argmax(probs))
         confidence = float(probs[class_id])
-        return class_id, confidence
+        return class_id, confidence, probs
 
 
 def _load_or_build_model(model_path: str):
@@ -132,6 +148,7 @@ class AnalysisResult:
     heatmap: Optional[np.ndarray]
     timestamp: float
     dense_embedding: Optional[np.ndarray] = None
+    host_class_probability: Optional[np.ndarray] = None
 
 
 class HostAnalyzer(threading.Thread):
@@ -142,6 +159,7 @@ class HostAnalyzer(threading.Thread):
         model_path: Optional[str] = None,
         sample_rate: int = 8000,
         enable_gradcam: bool = False,
+        enable_dense: bool = False,
         export_anomalies: bool = False,
         anomaly_output_dir: str = "output/misclassifications",
     ) -> None:
@@ -152,13 +170,116 @@ class HostAnalyzer(threading.Thread):
         self.export_anomalies = export_anomalies
         self.anomaly_output_dir = anomaly_output_dir
 
-        self.input_queue: queue.Queue[Tuple[int, int, float, np.ndarray, float]] = queue.Queue(maxsize=10)
-        self.output_queue: queue.Queue[AnalysisResult] = queue.Queue(maxsize=10)
+        self.input_queue: queue.Queue[Tuple[int, int, float, np.ndarray, float]] = queue.Queue(maxsize=1)
+        self.output_queue: queue.Queue[AnalysisResult] = queue.Queue(maxsize=1)
         self.stop_event = threading.Event()
-        self.model = None
 
-        if self.model_path and tf is not None:
-            self.model = _load_or_build_model(self.model_path)
+        # Low-latency host-analysis state.
+        self.processed_packets = 0
+        self.deep_analysis_stride = 3
+        self.harmonic_analysis_stride = 2
+        self.last_harmonics = {
+            "f0_hz": 0.0,
+            "peak_power_db": -120.0,
+        }
+        self._compiled_inference = None
+
+        # WINGBEAT_REALTIME_PATCH
+        self.enable_dense = enable_dense
+        self.heavy_every = max(
+            1, int(os.environ.get("WINGBEAT_HEAVY_EVERY", "7"))
+        )
+        self.harmonic_every = max(
+            1, int(os.environ.get("WINGBEAT_HARMONIC_EVERY", "3"))
+        )
+        self._analysis_counter = 0
+        self._last_f0_hz = 0.0
+        self._last_peak_power_db = -120.0
+        self._infer_fn = None
+        self._heavy_error_reported = False
+        self.model = None
+        self.model_loaded = False
+        self.model_error: Optional[str] = None
+
+        if self.model_path:
+            if tf is None:
+                self.model_error = (
+                    f"TensorFlow import failed: {TF_IMPORT_ERROR!r}"
+                )
+                print(f"[HostAnalyzer Error] {self.model_error}")
+            else:
+                try:
+                    self.model = _load_or_build_model(self.model_path)
+
+                    if self.model is None:
+                        raise RuntimeError(
+                            "_load_or_build_model returned None; inspect the "
+                            "preceding HostAnalyzer error."
+                        )
+
+                    self.model_loaded = True
+                    print(
+                        "[HostAnalyzer] MODEL LOADED: "
+                        f"{Path(self.model_path).expanduser().resolve()}"
+                    )
+                    print(
+                        "[HostAnalyzer] Model type: "
+                        f"{type(self.model).__name__}"
+                    )
+
+                    if self.enable_gradcam and compute_gradcam is None:
+                        print(
+                            "[HostAnalyzer Warning] Grad-CAM helper unavailable: "
+                            f"{GRADCAM_IMPORT_ERROR!r}"
+                        )
+
+                    if analyze_model_sample is None:
+                        print(
+                            "[HostAnalyzer Warning] Diagnostics helper unavailable: "
+                            f"{DIAGNOSTICS_IMPORT_ERROR!r}"
+                        )
+
+                except Exception as err:
+                    self.model = None
+                    self.model_loaded = False
+                    self.model_error = f"{type(err).__name__}: {err}"
+                    print(
+                        "[HostAnalyzer Error] MODEL LOAD FAILED: "
+                        f"{self.model_error}"
+                    )
+
+    def _predict_host(
+        self,
+        inp_tensor: np.ndarray,
+    ) -> Tuple[int, float]:
+        """Fast class inference without Grad-CAM or diagnostic extraction."""
+        if self._infer_fn is None:
+            @tf.function(reduce_retracing=True)
+            def infer_fn(x):
+                return self.model(x, training=False)
+
+            self._infer_fn = infer_fn
+
+            # Compile/warm the TensorFlow graph once.
+            self._infer_fn(
+                tf.zeros((1, 2400, 1), dtype=tf.float32)
+            )
+
+        logits = self._infer_fn(inp_tensor)
+
+        if isinstance(logits, dict):
+            logits = next(iter(logits.values()))
+        elif isinstance(logits, (list, tuple)):
+            logits = logits[0]
+
+        probabilities = tf.nn.softmax(
+            logits[0],
+            axis=-1,
+        ).numpy()
+
+        class_id = int(np.argmax(probabilities))
+        confidence = float(probabilities[class_id])
+        return class_id, confidence
 
     def submit_packet(
         self,
@@ -168,86 +289,236 @@ class HostAnalyzer(threading.Thread):
         audio_i16: np.ndarray,
         received_at: float,
     ) -> None:
+        """Publish only the newest telemetry frame."""
+
+        packet = (
+            seq,
+            mcu_class_id,
+            mcu_confidence,
+            audio_i16.copy(),
+            received_at,
+        )
+
         try:
-            self.input_queue.put_nowait((seq, mcu_class_id, mcu_confidence, audio_i16.copy(), received_at))
+            self.input_queue.put_nowait(packet)
+            return
         except queue.Full:
-            pass  # ponytail: drop stale frame if processing queue is full
+            pass
+
+        try:
+            self.input_queue.get_nowait()
+        except queue.Empty:
+            pass
+
+        try:
+            self.input_queue.put_nowait(packet)
+        except queue.Full:
+            pass
 
     def run(self) -> None:
+        """Process current telemetry without accumulating stale frames."""
+
         while not self.stop_event.is_set():
             try:
                 packet = self.input_queue.get(timeout=0.1)
             except queue.Empty:
                 continue
 
+            # If another frame arrived while waking up, process only the newest.
+            while True:
+                try:
+                    packet = self.input_queue.get_nowait()
+                except queue.Empty:
+                    break
+
             try:
-                seq, mcu_class_id, mcu_confidence, audio_i16, received_at = packet
+                (
+                    seq,
+                    mcu_class_id,
+                    mcu_confidence,
+                    audio_i16,
+                    received_at,
+                ) = packet
 
-                # 1. Harmonic analysis
-                harmonics = analyze_harmonics(audio_i16, sample_rate=self.sample_rate)
-                f0_hz = harmonics["f0_hz"]
-                peak_power_db = harmonics["peak_power_db"]
+                self.processed_packets += 1
 
-                # 2. Host model inference & Grad-CAM & Dense Analysis
+                do_harmonics = (
+                    self.processed_packets == 1
+                    or self.processed_packets
+                    % self.harmonic_analysis_stride
+                    == 0
+                )
+
+                do_deep_analysis = (
+                    self.enable_gradcam
+                    and (
+                        self.processed_packets == 1
+                        or self.processed_packets
+                        % self.deep_analysis_stride
+                        == 0
+                    )
+                )
+
+                # Harmonic analysis is staggered because adjacent windows
+                # overlap heavily and usually contain nearly identical data.
+                if do_harmonics:
+                    self.last_harmonics = analyze_harmonics(
+                        audio_i16,
+                        sample_rate=self.sample_rate,
+                    )
+
+                f0_hz = float(self.last_harmonics["f0_hz"])
+                peak_power_db = float(
+                    self.last_harmonics["peak_power_db"]
+                )
+
                 host_class_id = None
                 host_confidence = None
+                host_class_probability = None
                 heatmap = None
                 dense_embedding = None
 
-                audio_float = audio_i16.astype(np.float32) / 32768.0
-                audio_float = audio_float - np.mean(audio_float)
-                peak = np.max(np.abs(audio_float))
-                if peak > 1e-6:
-                    audio_float = (audio_float / peak) * 0.95
+                audio_float = (
+                    audio_i16.astype(np.float32) / 32768.0
+                )
+                # 1. DC removal
+                audio_float -= np.mean(audio_float)
+
+                # 2. Standardized RMS normalization (matches training & ESP32 deployment)
+                rms = float(np.sqrt(np.mean(np.square(audio_float)) + 1e-8))
+                target_rms = 0.05
+                min_gain = 0.1
+                max_gain = 10.0
+                gain = float(np.clip(target_rms / rms, min_gain, max_gain))
+                audio_float *= gain
+
+                # 3. Final clipping to [-1, 1]
+                audio_float = np.clip(audio_float, -1.0, 1.0)
+
+                inp_tensor = audio_float.reshape(1, -1, 1)
 
                 if self.model is not None:
-                    inp_tensor = np.reshape(audio_float, (1, -1, 1))
                     if isinstance(self.model, FastTFLiteModel):
-                        host_class_id, host_confidence = self.model.predict_fast(audio_float)
-                    elif analyze_model_sample is not None:
-                        try:
-                            diag = analyze_model_sample(self.model, inp_tensor)
-                            host_class_id = diag.predicted_class_id
-                            host_confidence = diag.predicted_confidence
-                            heatmap = diag.gradcam_heatmap
-                            dense_embedding = diag.dense_embedding
-                        except Exception as err:
-                            if self.enable_gradcam and compute_gradcam is not None:
-                                heatmap, host_class_id, host_confidence = compute_gradcam(
-                                    self.model, inp_tensor, class_idx=None
-                                )
-                            else:
-                                logits = self.model.predict(inp_tensor, verbose=0)[0]
-                                probs = tf.nn.softmax(logits).numpy()
-                                host_class_id = int(np.argmax(probs))
-                                host_confidence = float(probs[host_class_id])
-                    elif self.enable_gradcam and compute_gradcam is not None:
-                        try:
-                            heatmap, host_class_id, host_confidence = compute_gradcam(
-                                self.model, inp_tensor, class_idx=None
-                            )
-                        except Exception:
-                            logits = self.model.predict(inp_tensor, verbose=0)[0]
-                            probs = tf.nn.softmax(logits).numpy()
-                            host_class_id = int(np.argmax(probs))
-                            host_confidence = float(probs[host_class_id])
-                    else:
-                        logits = self.model.predict(inp_tensor, verbose=0)[0]
-                        probs = tf.nn.softmax(logits).numpy()
-                        host_class_id = int(np.argmax(probs))
-                        host_confidence = float(probs[host_class_id])
+                        (
+                            host_class_id,
+                            host_confidence,
+                            host_class_probability,
+                        ) = self.model.predict_fast(audio_float)
 
-                # 3. Discrepancy detection
+                    else:
+                        # Compile the ordinary classification path once.
+                        if self._compiled_inference is None:
+                            self._compiled_inference = tf.function(
+                                lambda value: self.model(
+                                    value,
+                                    training=False,
+                                ),
+                                reduce_retracing=True,
+                            )
+
+                        output = self._compiled_inference(inp_tensor)
+
+                        if isinstance(output, (list, tuple)):
+                            output = output[0]
+
+                        logits = np.asarray(output)[0]
+                        probabilities = tf.nn.softmax(
+                            logits
+                        ).numpy()
+
+                        host_class_id = int(
+                            np.argmax(probabilities)
+                        )
+                        host_confidence = float(
+                            probabilities[host_class_id]
+                        )
+                        host_class_probability = probabilities
+
+                        # Grad-CAM and embedding extraction are much more
+                        # expensive than classification, so run them less often.
+                        if do_deep_analysis:
+                            if analyze_model_sample is not None:
+                                try:
+                                    diagnostic = analyze_model_sample(
+                                        self.model,
+                                        inp_tensor,
+                                    )
+
+                                    if (
+                                        diagnostic.predicted_class_id
+                                        is not None
+                                    ):
+                                        host_class_id = int(
+                                            diagnostic.predicted_class_id
+                                        )
+
+                                    if (
+                                        diagnostic.predicted_confidence
+                                        is not None
+                                    ):
+                                        host_confidence = float(
+                                            diagnostic.predicted_confidence
+                                        )
+
+                                    heatmap = (
+                                        diagnostic.gradcam_heatmap
+                                    )
+                                    dense_embedding = (
+                                        diagnostic.dense_embedding
+                                    )
+
+                                except Exception as err:
+                                    print(
+                                        "[HostAnalyzer] Deep analysis "
+                                        f"failed: {err}"
+                                    )
+
+                            elif compute_gradcam is not None:
+                                try:
+                                    (
+                                        heatmap,
+                                        deep_class_id,
+                                        deep_confidence,
+                                    ) = compute_gradcam(
+                                        self.model,
+                                        inp_tensor,
+                                        class_idx=host_class_id,
+                                    )
+
+                                    if deep_class_id is not None:
+                                        host_class_id = int(
+                                            deep_class_id
+                                        )
+
+                                    if deep_confidence is not None:
+                                        host_confidence = float(
+                                            deep_confidence
+                                        )
+
+                                except Exception as err:
+                                    print(
+                                        "[HostAnalyzer] Grad-CAM "
+                                        f"failed: {err}"
+                                    )
+
                 discrepancy = False
+
                 if host_class_id is not None:
-                    if host_class_id != mcu_class_id or abs(host_confidence - mcu_confidence) > 0.35:
-                        discrepancy = True
+                    confidence_difference = abs(
+                        float(host_confidence)
+                        - float(mcu_confidence)
+                    )
+
+                    discrepancy = (
+                        host_class_id != mcu_class_id
+                        or confidence_difference > 0.35
+                    )
+
                 elif mcu_confidence < 0.50:
                     discrepancy = True
 
-                # 4. Anomaly Export
                 if self.export_anomalies and discrepancy:
-                    meta = {
+                    metadata = {
                         "seq": seq,
                         "mcu_class_id": mcu_class_id,
                         "mcu_confidence": mcu_confidence,
@@ -258,15 +529,16 @@ class HostAnalyzer(threading.Thread):
                         "discrepancy": discrepancy,
                         "timestamp": received_at,
                     }
+
                     export_anomaly_frame(
                         audio_i16,
                         self.sample_rate,
-                        meta,
+                        metadata,
                         output_dir=self.anomaly_output_dir,
                         heatmap=heatmap,
                     )
 
-                res = AnalysisResult(
+                result = AnalysisResult(
                     seq=seq,
                     audio=audio_i16,
                     mcu_class_id=mcu_class_id,
@@ -279,11 +551,25 @@ class HostAnalyzer(threading.Thread):
                     heatmap=heatmap,
                     timestamp=received_at,
                     dense_embedding=dense_embedding,
+                    host_class_probability=host_class_probability,
                 )
 
+                # Never leave an old result waiting for the UI.
                 try:
-                    self.output_queue.put_nowait(res)
+                    self.output_queue.put_nowait(result)
                 except queue.Full:
-                    pass
+                    try:
+                        self.output_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+
+                    try:
+                        self.output_queue.put_nowait(result)
+                    except queue.Full:
+                        pass
+
             except Exception as err:
-                print(f"[HostAnalyzer Worker Exception]: {err}")
+                print(
+                    "[HostAnalyzer Worker Exception]: "
+                    f"{type(err).__name__}: {err}"
+                )

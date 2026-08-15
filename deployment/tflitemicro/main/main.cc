@@ -26,6 +26,7 @@ struct TelemetryPayload {
     uint32_t audio_timestamp_us;
     uint8_t predicted_class;
     float confidence;
+    float class_probability[NUM_CLASSES];
     uint32_t inference_time_us;
     uint32_t class_age_ms;
     uint32_t classifier_seq;
@@ -41,6 +42,7 @@ struct ClassifierJob {
 struct LatestClassifierState {
     uint8_t predicted_class;
     float confidence;
+    float class_probability[NUM_CLASSES];
     uint32_t inference_time_us;
     uint32_t result_timestamp_us;
     uint32_t classifier_seq;
@@ -51,6 +53,7 @@ static QueueHandle_t g_classifier_queue;
 static LatestClassifierState g_latest_result = {
     .predicted_class = 10,
     .confidence = 0.0f,
+    .class_probability = {0.0f},
     .inference_time_us = 0,
     .result_timestamp_us = 0,
     .classifier_seq = 0,
@@ -133,6 +136,7 @@ static void audio_telemetry_task(void *arg) {
         payload->audio_timestamp_us = now_us;
         payload->predicted_class = snapshot.predicted_class;
         payload->confidence = snapshot.confidence;
+        memcpy(payload->class_probability, snapshot.class_probability, sizeof(payload->class_probability));
         payload->inference_time_us = snapshot.inference_time_us;
         payload->classifier_seq = snapshot.classifier_seq;
         payload->class_age_ms = snapshot.result_timestamp_us == 0
@@ -182,10 +186,12 @@ static void classifier_task(void *arg) {
         LatestClassifierState state = {
             .predicted_class = (uint8_t)result.predicted_class,
             .confidence = result.confidence,
+            .class_probability = {},
             .inference_time_us = (uint32_t)(end_us - start_us),
             .result_timestamp_us = (uint32_t)end_us,
             .classifier_seq = job->seq,
         };
+        memcpy(state.class_probability, result.class_probability, sizeof(state.class_probability));
         xSemaphoreTake(g_result_mutex, portMAX_DELAY);
         g_latest_result = state;
         xSemaphoreGive(g_result_mutex);

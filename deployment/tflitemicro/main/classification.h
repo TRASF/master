@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "esp_err.h"
+#include "config.h"
 
 struct ClassifierResult {
     int predicted_class;
@@ -10,6 +11,8 @@ struct ClassifierResult {
 
     int top_class[3];
     float top_score[3];
+
+    float class_probability[NUM_CLASSES];
 
     float input_scale;
     int input_zero_point;

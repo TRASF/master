@@ -266,6 +266,43 @@ static esp_err_t ValidateSelfTestOutput(const TfLiteTensor* output_tensor, int e
     }
 }
 
+static void Softmax(
+    const float* logits,
+    float* probabilities,
+    int count
+) {
+    float max_logit = logits[0];
+
+    for (int i = 1; i < count; ++i) {
+        if (logits[i] > max_logit) {
+            max_logit = logits[i];
+        }
+    }
+
+    float sum = 0.0f;
+
+    for (int i = 0; i < count; ++i) {
+        probabilities[i] = expf(logits[i] - max_logit);
+        sum += probabilities[i];
+    }
+
+    if (!isfinite(sum) || sum <= 0.0f) {
+        const float uniform = 1.0f / static_cast<float>(count);
+
+        for (int i = 0; i < count; ++i) {
+            probabilities[i] = uniform;
+        }
+
+        return;
+    }
+
+    const float inverse_sum = 1.0f / sum;
+
+    for (int i = 0; i < count; ++i) {
+        probabilities[i] *= inverse_sum;
+    }
+}
+
 static void FillTop3FromScores(
     const float* scores,
     int num_scores,
@@ -499,14 +536,24 @@ esp_err_t RunClassifier(
         return ESP_FAIL;
     }
 
-    // 3. Dequantize Int8 to Float Scores
-    float output_scores[NUM_CLASSES];
+    // 3. Dequantize Int8 to Float Logits & Compute Softmax Probabilities
+    float logits[NUM_CLASSES];
+    float probabilities[NUM_CLASSES];
+
     for (int c = 0; c < NUM_CLASSES; ++c) {
-        output_scores[c] = DequantizeOutput(s_output, c);
+        logits[c] = DequantizeOutput(s_output, c);
     }
 
+    Softmax(logits, probabilities, NUM_CLASSES);
+
+    memcpy(
+        result->class_probability,
+        probabilities,
+        sizeof(probabilities)
+    );
+
     // 4. Find Top 3 Predictions
-    FillTop3FromScores(output_scores, NUM_CLASSES, result);
+    FillTop3FromScores(probabilities, NUM_CLASSES, result);
 
     return ESP_OK;
 }
