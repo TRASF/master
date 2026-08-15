@@ -101,11 +101,11 @@ class ModelConfig(StrictBaseModel):
     pretrained_weights: Optional[str] = None
     checkpoint: Optional[str] = None
     output_activation: Optional[str] = None
-    bn_conv1: bool = True
-    bn_conv2: bool = True
-    bn_conv3: bool = True
-    bn_dense1: bool = False
-    bn_dense2: bool = False
+    bn_conv1: Optional[bool] = None
+    bn_conv2: Optional[bool] = None
+    bn_conv3: Optional[bool] = None
+    bn_dense1: Optional[bool] = None
+    bn_dense2: Optional[bool] = None
     layers: Optional[List[Dict[str, Any]]] = None
     mossong_plus: Optional[Dict[str, Any]] = None
     mossongplus: Optional[Dict[str, Any]] = None
@@ -174,6 +174,8 @@ class AdaBNConfig(StrictBaseModel):
     """Offline target-domain BatchNorm calibration."""
 
     enabled: bool = False
+    target_dir: Optional[str] = None
+    mode: str = "adhoc"
 
 class WandbConfig(StrictBaseModel):
     project: str = "MosSongPlus"

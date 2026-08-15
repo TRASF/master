@@ -126,7 +126,7 @@ class TestHostAnalyzer(unittest.TestCase):
             convert_float_tflite(m, tflite_path)
 
             fast_model = FastTFLiteModel(tflite_path)
-            cls_id, conf = fast_model.predict_fast(np.random.randn(2400).astype(np.float32))
+            cls_id, conf, _ = fast_model.predict_fast(np.random.randn(2400).astype(np.float32))
             self.assertGreaterEqual(cls_id, 0)
             self.assertLess(cls_id, 11)
 

@@ -11,7 +11,10 @@ import time
 from typing import Optional, Dict, Any
 
 import numpy as np
-import soundfile as sf
+try:
+    import soundfile as sf
+except ImportError:
+    sf = None
 
 
 def export_anomaly_frame(
@@ -47,8 +50,9 @@ def export_anomaly_frame(
     else:
         audio_float = audio
 
-    wav_file = frame_dir / "audio.wav"
-    sf.write(str(wav_file), audio_float, sample_rate)
+    if sf is not None:
+        wav_file = frame_dir / "audio.wav"
+        sf.write(str(wav_file), audio_float, sample_rate)
 
     # Save metadata JSON
     meta_file = frame_dir / "metadata.json"

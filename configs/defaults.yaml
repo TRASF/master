@@ -12,11 +12,6 @@ model:
   id: mossong_plus
   pretrained_weights: null
   output_activation: null
-  bn_conv1: false
-  bn_conv2: false
-  bn_conv3: false
-  bn_dense1: false
-  bn_dense2: false
 
 adabn:
   enabled: false
@@ -50,7 +45,7 @@ wandb:
   prediction_table_max_rows: 0
 
 labels:
-  No.Mos: 10
+  No.mos: 10
   Cx_quin_Male: 9
   An_dirus_Male: 5
   Cx_quin_Female: 8
@@ -179,7 +174,7 @@ classes:
   - An_minimus_Male
   - Cx_quin_Female
   - Cx_quin_Male
-  - No.Mos
+  - No.mos
 
 dataset:
   indoor: dataset/MSB/Indoor

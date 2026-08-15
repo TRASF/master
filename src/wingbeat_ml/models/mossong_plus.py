@@ -278,8 +278,9 @@ class MosSongPlusModel:
         configured: bool | dict[str, Any],
         override_key: str,
     ) -> dict[str, Any] | None:
-        if override_key in self.overrides:
-            enabled = bool(self.overrides[override_key])
+        override = self.overrides.get(override_key)
+        if override is not None:
+            enabled = bool(override)
         else:
             enabled = bool(configured)
 

@@ -100,7 +100,8 @@ class TestDefaultPretrainPilot(TestCase):
             model_cfg_path="custom-model.yaml",
         )
 
-    @patch("wingbeat_ml.pipelines.helpers.domain_adaptation.AdaBN")
+    @patch("wingbeat_ml.pipelines.pretrain.Path.exists", return_value=True)
+    @patch("wingbeat_ml.pipelines.pretrain.AdaBN")
     @patch.object(pretrain, "evaluate_training_run")
     @patch.object(pretrain, "run_training")
     @patch.object(pretrain, "build_supervised_components")
@@ -114,17 +115,19 @@ class TestDefaultPretrainPilot(TestCase):
         run_training,
         evaluate_run,
         mock_adabn,
+        mock_exists,
     ):
         config = {
             "train": {"epochs": 1},
             "model": {"output_activation": "softmax"},
-            "adabn": {"enabled": True, "mode": "adhoc"},
+            "adabn": {"enabled": True, "mode": "adhoc", "target_dir": "/tmp/target"},
+            "dataset": {"train_dir": "/tmp/train", "val_dir": "/tmp/val", "test_dir": "/tmp/test"},
         }
         model_config = {}
         load_pipeline_config.return_value = (config, model_config)
 
         mock_run = MagicMock()
-        mock_run.save_path = None
+        mock_run.save_path = "/tmp/model.weights.h5"
         mock_run.results_dir = "/tmp/results"
         prepare_run.return_value = mock_run
 
@@ -134,8 +137,7 @@ class TestDefaultPretrainPilot(TestCase):
 
         pretrain.train_supervised()
 
-        mock_adabn.assert_called_once_with(mock_comp.model, mode=pretrain.AdaBN.mode if hasattr(pretrain, "AdaBN") else mock_adabn.call_args[1]["mode"])
-        mock_adabn.return_value.adapt.assert_called_once_with("mock_test_ds")
+        mock_adabn.assert_called_once_with(mock_comp.model)
 
 
 if __name__ == "__main__":

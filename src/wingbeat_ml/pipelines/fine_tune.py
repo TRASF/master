@@ -17,7 +17,7 @@ from wingbeat_ml.pipelines.train import run_training
 
 def train_finetune(
     defaults_path: Union[str, Path] = "configs/defaults.yaml",
-    model_cfg_path: Union[str, Path] = "configs/model.yaml",
+    model_cfg_path: Union[str, Path] = "configs/models/mossong_plus.yaml",
     pretrained_weights: Optional[Union[str, Path]] = None,
     save_path: Optional[str] = None,
     results_dir: Optional[str] = None,

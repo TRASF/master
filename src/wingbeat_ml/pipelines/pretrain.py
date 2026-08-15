@@ -218,7 +218,7 @@ def _select_adabn_checkpoint(
 
 def train_supervised(
     defaults_path: Union[str, os.PathLike] = "configs/defaults.yaml",
-    model_cfg_path: Union[str, os.PathLike] = "configs/model.yaml",
+    model_cfg_path: Union[str, os.PathLike] = "configs/models/mossong_plus.yaml",
     save_path: Optional[str] = None,
     results_dir: Optional[str] = None,
 ):
@@ -347,7 +347,7 @@ def main(args=None):
             parsed_args.defaults_path or "configs/defaults.yaml"
         )
         model_cfg_path = (
-            parsed_args.model_cfg_path or "configs/model.yaml"
+            parsed_args.model_cfg_path or "configs/models/mossong_plus.yaml"
         )
 
     train_supervised(

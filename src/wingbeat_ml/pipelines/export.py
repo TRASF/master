@@ -326,7 +326,7 @@ def main(args=None):
     )
     parser.add_argument(
         "--model-config",
-        default="configs/model.yaml",
+        default="configs/models/mossong_plus.yaml",
     )
     parser.add_argument("--weights", required=True)
     parser.add_argument(

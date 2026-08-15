@@ -75,7 +75,7 @@ class TestDeploymentParity(unittest.TestCase):
             fast_model = FastTFLiteModel(model_path)
             dummy_audio = np.random.randn(2400).astype(np.float32)
 
-            class_id, conf = fast_model.predict_fast(dummy_audio)
+            class_id, conf, _ = fast_model.predict_fast(dummy_audio)
             self.assertGreaterEqual(class_id, 0)
             self.assertLess(class_id, 11)
             self.assertGreaterEqual(conf, 0.0)
