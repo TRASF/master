@@ -45,7 +45,7 @@ wandb:
   prediction_table_max_rows: 0
 
 labels:
-  No.mos: 10
+  No.Mos: 10
   Cx_quin_Male: 9
   An_dirus_Male: 5
   Cx_quin_Female: 8
@@ -174,7 +174,7 @@ classes:
   - An_minimus_Male
   - Cx_quin_Female
   - Cx_quin_Male
-  - No.mos
+  - No.Mos
 
 dataset:
   indoor: dataset/MSB/Indoor

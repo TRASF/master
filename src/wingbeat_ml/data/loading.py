@@ -49,8 +49,15 @@ class DataLoader:
             cls_dir = directory / cls_name
 
             if not cls_dir.is_dir():
-                print(f"Warning: class directory not found: {cls_dir}")
-                continue
+                candidates = [
+                    d for d in directory.iterdir()
+                    if d.is_dir() and d.name.lower() == cls_name.lower()
+                ]
+                if candidates:
+                    cls_dir = candidates[0]
+                else:
+                    print(f"Warning: class directory not found: {cls_dir}")
+                    continue
 
             class_files = []
             for file_ext in self.file_exts:
