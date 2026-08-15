@@ -68,5 +68,38 @@ class TestMosSongPlusModel(unittest.TestCase):
         )
 
 
+    def test_leaky_relu_layer_support(self):
+        cfg = {
+            "model": {
+                "mossong_plus": {
+                    "layers": [
+                        {"type": "conv1d", "filters": 16, "kernel_size": 10, "activation": None},
+                        {"type": "leaky_relu", "negative_slope": 0.1},
+                        {"type": "flatten"},
+                    ]
+                }
+            }
+        }
+        model = self.build(cfg)
+        self.assertIn("leaky_re_lu", [l.name for l in model.layers])
+        self.assertEqual(model.layers[2].negative_slope, 0.1)
+
+    def test_relu6_layer_and_activation_support(self):
+        cfg = {
+            "model": {
+                "mossong_plus": {
+                    "layers": [
+                        {"type": "conv1d", "filters": 16, "kernel_size": 10, "activation": "relu6"},
+                        {"type": "conv1d", "filters": 16, "kernel_size": 10, "activation": None},
+                        {"type": "relu", "max_value": 6},
+                        {"type": "flatten"},
+                    ]
+                }
+            }
+        }
+        model = self.build(cfg)
+        self.assertEqual(model.output_shape, (None, 11))
+
+
 if __name__ == "__main__":
     unittest.main()

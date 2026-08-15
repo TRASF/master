@@ -33,6 +33,7 @@ export WINGBEAT_DATASET_DIR="$PWD/dataset/MSB/Indoor"
 export WINGBEAT_PROFILE="$PWD/configs/profiles/local.yaml"
 export WINGBEAT_ENABLE_WANDB=false
 bash ops/wandb/train-pretrain.sh
+python -m wingbeat_ml.pipelines.pretrain --defaults_path configs/defaults.yaml --model_cfg_path configs/models/mossong_plus.yaml
 ```
 
 ## Quality, promotion, and export

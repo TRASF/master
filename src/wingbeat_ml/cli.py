@@ -139,6 +139,92 @@ def main(args=None):
         default=None,
     )
 
+    explain_parser = subparsers.add_parser(
+        "explain",
+        help="Run post-hoc XAI analysis using SignalGrad-CAM",
+    )
+    explain_parser.add_argument(
+        "--checkpoint",
+        required=True,
+        help="Path to trained .keras or .h5 checkpoint / weights",
+    )
+    explain_parser.add_argument(
+        "--model-config",
+        help="Optional model YAML config (for loading weights-only .h5)",
+    )
+    explain_parser.add_argument(
+        "--defaults-path",
+        default="configs/defaults.yaml",
+        help="Path to base configuration defaults YAML",
+    )
+    explain_parser.add_argument(
+        "--split",
+        default="test",
+        choices=["train", "val", "test"],
+        help="Dataset split to evaluate (default: test)",
+    )
+    explain_parser.add_argument(
+        "--dataset-domain",
+        default="all",
+        choices=["indoor", "outdoor", "all"],
+        help="Domain filter (default: all)",
+    )
+    explain_parser.add_argument(
+        "--samples-per-class",
+        type=int,
+        default=5,
+        help="Number of real samples to collect per class (default: 5)",
+    )
+    explain_parser.add_argument(
+        "--correct-only",
+        action="store_true",
+        default=True,
+        help="Filter correctly classified samples (default: True)",
+    )
+    explain_parser.add_argument(
+        "--incorrect-only",
+        action="store_true",
+        default=False,
+        help="Filter misclassified samples",
+    )
+    explain_parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed (default: 42)",
+    )
+    explain_parser.add_argument(
+        "--class",
+        dest="class_filter",
+        help="Optional single target class name filter",
+    )
+    explain_parser.add_argument(
+        "--layer",
+        default="all",
+        help="Target convolutional layer name for Grad-CAM (default: all)",
+    )
+    explain_parser.add_argument(
+        "--method",
+        default="Grad-CAM",
+        choices=["Grad-CAM", "HiResCAM"],
+        help="CAM explainer method",
+    )
+    explain_parser.add_argument(
+        "--output-dir",
+        default="artifacts/explanations",
+        help="Output directory for diagnostic plots",
+    )
+    explain_parser.add_argument(
+        "--wandb",
+        action="store_true",
+        help="Log explanation figures to W&B",
+    )
+    explain_parser.add_argument(
+        "--allow-degenerate-cam",
+        action="store_true",
+        help="Override error on degenerate sanity check",
+    )
+
     parsed_args = parser.parse_args(args)
 
     if parsed_args.command == "version":
@@ -295,6 +381,32 @@ def main(args=None):
             sys.exit(0)
         except Exception as error:
             print(f"TFLite export failed: {error}", file=sys.stderr)
+            sys.exit(1)
+    elif parsed_args.command == "explain":
+        try:
+            from wingbeat_ml.pipelines.explain import run_explain_pipeline
+
+            run_explain_pipeline(
+                checkpoint_path=parsed_args.checkpoint,
+                model_config_path=parsed_args.model_config,
+                defaults_path=parsed_args.defaults_path,
+                split=parsed_args.split,
+                dataset_domain=parsed_args.dataset_domain,
+                samples_per_class=parsed_args.samples_per_class,
+                correct_only=parsed_args.correct_only and not parsed_args.incorrect_only,
+                incorrect_only=parsed_args.incorrect_only,
+                seed=parsed_args.seed,
+                class_filter=parsed_args.class_filter,
+                target_layer=parsed_args.layer,
+                explainer=parsed_args.method,
+                output_dir=parsed_args.output_dir,
+                wandb_log=parsed_args.wandb,
+                allow_degenerate_cam=parsed_args.allow_degenerate_cam,
+            )
+            print("SignalGrad-CAM explanation completed successfully.")
+            sys.exit(0)
+        except Exception as error:
+            print(f"Explanation failed: {error}", file=sys.stderr)
             sys.exit(1)
     else:
         parser.print_help()

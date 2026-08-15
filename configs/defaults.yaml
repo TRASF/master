@@ -12,9 +12,9 @@ model:
   id: mossong_plus
   pretrained_weights: null
   output_activation: null
-  bn_conv1: true
-  bn_conv2: true
-  bn_conv3: true
+  bn_conv1: false
+  bn_conv2: false
+  bn_conv3: false
   bn_dense1: false
   bn_dense2: false
 
@@ -185,9 +185,9 @@ dataset:
   indoor: dataset/MSB/Indoor
   mosLab: dataset/Philip
   outdoor: dataset/MSB/Outdoor
-  val_dir: dataset/MSB/Outdoor
+  val_dir: null
   test_dir: null
-  train_dir: dataset/MSB/Indoor
+  train_dir: dataset/MSB/Outdoor
   manifest_sha256: null
   split_list:
     - 0.8

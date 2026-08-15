@@ -243,7 +243,7 @@ def train_supervised(
 
     app_cfg = validate_config(config)
     epochs = app_cfg.train.epochs
-
+    print(f"\nModel Summary:\n{components.model.summary()}")
     print(f"Output activation: {app_cfg.model.output_activation}")
     print(f"\nStarting training for {epochs} epochs...")
 
