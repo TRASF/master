@@ -4,93 +4,149 @@ from typing import Any
 
 import tensorflow.keras as keras
 
-from wingbeat_ml.models.layers import RepConv1D, SincConv1D
-from wingbeat_ml.models.initializers import (
-    FIRBandpassInitializer,
+from wingbeat_ml.models.layers import (
+    RepConv1D,
+    SincConv1D,
 )
 
-# ----------------------------------------------------------------------
-# Extension points
-#
-# Adding a normal/custom layer should usually require only:
-#   1. import the class
-#   2. add one entry here
-#
-# RepConv1D stays special because its BatchNorm lives inside the block.
-# ----------------------------------------------------------------------
-
-LAYER_TYPES = {
-    "conv1d": keras.layers.Conv1D,
-    "separable_conv1d": keras.layers.SeparableConv1D,
-    "depthwise_conv1d": keras.layers.DepthwiseConv1D,
-    "dense": keras.layers.Dense,
-    "sincconv1d": SincConv1D,
-    "maxpool1d": keras.layers.MaxPooling1D,
-    "avgpool1d": keras.layers.AveragePooling1D,
-    "flatten": keras.layers.Flatten,
-    "global_avg_pool": keras.layers.GlobalAveragePooling1D,
-    "global_max_pool": keras.layers.GlobalMaxPooling1D,
-    "dropout": keras.layers.Dropout,
-    "leaky_relu": keras.layers.LeakyReLU,
-    "leakyrelu": keras.layers.LeakyReLU,
-    "relu": keras.layers.ReLU,
-}
-
-TRAINABLE_TYPES = {
-    "conv1d",
-    "separable_conv1d",
-    "depthwise_conv1d",
-    "dense",
-    "sincconv1d",
-}
-
-REGULARIZER_KEYS = {
-    "conv1d": ("kernel_regularizer",),
-    "dense": ("kernel_regularizer",),
-    "separable_conv1d": (
-        "depthwise_regularizer",
-        "pointwise_regularizer",
-    ),
-    "depthwise_conv1d": ("depthwise_regularizer",),
-    "sincconv1d": (),
-}
-
-INITIALIZER_TYPES = {
-    "fir_bandpass": FIRBandpassInitializer,
-}
 
 class MosSongPlusModel:
     """
-    Small config-driven 1D model builder.
+    Config-driven MosquitoSong+ model builder.
 
-    The YAML defines the architecture. Python only handles:
-      - layer lookup
-      - optional BatchNorm placement
-      - project-wide L2 overrides
-      - optional custom initializers
-      - RepConv1D's special training/deployment structure
+    Supported trainable layers
+    --------------------------
+    Standard / built-in:
+        - conv1d
+        - separable_conv1d
+        - depthwise_conv1d
+        - dense
 
-    To add another ordinary layer:
-        add it to LAYER_TYPES.
+    Custom:
+        - sincconv1d
+        - repconv1d
 
-    To add another trainable layer:
-        also add it to TRAINABLE_TYPES and REGULARIZER_KEYS.
+    Supported utility layers
+    ------------------------
+        - maxpool1d
+        - flatten
+        - global_avg_pool
+        - global_max_pool
+        - dropout
 
-    To add another sequential architecture:
-        normally only change the YAML.
+    Notes
+    -----
+    Grouped convolution:
+        type: conv1d
+        groups: 4
+
+    Pointwise convolution:
+        type: conv1d
+        kernel_size: 1
+
+    Depthwise convolution:
+        Does NOT accept `filters`.
+
+        Output channels are:
+
+            input_channels * depth_multiplier
+
+        Use a pointwise Conv1D afterward when channel mixing or
+        channel-count changes are required.
+
+    BatchNorm policy:
+        Standard Conv/Dense/Sinc layers use:
+
+            Layer -> BatchNorm -> Activation
+
+        RepConv1D is handled separately because it owns its
+        internal Conv+BN branches.
+
+    Bias policy:
+        Bias is disabled automatically when an external
+        BatchNormalization immediately follows the layer.
     """
+
+    # ------------------------------------------------------------------
+    # Generic trainable layers.
+    #
+    # RepConv1D is intentionally NOT placed here because it owns its own
+    # internal branch normalization and activation behavior.
+    # ------------------------------------------------------------------
 
     def __init__(
         self,
         model_config: Any,
         model_overrides: dict[str, Any] | None = None,
     ):
-        self.model_cfg = self._get_model_config(model_config)
-        self.overrides = dict(model_overrides or {})
+        from wingbeat_ml.config.schema import (
+            AppConfig,
+            ModelConfig,
+        )
 
-    # ------------------------------------------------------------------
+        # --------------------------------------------------------------
+        # Normalize input configuration.
+        # --------------------------------------------------------------
+
+        if isinstance(model_config, AppConfig):
+            model_dict = model_config.model.model_dump()
+
+        elif isinstance(model_config, ModelConfig):
+            model_dict = model_config.model_dump()
+
+        elif isinstance(model_config, dict):
+            model_dict = model_config
+
+        else:
+            raise TypeError(
+                "model_config must be AppConfig, "
+                "ModelConfig, or dict."
+            )
+
+        # --------------------------------------------------------------
+        # Support:
+        #
+        # model:
+        #   mossong_plus:
+        #
+        # and the legacy:
+        #
+        # mossongplus:
+        # --------------------------------------------------------------
+
+        model_section = (
+            model_dict.get("model", {})
+            if isinstance(
+                model_dict.get("model"),
+                dict,
+            )
+            else model_dict
+        )
+
+        self.model_cfg = (
+            model_section.get("mossong_plus")
+            or model_section.get("mossongplus")
+            or model_section
+        )
+
+        self.overrides = (
+            dict(model_overrides)
+            if model_overrides
+            else {}
+        )
+
+        if not isinstance(
+            self.model_cfg,
+            dict,
+        ):
+            raise ValueError(
+                "Expected 'model.mossong_plus' "
+                "or legacy 'model.mossongplus'."
+            )
+
+    # ==================================================================
     # Public API
-    # ------------------------------------------------------------------
+    # ==================================================================
 
     def build(
         self,
@@ -99,281 +155,244 @@ class MosSongPlusModel:
         output_activation: str | None = "softmax",
         batch_size: int | None = None,
     ) -> keras.Model:
+        """
+        Construct a Functional Keras model from configuration.
+        """
+
         if output_units <= 0:
-            raise ValueError("output_units must be > 0")
+            raise ValueError(
+                "output_units must be > 0."
+            )
 
         if batch_size is None:
             inputs = keras.layers.Input(
                 shape=input_shape,
-                name="input",
             )
         else:
             inputs = keras.layers.Input(
-                batch_shape=(batch_size, *input_shape),
-                name="input",
+                batch_shape=(
+                    batch_size,
+                )
+                + input_shape,
             )
 
-        layers = self.model_cfg.get("layers")
-        if not layers:
-            raise ValueError("Expected a non-empty 'layers' configuration")
+        layers_config = self.model_cfg.get("layers")
 
-        x = inputs
-        conv_index = 0
-        dense_index = 0
+        if layers_config is None:
+            raise ValueError(
+                "Expected 'layers' configuration."
+            )
 
-        for position, raw_spec in enumerate(layers, start=1):
-            spec = dict(raw_spec)
-            layer_type = str(spec.pop("type", "")).lower()
+        if layers_config:
+            x = self._build_sequential(
+                inputs,
+                layers_config,
+            )
+        else:
+            x = inputs
 
-            if not layer_type:
-                raise ValueError(f"Layer {position} is missing 'type'")
-
-            if spec.get("padding") == "linear":
-                spec["padding"] = "valid"
-
-            if layer_type == "repconv1d":
-                conv_index += 1
-                x = self._build_repconv(
-                    x,
-                    spec,
-                    bn_key=f"bn_conv{conv_index}",
-                )
-                continue
-
-            layer_class = LAYER_TYPES.get(layer_type)
-            if layer_class is None:
-                raise ValueError(
-                    f"Unsupported layer type {layer_type!r}. "
-                    f"Available: {sorted((*LAYER_TYPES, 'repconv1d'))}"
-                )
-
-            if layer_type in TRAINABLE_TYPES:
-                if layer_type == "dense":
-                    dense_index += 1
-                    bn_key = f"bn_dense{dense_index}"
-                    l2_value = self.overrides.get("dense_l2")
-                else:
-                    conv_index += 1
-                    bn_key = f"bn_conv{conv_index}"
-                    l2_value = self.overrides.get("conv_l2")
-
-                x = self._build_trainable(
-                    x,
-                    layer_type,
-                    layer_class,
-                    spec,
-                    bn_key=bn_key,
-                    l2_value=l2_value,
-                )
+        if len(x.shape) > 2:
+            if x.shape[-1] == 1:
+                x = keras.layers.Reshape((-1,))(x)
             else:
-                # Keras already validates arguments such as pool size,
-                # dropout rate, etc., so do not duplicate that logic here.
-                x = layer_class(**spec)(x)
+                x = keras.layers.Flatten()(x)
+
+        # --------------------------------------------------------------
+        # Keep output in float32 for mixed-precision stability.
+        # --------------------------------------------------------------
 
         outputs = keras.layers.Dense(
-            int(output_units),
+            units=int(output_units),
             activation=output_activation,
             dtype="float32",
-            name="output",
         )(x)
 
         return keras.Model(
-            inputs,
-            outputs,
+            inputs=inputs,
+            outputs=outputs,
             name="MosquitoSongPlus",
         )
 
-    # ------------------------------------------------------------------
-    # Normal Conv / Dense / Sinc path
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # Model construction
+    # ==================================================================
 
-    def _build_trainable(
+    def _build_sequential(
         self,
         x,
-        layer_type: str,
-        layer_class,
-        spec: dict[str, Any],
-        *,
-        bn_key: str,
-        l2_value: float | None,
+        layers_config: list[dict[str, Any]],
     ):
-        spec = dict(spec)
+        import inspect
+        from wingbeat_ml.config.schema import parse_layer_config
+        from wingbeat_ml.models.registry import LAYER_REGISTRY
 
-        activation = spec.pop("activation", None)
-        configured_bn = spec.pop("batch_norm", False)
-        bn_config = self._batch_norm_config(configured_bn, bn_key)
+        context = {
+            "overrides": self.overrides,
+            "conv_idx": 1,
+            "dense_idx": 1,
+        }
 
-        self._apply_initializer(spec)
-        self._apply_l2(
-            spec,
-            REGULARIZER_KEYS[layer_type],
-            l2_value,
-        )
+        for layer_position, raw_def in enumerate(layers_config, start=1):
+            layer_config = parse_layer_config(raw_def)
+            factory = LAYER_REGISTRY.get(layer_config.type)
 
-        if bn_config is not None:
-            # Existing project convention: BatchNorm follows the layer.
-            spec.setdefault("use_bias", False)
-
-        x = layer_class(**spec)(x)
-
-        if bn_config is not None:
-            x = keras.layers.BatchNormalization(**bn_config)(x)
-
-        if activation:
-            x = keras.layers.Activation(activation)(x)
+            if callable(factory):
+                sig = inspect.signature(factory)
+                if len(sig.parameters) == 3:
+                    x = factory(x, layer_config, context)
+                elif len(sig.parameters) == 2:
+                    x = factory(x, layer_config)
+                else:
+                    spec = layer_config.model_dump() if hasattr(layer_config, "model_dump") else dict(layer_config)
+                    spec.pop("type", None)
+                    x = factory(**spec)(x)
+            else:
+                spec = layer_config.model_dump() if hasattr(layer_config, "model_dump") else dict(layer_config)
+                spec.pop("type", None)
+                x = factory(**spec)(x)
 
         return x
 
-    # ------------------------------------------------------------------
-    # RepConv1D is the one special case
-    # ------------------------------------------------------------------
-
-    def _build_repconv(
-        self,
-        x,
-        spec: dict[str, Any],
-        *,
-        bn_key: str,
-    ):
-        spec = dict(spec)
-
-        activation = spec.pop("activation", "relu")
-        configured_bn = spec.pop("batch_norm", True)
-        bn_config = self._batch_norm_config(configured_bn, bn_key)
-
-        bn_momentum = float(spec.pop("bn_momentum", 0.99))
-        bn_epsilon = float(spec.pop("bn_epsilon", 1e-3))
-
-        if bn_config:
-            bn_momentum = float(
-                bn_config.get("momentum", bn_momentum)
-            )
-            bn_epsilon = float(
-                bn_config.get("epsilon", bn_epsilon)
-            )
-
-        kernel_regularizer = spec.pop("kernel_regularizer", None)
-
-        conv_l2 = self.overrides.get("conv_l2")
-        if kernel_regularizer is None and conv_l2 is not None:
-            value = float(conv_l2)
-            if value > 0:
-                kernel_regularizer = keras.regularizers.l2(value)
-
-        return RepConv1D(
-            activation=activation,
-            use_batch_norm=bn_config is not None,
-            bn_momentum=bn_momentum,
-            bn_epsilon=bn_epsilon,
-            kernel_regularizer=kernel_regularizer,
-            **spec,
-        )(x)
-
-    # ------------------------------------------------------------------
-    # Small helpers
-    # ------------------------------------------------------------------
-
-    def _batch_norm_config(
-        self,
-        configured: bool | dict[str, Any],
-        override_key: str,
-    ) -> dict[str, Any] | None:
-        override = self.overrides.get(override_key)
-        if override is not None:
-            enabled = bool(override)
-        else:
-            enabled = bool(configured)
-
-        if not enabled:
-            return None
-
-        config = dict(configured) if isinstance(configured, dict) else {}
-
-        if self.overrides.get("bn_momentum") is not None:
-            config["momentum"] = float(self.overrides["bn_momentum"])
-
-        return config
+    # ==================================================================
+    # Regularization
+    # ==================================================================
 
     @staticmethod
-    def _apply_l2(
-        spec: dict[str, Any],
-        keys: tuple[str, ...],
+    def _apply_l2_regularization(
+        *,
+        config: dict[str, Any],
         l2_value: float | None,
-    ) -> None:
-        if l2_value is None or not keys:
+        regularizer_keys: tuple[str, ...],
+    ):
+        """
+        Apply layer-family-specific L2 regularization.
+
+        Examples:
+
+        Conv1D:
+            kernel_regularizer
+
+        SeparableConv1D:
+            depthwise_regularizer
+            pointwise_regularizer
+
+        DepthwiseConv1D:
+            depthwise_regularizer
+        """
+
+        if (
+            l2_value is None
+            or not regularizer_keys
+        ):
             return
 
-        value = float(l2_value)
+        value = float(
+            l2_value
+        )
+
         if value <= 0:
             return
 
-        regularizer = keras.regularizers.l2(value)
-
-        for key in keys:
-            spec.setdefault(key, regularizer)
-
-    @staticmethod
-    def _apply_initializer(spec: dict[str, Any]) -> None:
-        """
-        Supports both normal Keras initializers:
-
-            kernel_initializer: he_normal
-
-        and small project-local initializer specs:
-
-            kernel_initializer:
-              type: fir_bandpass
-              sample_rate: 8000
-              min_freq: 300
-              max_freq: 3800
-        """
-        initializer = spec.get("kernel_initializer")
-
-        if not isinstance(initializer, dict):
-            return
-
-        config = dict(initializer)
-        initializer_type = str(config.pop("type", "")).lower()
-
-        initializer_class = INITIALIZER_TYPES.get(initializer_type)
-        if initializer_class is None:
-            raise ValueError(
-                f"Unknown custom initializer {initializer_type!r}. "
-                f"Available: {sorted(INITIALIZER_TYPES)}"
+        regularizer = (
+            keras.regularizers.l2(
+                value
             )
-
-        spec["kernel_initializer"] = initializer_class(**config)
-
-    @staticmethod
-    def _get_model_config(model_config: Any) -> dict[str, Any]:
-        """
-        Accept AppConfig, ModelConfig, or a plain dict without coupling the
-        builder to those classes at import time.
-        """
-        if hasattr(model_config, "model_dump"):
-            model_dict = model_config.model_dump()
-        elif isinstance(model_config, dict):
-            model_dict = model_config
-        else:
-            raise TypeError(
-                "model_config must be a Pydantic config model or dict"
-            )
-
-        model_section = model_dict.get("model", model_dict)
-
-        if not isinstance(model_section, dict):
-            raise ValueError("'model' must be a mapping")
-
-        config = (
-            model_section.get("mossong_plus")
-            or model_section.get("mossongplus")
-            or model_section
         )
 
-        if not isinstance(config, dict):
-            raise ValueError("MosSongPlus configuration must be a mapping")
+        for key in regularizer_keys:
+            config.setdefault(
+                key,
+                regularizer,
+            )
 
-        return config
+    # ==================================================================
+    # BatchNorm configuration
+    # ==================================================================
+
+    def _resolve_batch_norm(
+        self,
+        *,
+        configured: bool | dict[str, Any],
+        override_key: str,
+    ) -> bool | dict[str, Any]:
+        """
+        Resolve per-layer BatchNorm state using:
+
+        1. explicit runtime override;
+        2. YAML configuration;
+        3. global BN momentum override.
+        """
+
+        bn_momentum = self.overrides.get(
+            "bn_momentum"
+        )
+
+        # --------------------------------------------------------------
+        # Runtime override has highest priority.
+        # --------------------------------------------------------------
+
+        if (
+            override_key in self.overrides
+            and self.overrides[override_key] is not None
+        ):
+            enabled = bool(
+                self.overrides[
+                    override_key
+                ]
+            )
+
+            if not enabled:
+                return False
+
+            if bn_momentum is None:
+                return True
+
+            return {
+                "momentum": float(
+                    bn_momentum
+                )
+            }
+
+        # --------------------------------------------------------------
+        # Disabled in configuration.
+        # --------------------------------------------------------------
+
+        if not configured:
+            return False
+
+        # --------------------------------------------------------------
+        # Detailed BN configuration.
+        # --------------------------------------------------------------
+
+        if isinstance(
+            configured,
+            dict,
+        ):
+            config = dict(
+                configured
+            )
+
+            if bn_momentum is not None:
+                config["momentum"] = float(
+                    bn_momentum
+                )
+
+            return config
+
+        # --------------------------------------------------------------
+        # Boolean True.
+        # --------------------------------------------------------------
+
+        if bn_momentum is not None:
+            return {
+                "momentum": float(
+                    bn_momentum
+                )
+            }
+
+        return True
 
 
-__all__ = ["MosSongPlusModel"]
+__all__ = [
+    "MosSongPlusModel",
+]

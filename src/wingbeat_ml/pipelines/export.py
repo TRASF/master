@@ -11,13 +11,13 @@ from pathlib import Path
 import numpy as np
 import tensorflow as tf
 
-from wingbeat_ml.export.bundle import (
+from wingbeat_ml.deployment.bundle import (
     export_input_quantization_header,
     export_ota_config_json,
     export_tflite_to_c_header,
     write_esp32_readme,
 )
-from wingbeat_ml.export.tflite import (
+from wingbeat_ml.deployment.tflite import (
     convert_dynamic_range_tflite,
     convert_float_tflite,
     convert_full_int8_tflite,
@@ -27,7 +27,7 @@ from wingbeat_ml.export.tflite import (
     make_representative_dataset,
     run_quantization_debugger,
 )
-from wingbeat_ml.export.verify import (
+from wingbeat_ml.deployment.verify import (
     compare_model_pair_agreement,
     evaluate_keras_input_qdq_model,
     evaluate_keras_model,

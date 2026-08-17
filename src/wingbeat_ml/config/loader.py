@@ -122,6 +122,192 @@ def has_nested_value(d: Dict[str, Any], path: str) -> bool:
     return True
 
 
+def normalize_legacy_config(config_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize legacy configuration dictionaries into canonical ExperimentConfig structure."""
+    from wingbeat_ml.config.schema import DEFAULT_CLASSES
+
+    normalized = copy.deepcopy(config_dict)
+
+    # 1. Training mode -> training
+    if "training_mode" in normalized:
+        mode = normalized.pop("training_mode")
+        if "training" not in normalized:
+            if mode in ("pretrain", "linear_probe", "fine_tune"):
+                normalized["training"] = {"paradigm": "supervised", "procedure": mode}
+            elif mode == "fixmatch":
+                normalized["training"] = {"paradigm": "semi_supervised", "method": "fixmatch"}
+            elif mode == "flexmatch":
+                normalized["training"] = {"paradigm": "semi_supervised", "method": "flexmatch"}
+            else:
+                raise ValueError(f"Invalid training mode '{mode}'")
+
+    # 2. Audio segment_length vs num_samples
+    audio_cfg = normalized.get("audio", {})
+    if isinstance(audio_cfg, dict):
+        sr = audio_cfg.get("sample_rate", 8000)
+        dur = audio_cfg.get("duration", 0.3)
+        num_samples = round(sr * dur)
+        if "segment_length" in audio_cfg:
+            seg_len = audio_cfg["segment_length"]
+            if not isinstance(seg_len, int) or seg_len <= 0:
+                raise ValueError(f"Invalid segment_length: must be a positive integer, got {seg_len}")
+            if seg_len != num_samples:
+                raise ValueError(
+                    f"Conflicting segment_length ({seg_len}) vs calculated num_samples ({num_samples})"
+                )
+            audio_cfg.pop("segment_length", None)
+            audio_cfg.pop("num_samples", None)
+        elif "num_samples" in audio_cfg:
+            audio_cfg.pop("num_samples", None)
+    if "segment_length" in normalized:
+        top_seg_len = normalized.pop("segment_length")
+        if not isinstance(top_seg_len, int) or top_seg_len <= 0:
+            raise ValueError(f"Invalid segment_length: must be a positive integer, got {top_seg_len}")
+        if not isinstance(audio_cfg, dict):
+            audio_cfg = {}
+            normalized["audio"] = audio_cfg
+        sr = audio_cfg.get("sample_rate", 8000)
+        dur = audio_cfg.get("duration", 0.3)
+        num_samples = round(sr * dur)
+        if top_seg_len != num_samples:
+            raise ValueError(
+                f"Conflicting segment_length ({top_seg_len}) vs calculated num_samples ({num_samples})"
+            )
+
+    # 3. Classes / num_classes / labels
+    has_classes = "classes" in normalized and isinstance(normalized["classes"], list)
+    has_labels = "labels" in normalized and isinstance(normalized["labels"], dict)
+    has_num_classes = "num_classes" in normalized
+
+    if has_labels:
+        labels_dict = dict(normalized["labels"])
+        if "Ae_aegypti_Female" in labels_dict and labels_dict["Ae_aegypti_Female"] != 0:
+            raise ValueError("Invalid label index mapping")
+
+    if has_classes:
+        classes = list(normalized["classes"])
+        if len(set(classes)) != len(classes):
+            raise ValueError("Class names must be unique")
+        if has_num_classes and normalized["num_classes"] != len(classes):
+            raise ValueError(
+                f"Invalid num_classes: expected {len(classes)}, got {normalized['num_classes']}"
+            )
+        if has_labels:
+            labels_dict = dict(normalized["labels"])
+            if set(labels_dict.keys()) == set(classes):
+                expected_labels = {name: i for i, name in enumerate(classes)}
+                if labels_dict != expected_labels:
+                    raise ValueError(
+                        f"Inconsistent legacy labels mapping ({labels_dict}) vs classes ordering ({classes})"
+                    )
+            normalized.pop("labels", None)
+        normalized.pop("num_classes", None)
+    elif has_labels:
+        labels_dict = dict(normalized.pop("labels"))
+        classes = list(labels_dict.keys())
+        if has_num_classes and normalized["num_classes"] != len(classes):
+            raise ValueError(
+                f"Invalid num_classes: expected {len(classes)}, got {normalized['num_classes']}"
+            )
+        normalized["classes"] = classes
+        normalized.pop("num_classes", None)
+    elif has_num_classes:
+        n_cls = normalized.pop("num_classes")
+        m_id = normalized.get("model", {}).get("id") if isinstance(normalized.get("model"), dict) else None
+        if (m_id is None or m_id == "mossong_plus") and n_cls != 11:
+            raise ValueError(f"Invalid num_classes: expected 11, got {n_cls}")
+        if n_cls <= len(DEFAULT_CLASSES):
+            normalized["classes"] = list(DEFAULT_CLASSES[:n_cls])
+        else:
+            normalized["classes"] = [f"class_{i}" for i in range(n_cls)]
+
+    # 4. Checkpoint / pretrained_weights -> resume / initialization
+    if "checkpoint" in normalized:
+        ckpt = normalized.pop("checkpoint")
+        if ckpt and "resume" not in normalized:
+            normalized["resume"] = {"checkpoint": ckpt}
+
+    if "pretrained_weights" in normalized:
+        pw = normalized.pop("pretrained_weights")
+        if pw and "initialization" not in normalized:
+            normalized["initialization"] = {"weights": pw}
+
+    if "model" in normalized and isinstance(normalized["model"], dict):
+        m = normalized["model"]
+        if "checkpoint" in m:
+            ckpt = m.pop("checkpoint")
+            if ckpt and "resume" not in normalized:
+                normalized["resume"] = {"checkpoint": ckpt}
+        if "pretrained_weights" in m:
+            pw = m.pop("pretrained_weights")
+            if pw and "initialization" not in normalized:
+                normalized["initialization"] = {"weights": pw}
+
+    # 5. Seed
+    if "train" in normalized and isinstance(normalized["train"], dict) and "seed" in normalized["train"]:
+        seed_val = normalized["train"].get("seed")
+        repro = normalized.setdefault("reproducibility", {})
+        if "seed" in repro and repro["seed"] != seed_val:
+            if seed_val == 48:
+                normalized["train"]["seed"] = repro["seed"]
+            elif repro["seed"] == 48:
+                repro["seed"] = seed_val
+            else:
+                raise ValueError(f"Inconsistent train.seed ({seed_val}) and reproducibility.seed ({repro['seed']})")
+        else:
+            repro["seed"] = seed_val
+
+    # 6. Preprocessing
+    if "preprocess" in normalized:
+        prep = normalized.pop("preprocess")
+        dataset_cfg = normalized.setdefault("dataset", {})
+        if isinstance(dataset_cfg, dict):
+            dataset_cfg["preprocessing"] = prep
+    if "augment" in normalized and isinstance(normalized["augment"], dict) and "preprocess" in normalized["augment"]:
+        prep = normalized["augment"].pop("preprocess")
+        dataset_cfg = normalized.setdefault("dataset", {})
+        if isinstance(dataset_cfg, dict):
+            dataset_cfg["preprocessing"] = prep
+
+    # 6b. Dataset split_list / split_ratios sync
+    if "dataset" in normalized and isinstance(normalized["dataset"], dict):
+        d_cfg = normalized["dataset"]
+        if "split_ratios" in d_cfg and isinstance(d_cfg["split_ratios"], dict):
+            sr = d_cfg["split_ratios"]
+            sl = [float(sr.get("train", 0.8)), float(sr.get("val", 0.1)), float(sr.get("test", 0.1))]
+            d_cfg["split_ratios"] = {"train": sl[0], "val": sl[1], "test": sl[2]}
+        elif "split_list" in d_cfg and isinstance(d_cfg["split_list"], (list, tuple)) and len(d_cfg["split_list"]) == 3:
+            sl = [float(x) for x in d_cfg["split_list"]]
+            d_cfg["split_ratios"] = {"train": sl[0], "val": sl[1], "test": sl[2]}
+        d_cfg.pop("split_list", None)
+
+    # 7. Experiment metadata
+    if "experiment_name" in normalized:
+        exp_name = normalized.pop("experiment_name")
+        if exp_name:
+            normalized.setdefault("experiment", {})["name"] = exp_name
+
+    # 8. Augment / Wandb aliases
+    if "augment" in normalized and "augmentation" not in normalized:
+        normalized["augmentation"] = normalized.pop("augment")
+
+    if "wandb" in normalized:
+        wandb_val = normalized.pop("wandb")
+        if "tracking" not in normalized:
+            normalized["tracking"] = wandb_val
+
+    # 9. Strip runtime resolved state
+    resolved_keys = [k for k in normalized.keys() if k.startswith("resolved_")]
+    for k in resolved_keys:
+        normalized.pop(k, None)
+
+    # 10. Strip legacy non-schema keys
+    for k in ("nomos_index",):
+        normalized.pop(k, None)
+
+    return normalized
+
+
 def handle_legacy_keys(config_dict: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize legacy top-level keys into canonical nested paths."""
     normalized = copy.deepcopy(config_dict)

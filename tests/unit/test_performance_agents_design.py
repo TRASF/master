@@ -166,6 +166,7 @@ class TestEvaluationAndLogging(unittest.TestCase):
         }
         config = minimal_config()
         config["classes"] = ["female", "male"]
+        config["num_classes"] = 2
         config["wandb"] = {"enabled": False}
         builder = mock.Mock()
 

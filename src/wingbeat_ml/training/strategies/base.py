@@ -8,8 +8,8 @@ class TrainingStrategy:
     def train_epoch(self, datasets, *, epoch):
         raise NotImplementedError
 
-    def validate_epoch(self, dataset, *, epoch):
-        raise NotImplementedError
+    def validate_epoch(self, dataset=None, *, epoch=0):
+        return {}
 
     def on_epoch_end(self, epoch, logs):
         pass

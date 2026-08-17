@@ -259,24 +259,43 @@ def report_results(model, test_results, file_results, train_file_results, cfg, d
     # Print metrics to stdout
     print(f"Final Test Accuracy: {test_results['metrics']['accuracy']:.4f}")
     print(f"Final Test Macro F1: {test_results['metrics']['macro_f1']:.4f}")
-    if console == "verbose":
-        print(
-            "Confusion Matrix: Test Accuracy: "
-            f"{test_results['metrics']['accuracy']:.4f} | Macro F1: "
-            f"{test_results['metrics']['macro_f1']:.4f}"
-        )
-        print(np.array(test_results["confusion_matrix"]))
 
-    if report_target == "console" or console == "verbose":
+    eval_cm = getattr(app_cfg.evaluation, "confusion_matrix", True)
+    eval_report = getattr(app_cfg.evaluation, "classification_report", True)
+    eval_pred_dist = getattr(app_cfg.evaluation, "prediction_distribution", False) or getattr(app_cfg.logging, "prediction_distribution", False)
+
+    if eval_cm or console == "verbose":
+        print("\nConfusion Matrix:")
+        cm_arr = np.array(test_results["confusion_matrix"])
+        header = f"{'Class':>22} | " + " ".join(f"{i:>4}" for i in range(len(classes)))
+        print(header)
+        print("-" * len(header))
+        for idx, row in enumerate(cm_arr):
+            cls_name = classes[idx] if idx < len(classes) else str(idx)
+            row_str = " ".join(f"{val:>4}" for val in row)
+            print(f"{cls_name:>22} | {row_str}")
+
+    if eval_report or report_target == "console" or console == "verbose":
         print("\nClassification Report:")
         for label, metrics in test_results["report"].items():
             if label in classes:
+                supp = metrics.get("support", 0)
                 print(
-                    f"Class {label:20} - Precision: "
+                    f"Class {label:22} - Precision: "
                     f"{metrics['precision']:.4f}, Recall: "
                     f"{metrics['recall']:.4f}, F1-Score: "
-                    f"{metrics['f1-score']:.4f}"
+                    f"{metrics['f1-score']:.4f}, Support: {supp}"
                 )
+
+    if eval_pred_dist or console == "verbose":
+        pred_dist = test_results.get("prediction_distribution", {})
+        pred_counts = test_results.get("prediction_counts", {})
+        if pred_dist:
+            print("\nPrediction Distribution:")
+            for cls_name in classes:
+                ratio = pred_dist.get(cls_name, 0.0)
+                cnt = pred_counts.get(cls_name, 0)
+                print(f"Class {cls_name:22} - Predictions: {cnt:5d} ({ratio * 100:.1f}%)")
 
     if file_results is not None and train_file_results is not None:
         print(f"Final File-level Test Accuracy: {file_results['metrics']['accuracy']:.4f}")

@@ -85,10 +85,10 @@ def build_supervised_components(
     cache_events = consume_cache_events()
     cache_identities = sorted({event["key"] for event in cache_events})
 
-    timing_dict = dict(config.resolved_timing or {})
+    timing_dict = dict(getattr(config, "resolved_timing", None) or {})
     timing_dict["dataset_setup_seconds"] = dataset_setup_seconds
 
-    provenance_dict = dict(config.resolved_provenance or {})
+    provenance_dict = dict(getattr(config, "resolved_provenance", None) or {})
     provenance_dict["cache_identity"] = cache_identities
 
     if console != "quiet":
@@ -127,7 +127,7 @@ def build_supervised_components(
         except ImportError:
             pass
 
-    resolved_run = config.resolved_run or {}
+    resolved_run = getattr(config, "resolved_run", None) or {}
     save_path = resolved_run.get("save_path")
     if save_path:
         metadata_path = Path(save_path).parent / "run_metadata.json"

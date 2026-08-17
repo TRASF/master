@@ -1,7 +1,7 @@
 """Explicit strategy registry. Add entries here when implementing new strategies."""
 
 from wingbeat_ml.training.strategies.supervised import SupervisedStrategy
-from wingbeat_ml.training.strategies.ssl import FixMatchStrategy, FlexMatchStrategy
+from wingbeat_ml.training.strategies.ssl_tf import FixMatchStrategy, FlexMatchStrategy
 
 STRATEGIES = {
     "supervised": SupervisedStrategy,

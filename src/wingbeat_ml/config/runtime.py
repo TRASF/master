@@ -130,6 +130,16 @@ def configure_training_runtime(
         tf.random.set_seed(seed)
         if hasattr(tf.keras.utils, "set_random_seed"):
             tf.keras.utils.set_random_seed(seed)
+        deterministic_ops = (
+            getattr(repro, "deterministic_ops", False)
+            if not isinstance(repro, dict)
+            else repro.get("deterministic_ops", False)
+        )
+        if deterministic_ops and hasattr(tf.config.experimental, "enable_op_determinism"):
+            try:
+                tf.config.experimental.enable_op_determinism()
+            except Exception:
+                pass
         if console_str == "verbose":
             print(f"Reproducibility enabled. Seed: {seed}")
 

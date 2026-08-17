@@ -12,11 +12,15 @@ model:
   id: mossong_plus
   pretrained_weights: null
   output_activation: null
+  bn_conv1: null
+  bn_conv2: null
+  bn_conv3: null
+  bn_dense1: null
+  bn_dense2: null
 
 adabn:
   enabled: false
 
-training_mode: pretrain
 train:
   seed: 48
   epochs: 1000
@@ -24,7 +28,7 @@ train:
   batch_size: 128
 
 wandb:
-  project: MosSongPlus
+  project: Master
   tags:
     - 11class
     - nomos
@@ -37,25 +41,12 @@ wandb:
     - mixup04
   group: 11class-indoor-best-observed
   notes: "Best observed 11-class Indoor pretrain config from W&B: batch128 lr1e-3 seed48 mixup alpha0.4 overlay0.22 random_gain0.3."
-  enabled: false
+  enabled: true
   job_type: train
   log_weights_freq: 0
   aggregate_plot_freq: 0
   log_prediction_audio: false
   prediction_table_max_rows: 0
-
-labels:
-  No.Mos: 10
-  Cx_quin_Male: 9
-  An_dirus_Male: 5
-  Cx_quin_Female: 8
-  Ae_aegypti_Male: 1
-  An_dirus_Female: 4
-  An_minimus_Male: 7
-  Ae_aegypti_Female: 0
-  An_minimus_Female: 6
-  Ae_albopictus_Male: 3
-  Ae_albopictus_Female: 2
 
 ssl:
   enabled: false
@@ -174,7 +165,7 @@ classes:
   - An_minimus_Male
   - Cx_quin_Female
   - Cx_quin_Male
-  - No.Mos
+  - No.mos
 
 dataset:
   indoor: dataset/MSB/Indoor
@@ -232,24 +223,26 @@ optimizer:
   name: Adam
   learning_rate: 0.001
 
-preprocess:
-  dc_removal: true
-
-nomos_index: 10
-num_classes: 11
-segment_length: 2400
-
-class_weights:
-  mode: auto
+# ==============================================================================
+# Reproducibility & Performance (Determinism vs Acceleration)
+# ==============================================================================
+reproducibility:
+  seed: 48                  # Master random seed across Python, NumPy, TensorFlow
+  enabled: true             # Global reproducibility toggle
+  deterministic_ops: false   # GPU CUDA op determinism (set false when jit_compile: true due to XLA MaxPoolGrad limitation)
+  deterministic_data: true  # Seeded dataset shuffling and augmentation pipelines
 
 performance:
   precision: mixed_float16
   steps_per_call: 20
-  jit_compile: true
+  jit_compile: true          # XLA graph compilation for GPU acceleration
   profiler:
     enabled: false
     start_step: 10
     num_steps: 10
+
+class_weights:
+  mode: auto
 
 logging:
   console: normal
@@ -257,23 +250,21 @@ logging:
   model_summary: false
   classification_report: file
   jsonl: true
+  prediction_distribution: false
 
 evaluation:
   sample_level:
     enabled: true
   file_level:
     enabled: false
+  confusion_matrix: true
+  classification_report: true
+  prediction_distribution: false
 
 cache:
   enabled: true
   schema_version: 2
   root: null
-
-reproducibility:
-  seed: 48
-  enabled: true
-  deterministic_ops: false
-  deterministic_data: false
 
 # # Flattened autoresearch override keys logged in W&B config
 # train.seed: 48
@@ -294,7 +285,7 @@ reproducibility:
 # wandb.group: autoresearch-gpu2-50-indoor-outdoor-robust-v1
 # wandb.notes: "I07_gpuE_b128_lr1e3_o022_seed48: Indoor holdout stability of GPU winner E basin b128/lr1e-3/overlay0.22. Non-overlap 50-run plan: indoor F1 plus outdoor validation/test robustness."
 # wandb.enabled: true
-# wandb.project: MosSongPlus
+# wandb.project: Master
 # wandb.job_type: autoresearch_gpu2_50_indoor_outdoor_robust
 # wandb.log_weights_freq: 0
 # wandb.aggregate_plot_freq: 0

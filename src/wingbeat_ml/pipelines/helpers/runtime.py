@@ -93,7 +93,9 @@ def prepare_training_run(
         logging=app_cfg.logging,
     )
 
-    launch_seed = app_cfg.resolved_launch_seed if app_cfg.resolved_launch_seed is not None else seed
+    launch_seed = getattr(app_cfg, "resolved_launch_seed", None)
+    if launch_seed is None:
+        launch_seed = seed
     runtime_seed = int(runtime_info["seed"])
     if launch_seed != seed or runtime_seed != seed or f"seed{seed}" not in experiment_name:
         raise RuntimeError(

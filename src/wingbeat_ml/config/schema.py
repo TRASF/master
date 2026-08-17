@@ -5,8 +5,12 @@ from __future__ import annotations
 import copy
 import os
 import warnings
-from typing import Any, Dict, List, Literal, Optional, Sequence, Union
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Annotated, Any, Dict, List, Literal, Optional, Sequence, Union
+from pydantic import BaseModel, ConfigDict, Discriminator, Field, PositiveInt, TypeAdapter, computed_field, field_validator, model_validator
+
+
 
 
 class StrictBaseModel(BaseModel):
@@ -18,6 +22,9 @@ class StrictBaseModel(BaseModel):
 
     def __getitem__(self, item: str) -> Any:
         return getattr(self, item)
+
+    def get(self, item: str, default: Any = None) -> Any:
+        return getattr(self, item, default)
 
 
 class TrainConfig(StrictBaseModel):
@@ -69,6 +76,10 @@ class SplitRatiosConfig(StrictBaseModel):
         return self
 
 
+class PreprocessConfig(StrictBaseModel):
+    dc_removal: bool = True
+
+
 class DatasetConfig(StrictBaseModel):
     train_dir: str = "dataset/MSB/Indoor"
     indoor: Optional[str] = "dataset/MSB/Indoor"
@@ -78,15 +89,29 @@ class DatasetConfig(StrictBaseModel):
     test_dir: Optional[str] = None
     manifest_sha256: Optional[str] = None
     split_ratios: SplitRatiosConfig = Field(default_factory=SplitRatiosConfig)
-    split_list: Optional[List[float]] = None
+    preprocessing: PreprocessConfig = Field(default_factory=PreprocessConfig)
+
+    @computed_field
+    @property
+    def split_list(self) -> List[float]:
+        return [self.split_ratios.train, self.split_ratios.val, self.split_ratios.test]
 
 
 class AudioConfig(StrictBaseModel):
     duration: float = 0.3
     sample_rate: int = 8000
-    segment_length: int = 2400
 
-    @field_validator("sample_rate", "segment_length")
+    @computed_field
+    @property
+    def num_samples(self) -> int:
+        return round(self.sample_rate * self.duration)
+
+    @computed_field
+    @property
+    def segment_length(self) -> int:
+        return self.num_samples
+
+    @field_validator("sample_rate")
     @classmethod
     def validate_positive(cls, v: Any, info) -> int:
         if not isinstance(v, int) or isinstance(v, bool):
@@ -153,6 +178,7 @@ class LoggingConfig(StrictBaseModel):
     model_summary: bool = False
     classification_report: str = "file"
     jsonl: bool = True
+    prediction_distribution: bool = False
 
     @field_validator("console")
     @classmethod
@@ -178,7 +204,7 @@ class AdaBNConfig(StrictBaseModel):
     mode: str = "adhoc"
 
 class WandbConfig(StrictBaseModel):
-    project: str = "MosSongPlus"
+    project: str = "Master"
     tags: List[str] = Field(default_factory=list)
     group: Optional[str] = None
     notes: Optional[str] = None
@@ -207,10 +233,6 @@ class ReproducibilityConfig(StrictBaseModel):
     seed: int = 48
     deterministic_ops: bool = True
     deterministic_data: bool = True
-
-
-class PreprocessConfig(StrictBaseModel):
-    dc_removal: bool = True
 
 
 class MixupConfig(StrictBaseModel):
@@ -571,13 +593,249 @@ class OptimizerConfig(StrictBaseModel):
         return v
 
 
+class InitializationConfig(StrictBaseModel):
+    weights: Optional[str] = None
+
+class ResumeConfig(StrictBaseModel):
+    checkpoint: Optional[str] = None
+
+class SupervisedTrainingConfig(StrictBaseModel):
+    paradigm: Literal["supervised"] = "supervised"
+    procedure: Literal["pretrain", "linear_probe", "fine_tune"] = "pretrain"
+
+class FixMatchTrainingConfig(StrictBaseModel):
+    paradigm: Literal["semi_supervised"] = "semi_supervised"
+    method: Literal["fixmatch"] = "fixmatch"
+    confidence_threshold: float = 0.95
+    unsupervised_weight: float = 1.0
+
+class FlexMatchTrainingConfig(StrictBaseModel):
+    paradigm: Literal["semi_supervised"] = "semi_supervised"
+    method: Literal["flexmatch"] = "flexmatch"
+    confidence_threshold: float = 0.95
+    unsupervised_weight: float = 1.0
+
+TrainingConfigType = Union[
+    SupervisedTrainingConfig,
+    FixMatchTrainingConfig,
+    FlexMatchTrainingConfig,
+]
+
+# Layer Schemas
+class Conv1DLayerConfig(StrictBaseModel):
+    model_config = ConfigDict(extra="forbid", validate_default=True)
+    type: Literal["conv1d"]
+    filters: PositiveInt
+    kernel_size: PositiveInt
+    strides: PositiveInt = 1
+    dilation_rate: PositiveInt = 1
+    groups: PositiveInt = 1
+    use_bias: bool = True
+    padding: Literal["valid", "same", "linear"] = "valid"
+    activation: Optional[str] = None
+    batch_norm: Union[bool, Dict[str, Any]] = False
+    l2_reg: Optional[float] = None
+    fir_init: Optional[Dict[str, Any]] = None
+    kernel_initializer: Optional[Union[str, Dict[str, Any]]] = None
+    bn_conv: Optional[bool] = None
+    separable: Optional[bool] = None
+    kwargs: Dict[str, Any] = Field(default_factory=dict)
+
+class DepthwiseConv1DLayerConfig(StrictBaseModel):
+    model_config = ConfigDict(extra="forbid", validate_default=True)
+    type: Literal["depthwise_conv1d"]
+    kernel_size: PositiveInt
+    depth_multiplier: PositiveInt = 1
+    strides: PositiveInt = 1
+    padding: Literal["valid", "same"] = "valid"
+    activation: Optional[str] = None
+    kwargs: Dict[str, Any] = Field(default_factory=dict)
+
+class SeparableConv1DLayerConfig(StrictBaseModel):
+    model_config = ConfigDict(extra="forbid", validate_default=True)
+    type: Literal["separable_conv1d"]
+    filters: PositiveInt
+    kernel_size: PositiveInt
+    strides: PositiveInt = 1
+    padding: Literal["valid", "same"] = "valid"
+    activation: Optional[str] = None
+    kwargs: Dict[str, Any] = Field(default_factory=dict)
+
+class SincConv1DLayerConfig(StrictBaseModel):
+    model_config = ConfigDict(extra="forbid", validate_default=True)
+    type: Literal["sincconv1d"]
+    filters: PositiveInt
+    kernel_size: PositiveInt
+    sample_rate: PositiveInt = 8000
+    min_low_hz: float = 20.0
+    kwargs: Dict[str, Any] = Field(default_factory=dict)
+
+class RepConv1DLayerConfig(StrictBaseModel):
+    model_config = ConfigDict(extra="forbid", validate_default=True)
+    type: Literal["repconv1d"]
+    filters: PositiveInt
+    kernel_size: PositiveInt
+    strides: PositiveInt = 1
+    branches: PositiveInt = 2
+    kwargs: Dict[str, Any] = Field(default_factory=dict)
+
+class DenseLayerConfig(StrictBaseModel):
+    model_config = ConfigDict(extra="forbid", validate_default=True)
+    type: Literal["dense"]
+    units: PositiveInt
+    activation: Optional[str] = None
+    batch_norm: Union[bool, Dict[str, Any]] = False
+    kwargs: Dict[str, Any] = Field(default_factory=dict)
+
+class FlattenLayerConfig(StrictBaseModel):
+    model_config = ConfigDict(extra="forbid", validate_default=True)
+    type: Literal["flatten"]
+    kwargs: Dict[str, Any] = Field(default_factory=dict)
+
+class GlobalAvgPoolLayerConfig(StrictBaseModel):
+    model_config = ConfigDict(extra="forbid", validate_default=True)
+    type: Literal["global_avg_pool", "global_avg_pool1d", "global_average_pooling1d"]
+    kwargs: Dict[str, Any] = Field(default_factory=dict)
+
+class GlobalMaxPoolLayerConfig(StrictBaseModel):
+    model_config = ConfigDict(extra="forbid", validate_default=True)
+    type: Literal["global_max_pool", "global_max_pool1d", "global_max_pooling1d"]
+    kwargs: Dict[str, Any] = Field(default_factory=dict)
+
+class ConcatLayerConfig(StrictBaseModel):
+    model_config = ConfigDict(extra="forbid", validate_default=True)
+    type: Literal["concat", "concatenate", "group"]
+    layers: List[Union[Dict[str, Any], List[Dict[str, Any]]]]
+    axis: int = -1
+    kwargs: Dict[str, Any] = Field(default_factory=dict)
+
+class MaxPool1DLayerConfig(StrictBaseModel):
+    model_config = ConfigDict(extra="forbid", validate_default=True)
+    type: Literal["maxpool1d", "max_pooling1d"]
+    pool_size: PositiveInt = 2
+    strides: Optional[PositiveInt] = None
+    padding: Literal["valid", "same"] = "valid"
+    kwargs: Dict[str, Any] = Field(default_factory=dict)
+
+class AvgPool1DLayerConfig(StrictBaseModel):
+    model_config = ConfigDict(extra="forbid", validate_default=True)
+    type: Literal["avgpool1d", "avg_pooling1d"]
+    pool_size: PositiveInt = 2
+    strides: Optional[PositiveInt] = None
+    padding: Literal["valid", "same"] = "valid"
+    kwargs: Dict[str, Any] = Field(default_factory=dict)
+
+class DropoutLayerConfig(StrictBaseModel):
+    model_config = ConfigDict(extra="forbid", validate_default=True)
+    type: Literal["dropout"]
+    rate: float = 0.5
+    kwargs: Dict[str, Any] = Field(default_factory=dict)
+
+class ReLULayerConfig(StrictBaseModel):
+    model_config = ConfigDict(extra="forbid", validate_default=True)
+    type: Literal["relu"]
+    max_value: Optional[float] = None
+    negative_slope: float = 0.0
+    threshold: float = 0.0
+    kwargs: Dict[str, Any] = Field(default_factory=dict)
+
+class ActivationLayerConfig(StrictBaseModel):
+    model_config = ConfigDict(extra="forbid", validate_default=True)
+    type: Literal["activation"]
+    activation: str
+    kwargs: Dict[str, Any] = Field(default_factory=dict)
+
+class BatchNormLayerConfig(StrictBaseModel):
+    model_config = ConfigDict(extra="forbid", validate_default=True)
+    type: Literal["batch_norm", "batch_normalization"]
+    momentum: float = 0.99
+    epsilon: float = 1e-3
+    kwargs: Dict[str, Any] = Field(default_factory=dict)
+
+LayerConfigUnion = Annotated[
+    Union[
+        Conv1DLayerConfig,
+        DepthwiseConv1DLayerConfig,
+        SeparableConv1DLayerConfig,
+        SincConv1DLayerConfig,
+        RepConv1DLayerConfig,
+        DenseLayerConfig,
+        FlattenLayerConfig,
+        GlobalAvgPoolLayerConfig,
+        GlobalMaxPoolLayerConfig,
+        MaxPool1DLayerConfig,
+        AvgPool1DLayerConfig,
+        DropoutLayerConfig,
+        ReLULayerConfig,
+        ActivationLayerConfig,
+        BatchNormLayerConfig,
+        ConcatLayerConfig,
+    ],
+    Discriminator("type"),
+]
+
+LAYER_CONFIG_ADAPTER: TypeAdapter[Any] = TypeAdapter(LayerConfigUnion)
+
+
+def parse_layer_config(raw_spec: dict[str, Any]) -> Any:
+    """Parse raw dictionary into a typed discriminated LayerConfig model."""
+    if not isinstance(raw_spec, dict):
+        raise TypeError(f"Layer definition must be a dict, got {type(raw_spec)}")
+    if "type" not in raw_spec or not raw_spec["type"]:
+        raise ValueError(f"Layer definition missing 'type': {raw_spec}")
+
+    norm_spec = dict(raw_spec)
+    norm_spec["type"] = str(norm_spec["type"]).lower()
+    return LAYER_CONFIG_ADAPTER.validate_python(norm_spec)
+
+
+@dataclass
+class RunContext:
+    run_id: str
+    output_dir: Path
+    config_hash: str
+    resolved_class_weights: Any | None = None
+    provenance: dict[str, Any] = field(default_factory=dict)
+
+@dataclass
+class TrainingResult:
+    best_checkpoint: Path | None
+    final_epoch: int
+    best_metric: float
+    history: dict[str, Sequence[float]] = field(default_factory=dict)
+
+@dataclass
+class EvaluationResult:
+    loss: float
+    accuracy: float
+    macro_f1: float
+    per_class: dict[str, Any] = field(default_factory=dict)
+
+@dataclass
+class EdgeAnalysisResult:
+    parameters: int
+    model_bytes: int
+    macs: int
+    largest_activation_bytes: int | None = None
+    estimated_adjacent_activation_bytes: int | None = None
+    tensor_arena_bytes: int | None = None
+    peak_activation_bytes: int | None = None
+    trainable_parameters: int | None = None
+    receptive_field_samples: int | None = None
+    receptive_field_ms: float | None = None
+    layer_details: list[dict[str, Any]] = field(default_factory=list)
+
+
+
 class SubEvaluationConfig(StrictBaseModel):
     enabled: bool = True
-
 
 class EvaluationConfig(StrictBaseModel):
     sample_level: SubEvaluationConfig = Field(default_factory=lambda: SubEvaluationConfig(enabled=True))
     file_level: SubEvaluationConfig = Field(default_factory=lambda: SubEvaluationConfig(enabled=False))
+    confusion_matrix: bool = True
+    classification_report: bool = True
+    prediction_distribution: bool = False
 
 
 class CacheConfig(StrictBaseModel):
@@ -610,10 +868,15 @@ DEFAULT_LABELS: Dict[str, int] = {
     "An_minimus_Male": 7,
     "Cx_quin_Female": 8,
     "Cx_quin_Male": 9,
-    "No.Mos": 10,
+    "No.mos": 10,
 }
 
 DEFAULT_CLASSES: List[str] = list(DEFAULT_LABELS.keys())
+DEFAULT_YAML_ORDER: List[str] = [
+    "No.mos", "Cx_quin_Male", "An_dirus_Male", "Cx_quin_Female",
+    "Ae_aegypti_Male", "An_dirus_Female", "An_minimus_Male",
+    "Ae_aegypti_Female", "An_minimus_Female", "Ae_albopictus_Male", "Ae_albopictus_Female"
+]
 
 
 class SSLConfig(StrictBaseModel):
@@ -638,64 +901,39 @@ class SSLConfig(StrictBaseModel):
     minimum_recordings_per_class: Optional[int] = None
 
 
-class AppConfig(StrictBaseModel):
-    training_mode: str = "pretrain"
-    experiment_name: Optional[str] = None
-    num_classes: int = 11
-    classes: List[str] = Field(default_factory=lambda: list(DEFAULT_CLASSES))
-    labels: Dict[str, int] = Field(default_factory=lambda: dict(DEFAULT_LABELS))
+class ExperimentMetadataConfig(StrictBaseModel):
+    name: Optional[str] = None
 
-    model: ModelConfig = Field(default_factory=ModelConfig)
-    train: TrainConfig = Field(default_factory=TrainConfig)
-    dataset: DatasetConfig = Field(default_factory=DatasetConfig)
+
+class ExperimentConfig(StrictBaseModel):
+    experiment: ExperimentMetadataConfig = Field(default_factory=ExperimentMetadataConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
-    augment: AugmentConfig = Field(default_factory=AugmentConfig)
+    classes: List[str] = Field(default_factory=lambda: list(DEFAULT_CLASSES))
+    dataset: DatasetConfig = Field(default_factory=DatasetConfig)
+    model: ModelConfig = Field(default_factory=ModelConfig)
+    training: TrainingConfigType = Field(default_factory=SupervisedTrainingConfig)
+    augmentation: AugmentConfig = Field(default_factory=AugmentConfig)
+    evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
+    tracking: WandbConfig = Field(default_factory=WandbConfig)
+    reproducibility: ReproducibilityConfig = Field(default_factory=ReproducibilityConfig)
+    initialization: InitializationConfig = Field(default_factory=InitializationConfig)
+    resume: ResumeConfig = Field(default_factory=ResumeConfig)
     performance: PerformanceConfig = Field(default_factory=PerformanceConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
-    adabn: AdaBNConfig = Field(default_factory=AdaBNConfig)
-    ssl: SSLConfig = Field(default_factory=SSLConfig)
-    wandb: WandbConfig = Field(default_factory=WandbConfig)
-    reproducibility: ReproducibilityConfig = Field(default_factory=ReproducibilityConfig)
     loss: LossConfig = Field(default_factory=LossConfig)
     optimizer: OptimizerConfig = Field(default_factory=OptimizerConfig)
     callbacks: CallbacksConfig = Field(default_factory=CallbacksConfig)
-    evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     export: ExportConfig = Field(default_factory=ExportConfig)
+    adabn: AdaBNConfig = Field(default_factory=AdaBNConfig)
+    ssl: SSLConfig = Field(default_factory=SSLConfig)
     class_weights: ClassWeightsConfig = Field(default_factory=ClassWeightsConfig)
-    preprocess: PreprocessConfig = Field(default_factory=PreprocessConfig)
-
+    train: TrainConfig = Field(default_factory=TrainConfig)
     profile: Optional[str] = None
-    segment_length: Optional[int] = None
     nomos_index: Optional[int] = None
-    checkpoint: Optional[str] = None
-    pretrained_weights: Optional[str] = None
 
-    # Resolved fields computed during runtime orchestration
-    resolved_class_counts: Optional[List[float]] = None
-    resolved_class_weights: Optional[List[float]] = None
-    resolved_run: Optional[Dict[str, Any]] = None
-    resolved_runtime: Optional[Dict[str, Any]] = None
-    resolved_provenance: Optional[Dict[str, Any]] = None
-    resolved_timing: Optional[Dict[str, Any]] = None
-    resolved_cache_events: Optional[List[Any]] = None
-    resolved_launch_seed: Optional[int] = None
-    resolved_profile: Optional[str] = None
-
-    @field_validator("training_mode")
-    @classmethod
-    def validate_training_mode(cls, v: str) -> str:
-        valid = {"pretrain", "linear_probe", "fine_tune"}
-        if v not in valid:
-            raise ValueError(f"Invalid training mode '{v}', expected one of {sorted(valid)}")
-        return v
-
-    @model_validator(mode="after")
-    def sync_seeds(self) -> AppConfig:
-        if self.reproducibility.seed != self.train.seed:
-            object.__setattr__(self.train, "seed", self.reproducibility.seed)
-        return self
+    @field_validator("classes")
     @classmethod
     def validate_classes(cls, v: List[str]) -> List[str]:
         if not v:
@@ -704,18 +942,65 @@ class AppConfig(StrictBaseModel):
             raise ValueError("Class names must be unique")
         return v
 
-    @field_validator("labels")
-    @classmethod
-    def validate_labels(cls, v: Dict[str, int]) -> Dict[str, int]:
-        if not v:
-            raise ValueError("Labels dict must be non-empty")
-        if "Ae_aegypti_Female" in v and v["Ae_aegypti_Female"] != 0:
-            raise ValueError("Invalid label index mapping")
-        return v
+    @model_validator(mode="after")
+    def sync_seeds(self) -> ExperimentConfig:
+        if self.reproducibility.seed != self.train.seed:
+            object.__setattr__(self.train, "seed", self.reproducibility.seed)
+        return self
+
+    @computed_field
+    @property
+    def num_classes(self) -> int:
+        return len(self.classes)
+
+    @computed_field
+    @property
+    def labels(self) -> Dict[str, int]:
+        if set(self.classes) == set(DEFAULT_YAML_ORDER):
+            return {name: DEFAULT_LABELS[name] for name in DEFAULT_YAML_ORDER if name in self.classes}
+        return {name: i for i, name in enumerate(self.classes)}
+
+    @computed_field
+    @property
+    def training_mode(self) -> str:
+        if hasattr(self.training, "procedure"):
+            return getattr(self.training, "procedure")
+        if hasattr(self.training, "method"):
+            return getattr(self.training, "method")
+        return "pretrain"
+
+    @computed_field
+    @property
+    def segment_length(self) -> int:
+        return self.audio.num_samples
+
+    @computed_field
+    @property
+    def checkpoint(self) -> Optional[str]:
+        return self.resume.checkpoint or self.initialization.weights
+
+    @computed_field
+    @property
+    def pretrained_weights(self) -> Optional[str]:
+        return self.initialization.weights
+
+    @computed_field
+    @property
+    def augment(self) -> AugmentConfig:
+        return self.augmentation
+
+    @computed_field
+    @property
+    def wandb(self) -> WandbConfig:
+        return self.tracking
 
     @property
-    def data(self) -> AppConfig:
+    def data(self) -> ExperimentConfig:
         return self
+
+    @property
+    def preprocess(self) -> PreprocessConfig:
+        return self.augmentation.preprocess
 
     @property
     def sha256(self) -> str:
@@ -725,94 +1010,61 @@ class AppConfig(StrictBaseModel):
         return hashlib.sha256(serialized).hexdigest()
 
 
+AppConfig = ExperimentConfig
+
+
 def validate_config(cfg: Union[AppConfig, Dict[str, Any]], *, strict_sections: bool = False) -> AppConfig:
-    """Validate a raw configuration dictionary or return an existing AppConfig instance."""
+    """Validate a raw configuration dictionary or return an existing ExperimentConfig instance."""
     if isinstance(cfg, AppConfig):
         return cfg
     if not isinstance(cfg, dict):
         raise ValueError(f"Configuration root must be a mapping or AppConfig, got {type(cfg)}")
 
-    if "classes" in cfg and isinstance(cfg["classes"], list):
-        if len(set(cfg["classes"])) != len(cfg["classes"]):
-            raise ValueError("Class names must be unique")
-        cfg["num_classes"] = len(cfg["classes"])
+    if "train" in cfg and isinstance(cfg["train"], dict) and "seed" in cfg["train"]:
+        if "reproducibility" in cfg and isinstance(cfg["reproducibility"], dict) and "seed" in cfg["reproducibility"]:
+            if cfg["train"]["seed"] != cfg["reproducibility"]["seed"]:
+                raise ValueError(
+                    f"Inconsistent train.seed ({cfg['train']['seed']}) and reproducibility.seed ({cfg['reproducibility']['seed']})"
+                )
+
+    from wingbeat_ml.config.loader import handle_legacy_keys, normalize_legacy_config
+
+    normalized_raw = handle_legacy_keys(cfg)
 
     if strict_sections:
         required_sections = ["model", "training_mode", "audio", "train", "dataset"]
         for s in required_sections:
-            if s not in cfg:
+            if s not in normalized_raw and s not in cfg:
                 raise ValueError(f"Missing required top-level section: '{s}'")
 
-    if "wandb" in cfg and isinstance(cfg["wandb"], dict):
-        api_key = cfg["wandb"].get("api_key")
+    if "wandb" in normalized_raw and isinstance(normalized_raw["wandb"], dict):
+        api_key = normalized_raw["wandb"].get("api_key")
         if api_key is not None:
             if not isinstance(api_key, str) or api_key.strip():
                 raise ValueError("Secrets are not allowed in configuration file")
 
-    if "model" in cfg and isinstance(cfg["model"], dict):
-        m = cfg["model"]
+    if "model" in normalized_raw and isinstance(normalized_raw["model"], dict):
+        m = normalized_raw["model"]
         if "id" in m and m["id"] == "invalid_model":
             raise ValueError("Invalid model ID: expected 'mossong_plus'")
-        if "input_shape" in m and "audio" in cfg and isinstance(cfg["audio"], dict):
+        if "input_shape" in m and "audio" in normalized_raw and isinstance(normalized_raw["audio"], dict):
             in_len = m["input_shape"][0] if isinstance(m["input_shape"], (list, tuple)) else None
-            seg_len = cfg["audio"].get("segment_length", 2400)
+            seg_len = normalized_raw["audio"].get("segment_length", 2400)
             if in_len is not None and in_len != seg_len:
                 raise ValueError(f"Model input length {in_len} does not match segment_length {seg_len}")
 
-    if "classes" in cfg and isinstance(cfg["classes"], list):
-        cfg["num_classes"] = len(cfg["classes"])
-
-    if "num_classes" in cfg and "classes" in cfg and isinstance(cfg["classes"], list):
-        if cfg["num_classes"] != len(cfg["classes"]):
-            raise ValueError(f"Invalid num_classes: expected {len(cfg['classes'])}, got {cfg['num_classes']}")
-    elif "num_classes" in cfg and "labels" in cfg and isinstance(cfg["labels"], dict):
-        if cfg["num_classes"] != len(cfg["labels"]):
-            raise ValueError(f"Invalid num_classes: expected {len(cfg['labels'])}, got {cfg['num_classes']}")
-    elif "num_classes" in cfg and "classes" not in cfg and "labels" not in cfg:
-        model_id = cfg.get("model", {}).get("id") if isinstance(cfg.get("model"), dict) else None
-        if (model_id is None or model_id == "mossong_plus") and cfg["num_classes"] != 11:
-            raise ValueError(f"Invalid num_classes: expected 11, got {cfg['num_classes']}")
-    elif "classes" in cfg and isinstance(cfg["classes"], list):
-        cfg["num_classes"] = len(cfg["classes"])
-
-    if "augment" in cfg and isinstance(cfg["augment"], dict) and "segment_overlap" in cfg["augment"]:
-        ov = cfg["augment"]["segment_overlap"]
+    if "augment" in normalized_raw and isinstance(normalized_raw["augment"], dict) and "segment_overlap" in normalized_raw["augment"]:
+        ov = normalized_raw["augment"]["segment_overlap"]
         if isinstance(ov, (int, float)) and ov > 1.0:
             raise ValueError(f"Invalid segment_overlap: must be <= 1.0, got {ov}")
 
-    if "dataset" in cfg and isinstance(cfg["dataset"], dict) and "train_dir" in cfg["dataset"]:
-        train_dir = str(cfg["dataset"]["train_dir"])
-        if "fixtures" in train_dir and cfg.get("wandb", {}).get("enabled"):
+    if "dataset" in normalized_raw and isinstance(normalized_raw["dataset"], dict) and "train_dir" in normalized_raw["dataset"]:
+        train_dir = str(normalized_raw["dataset"]["train_dir"])
+        if "fixtures" in train_dir and normalized_raw.get("wandb", {}).get("enabled"):
             raise ValueError("W&B tracking must be disabled in CI profile")
 
-    from wingbeat_ml.config.loader import deep_merge, handle_legacy_keys
-
-    default_dict = AppConfig().model_dump(mode="python")
-    # If custom classes or labels are provided, preserve exact order and keys
-    normalized = handle_legacy_keys(cfg)
-    if "labels" in normalized and isinstance(normalized["labels"], dict):
-        default_dict["labels"] = dict(normalized["labels"])
-        if "classes" not in normalized:
-            default_dict["classes"] = list(normalized["labels"].keys())
-            default_dict["num_classes"] = len(normalized["labels"])
-            normalized["num_classes"] = len(normalized["labels"])
-    elif "classes" in normalized and isinstance(normalized["classes"], list):
-        if len(set(normalized["classes"])) != len(normalized["classes"]):
-            raise ValueError("Class names must be unique")
-        default_dict["classes"] = list(normalized["classes"])
-        default_dict["labels"] = {c: i for i, c in enumerate(normalized["classes"])}
-        default_dict["num_classes"] = len(normalized["classes"])
-        normalized["num_classes"] = len(normalized["classes"])
-
-    if "dataset" in normalized and isinstance(normalized["dataset"], dict):
-        if "split_ratios" in normalized["dataset"] and isinstance(normalized["dataset"]["split_ratios"], dict):
-            sr = normalized["dataset"]["split_ratios"]
-            sl = [float(sr.get("train", 0.8)), float(sr.get("val", 0.1)), float(sr.get("test", 0.1))]
-            normalized["dataset"]["split_list"] = sl
-            default_dict["dataset"]["split_ratios"] = {"train": sl[0], "val": sl[1], "test": sl[2]}
-
-    merged_dict = deep_merge(default_dict, normalized)
-    return AppConfig.model_validate(merged_dict)
+    canonical_dict = normalize_legacy_config(normalized_raw)
+    return ExperimentConfig.model_validate(canonical_dict)
 
 
 def generate_json_schema() -> Dict[str, Any]:

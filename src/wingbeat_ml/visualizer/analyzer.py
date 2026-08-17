@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
 import numpy as np
 
-from wingbeat_ml.visualizer.spectrogram import analyze_harmonics
+from wingbeat_ml.analysis.signal.spectrum import analyze_harmonics
 from wingbeat_ml.visualizer.exporter import export_anomaly_frame
 
 try:
@@ -27,7 +27,7 @@ else:
     TF_IMPORT_ERROR = None
 
 try:
-    from wingbeat_ml.evaluation.gradcam import compute_gradcam
+    from wingbeat_ml.analysis.model.gradcam import compute_gradcam
 except Exception as err:  # pragma: no cover
     compute_gradcam = None
     GRADCAM_IMPORT_ERROR = err
@@ -43,38 +43,7 @@ else:
     DIAGNOSTICS_IMPORT_ERROR = None
 
 
-class FastTFLiteModel:
-    """High-speed multi-threaded TFLite Interpreter wrapper for host inference."""
-
-    def __init__(self, tflite_path: str, num_threads: int = 4) -> None:
-        self.interpreter = tf.lite.Interpreter(model_path=str(tflite_path), num_threads=num_threads)
-        self.interpreter.allocate_tensors()
-        self.input_details = self.interpreter.get_input_details()[0]
-        self.output_details = self.interpreter.get_output_details()[0]
-        self.is_int8 = self.input_details["dtype"] == np.int8
-        self.scale, self.zero_point = self.input_details["quantization"]
-
-    def predict_fast(self, audio_float: np.ndarray) -> Tuple[int, float, np.ndarray]:
-        if self.is_int8:
-            q_val = np.round(audio_float / self.scale) + self.zero_point
-            q_val = np.clip(q_val, -128, 127).astype(np.int8)
-            inp_tensor = q_val.reshape(1, 2400, 1)
-        else:
-            inp_tensor = audio_float.reshape(1, 2400, 1).astype(np.float32)
-
-        self.interpreter.set_tensor(self.input_details["index"], inp_tensor)
-        self.interpreter.invoke()
-        out_tensor = self.interpreter.get_tensor(self.output_details["index"])[0]
-
-        if self.output_details["dtype"] == np.int8:
-            out_scale, out_zp = self.output_details["quantization"]
-            out_tensor = (out_tensor.astype(np.float32) - out_zp) * out_scale
-
-        exp_logits = np.exp(out_tensor - np.max(out_tensor))
-        probs = exp_logits / np.sum(exp_logits)
-        class_id = int(np.argmax(probs))
-        confidence = float(probs[class_id])
-        return class_id, confidence, probs
+from wingbeat_ml.deployment.runtime.tflite import FastTFLiteModel, TFLitePredictor
 
 
 def _load_or_build_model(model_path: str):

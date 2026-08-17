@@ -118,7 +118,7 @@ def evaluate_training_run(
     train_file_results = None
     test_paths = getattr(dataset_builder, "test_paths", None)
     has_test_paths = isinstance(test_paths, (list, tuple, np.ndarray)) and len(test_paths) > 0
-    file_enabled = app_cfg.evaluation.file_level.enabled or has_test_paths
+    file_enabled = app_cfg.evaluation.file_level.enabled and has_test_paths
 
     if file_enabled:
         common_file_args = {

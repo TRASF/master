@@ -34,6 +34,7 @@ class TestMosSongPlusParity(unittest.TestCase):
         cls.defaults_raw["dataset"]["test_dir"] = None
         cls.defaults_raw["dataset"]["split_list"] = [0.6, 0.2, 0.2]
         cls.defaults_raw["reproducibility"]["seed"] = 45
+        cls.defaults_raw["train"]["seed"] = 45
         cls.defaults_raw["reproducibility"]["deterministic_data"] = True
         cls.defaults_raw["reproducibility"]["deterministic_ops"] = True
         cls.defaults_raw["reproducibility"]["enabled"] = True

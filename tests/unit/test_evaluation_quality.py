@@ -99,7 +99,7 @@ class TestCanonicalEvaluation(unittest.TestCase):
         builder.train_paths = ["train.wav"]
         builder.train_labels = [0]
         builder.augmentor = mock.sentinel.augmentor
-        config = {"train": {"batch_size": 8}}
+        config = {"train": {"batch_size": 8}, "evaluation": {"file_level": {"enabled": True}}}
         validation_dataset = object()
         test_dataset = object()
 
@@ -244,6 +244,30 @@ class TestQualityGates(unittest.TestCase):
                 "Quality gates failed",
                 failed.stdout + failed.stderr,
             )
+
+    def test_evaluation_prediction_distribution_and_yaml_config(self):
+        from wingbeat_ml.config import load_config
+        from wingbeat_ml.evaluation.evaluator import ModelEvaluator
+
+        cfg = load_config("configs/defaults.yaml")
+        self.assertTrue(hasattr(cfg.evaluation, "confusion_matrix"))
+        self.assertTrue(hasattr(cfg.evaluation, "classification_report"))
+        self.assertTrue(hasattr(cfg.evaluation, "prediction_distribution"))
+        self.assertTrue(hasattr(cfg.logging, "prediction_distribution"))
+
+        model = tf.keras.Sequential([
+            tf.keras.layers.Input(shape=(10,)),
+            tf.keras.layers.Dense(3, activation="softmax")
+        ])
+        evaluator = ModelEvaluator(model, ["c0", "c1", "c2"])
+        x = tf.random.normal((30, 10))
+        y = tf.one_hot(np.random.randint(0, 3, 30), depth=3)
+        ds = tf.data.Dataset.from_tensors((x, y))
+
+        res = evaluator.evaluate_final_test(ds)
+        self.assertIn("prediction_distribution", res)
+        self.assertIn("prediction_counts", res)
+        self.assertEqual(len(res["prediction_distribution"]), 3)
 
 
 if __name__ == "__main__":

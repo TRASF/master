@@ -183,7 +183,7 @@ def run_training(
     class_weights: Optional[Any] = None,
     save_path: Optional[str] = None,
 ) -> List[Dict[str, float]]:
-    """Run the shared epoch loop and return its metric history."""
+    """Run the shared epoch loop via Trainer.fit() and return its metric history."""
     from wingbeat_ml.config.schema import validate_config
 
     app_cfg = validate_config(config)
@@ -200,107 +200,20 @@ def run_training(
         evaluate_fn=evaluate_epoch,
     )
 
-    epochs = app_cfg.train.epochs
-    history: List[Dict[str, float]] = []
-    console = app_cfg.logging.console
-    jsonl_logger = None
-    if app_cfg.logging.jsonl and save_path:
-        from wingbeat_ml.pipelines.helpers.reporting import JsonlMetricLogger
-        jsonl_logger = JsonlMetricLogger(
-            Path(save_path).parent / "metrics.jsonl"
-        )
+    result = trainer.fit(
+        model=model,
+        train_dataset=train_dataset,
+        epochs=app_cfg.train.epochs,
+        strategy=strategy,
+        callbacks=callbacks,
+        evaluate_epoch=evaluate_epoch,
+        on_epoch_end=on_epoch_end,
+        save_path=save_path,
+        config=app_cfg,
+    )
 
-    for epoch in range(epochs):
-        started = time.perf_counter()
-        train_metrics = strategy.train_epoch(None, epoch=epoch)
-        train_duration = time.perf_counter() - started
-
-        logs = {
-            "epoch": epoch,
-            "train_loss": train_metrics["loss"],
-            "train_accuracy": train_metrics["accuracy"],
-            "learning_rate": float(
-                tf.keras.backend.get_value(
-                    _optimizer_learning_rate(optimizer)
-                )
-            ),
-            "epoch_duration_seconds": train_duration,
-            "train_duration_seconds": train_duration,
-            "global_step": train_metrics["global_step"],
-            "steps_per_epoch": train_metrics["batches"],
-            "steps_per_call": trainer.steps_per_call,
-        }
-
-        for key, value in train_metrics.items():
-            logs.setdefault(f"train_{key}", value)
-
-        if evaluate_epoch is not None:
-            validation_started = time.perf_counter()
-            validation_values = strategy.validate_epoch(None, epoch=epoch)
-            logs["validation_duration_seconds"] = (
-                time.perf_counter() - validation_started
-            )
-            for key, value in validation_values.items():
-                name = key if key.startswith("val_") else f"val_{key}"
-                logs[name] = value
-
-        callback_started = time.perf_counter()
-        checkpoint_started = time.perf_counter()
-        checkpoint = callbacks.get("model_checkpoint")
-        if checkpoint is not None:
-            saved = checkpoint.save(model, logs)
-            if saved and save_path:
-                monitor = getattr(checkpoint, "monitor", None)
-                monitor_name = getattr(monitor, "monitor", "val_score")
-                monitor_value = float(logs.get(monitor_name, 0.0))
-                if console != "quiet":
-                    print(
-                        f"  --> Saved best weights to {save_path} "
-                        f"({monitor_name}={monitor_value:.4f})"
-                    )
-        logs["checkpoint_duration_seconds"] = (
-            time.perf_counter() - checkpoint_started
-        )
-
-        reduce_lr = callbacks.get("reduce_lr_on_plateau")
-        if reduce_lr is not None:
-            reduce_lr.on_epoch_end(logs)
-
-        cosine = callbacks.get("cosine_annealing")
-        if cosine is not None:
-            cosine.on_epoch_end(logs)
-
-        wandb_logger = callbacks.get("wandb_logger")
-        logging_started = time.perf_counter()
-        if wandb_logger is not None:
-            wandb_logger.on_epoch_end(logs)
-        logs["tracking_duration_seconds"] = (
-            time.perf_counter() - logging_started
-        )
-        logs["callback_duration_seconds"] = (
-            time.perf_counter() - callback_started
-        )
-        logs["epoch_total_duration_seconds"] = (
-            time.perf_counter() - started
-        )
-
-        if jsonl_logger is not None:
-            jsonl_logger.log(logs)
-        history.append(dict(logs))
-
-        if on_epoch_end is not None:
-            on_epoch_end(epoch, logs)
-
-        early_stopping = callbacks.get("early_stopping")
-        if early_stopping is not None and early_stopping.check(
-            logs,
-            epoch=epoch,
-        ):
-            if console != "quiet":
-                print(f"\nEarly stopping triggered after {epoch + 1} epochs.")
-            break
-
-    return history
+    history_len = len(next(iter(result.history.values()))) if result.history else 0
+    return [{k: v[i] for k, v in result.history.items()} for i in range(history_len)]
 
 
 __all__ = [

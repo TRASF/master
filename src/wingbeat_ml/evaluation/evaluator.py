@@ -5,8 +5,64 @@ import yaml
 import numpy as np
 import tensorflow as tf
 import keras
-from typing import Dict, Tuple, List
+from dataclasses import dataclass, field
+from typing import Dict, Tuple, List, Any
 from sklearn.metrics import classification_report, confusion_matrix, f1_score, precision_score, recall_score
+
+
+@dataclass
+class EvaluationResult:
+    loss: float
+    accuracy: float
+    macro_f1: float
+    female_f1: float = 0.0
+    female_prec: float = 0.0
+    female_rec: float = 0.0
+    male_f1: float = 0.0
+    male_prec: float = 0.0
+    male_rec: float = 0.0
+    weighted_f1: float = 0.0
+    per_class: Dict[str, float] = field(default_factory=dict)
+    confusion_matrix: Any = None
+
+    def __getitem__(self, key: str) -> Any:
+        if hasattr(self, key):
+            return getattr(self, key)
+        if key in self.per_class:
+            return self.per_class[key]
+        raise KeyError(key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+    def keys(self):
+        base_keys = [
+            "loss", "accuracy", "macro_f1", "female_f1", "female_prec",
+            "female_rec", "male_f1", "male_prec", "male_rec", "weighted_f1"
+        ]
+        return list(base_keys) + list(self.per_class.keys())
+
+    def items(self):
+        return [(k, self[k]) for k in self.keys()]
+
+    def to_dict(self) -> Dict[str, float]:
+        res = {
+            "loss": self.loss,
+            "accuracy": self.accuracy,
+            "macro_f1": self.macro_f1,
+            "female_f1": self.female_f1,
+            "female_prec": self.female_prec,
+            "female_rec": self.female_rec,
+            "male_f1": self.male_f1,
+            "male_prec": self.male_prec,
+            "male_rec": self.male_rec,
+            "weighted_f1": self.weighted_f1,
+        }
+        res.update(self.per_class)
+        return res
 
 class ModelEvaluator:
     def __init__(self, model: keras.Model, classes: list, loss_fn=None):
@@ -164,7 +220,7 @@ class ModelEvaluator:
             "confidence": np.array(all_conf, dtype=np.float32),
         }
 
-    def evaluate_epoch(self, dataset: tf.data.Dataset) -> Dict[str, float]:
+    def evaluate_epoch(self, dataset: tf.data.Dataset) -> EvaluationResult:
         """
         End-of-epoch evaluation including Macro/Weighted F1, Precision, and Recall.
         """
@@ -175,14 +231,14 @@ class ModelEvaluator:
             # Just compute loss over the dataset
             for x, y in dataset:
                 self.val_step(x, y)
-            return {
-                "loss": float(self.val_loss_metric.result()),
-                "accuracy": 0.0,
-                "macro_f1": 0.0,
-                "female_f1": 0.0, "female_prec": 0.0, "female_rec": 0.0,
-                "male_f1": 0.0, "male_prec": 0.0, "male_rec": 0.0,
-                "weighted_f1": 0.0
-            }
+            return EvaluationResult(
+                loss=float(self.val_loss_metric.result()),
+                accuracy=0.0,
+                macro_f1=0.0,
+                female_f1=0.0, female_prec=0.0, female_rec=0.0,
+                male_f1=0.0, male_prec=0.0, male_rec=0.0,
+                weighted_f1=0.0,
+            )
 
         y_true, y_pred = self._collect_predictions(dataset)
 
@@ -203,26 +259,25 @@ class ModelEvaluator:
         # Calculate macro_f1 only over classes actually present in y_true
         macro_f1 = float(np.mean(per_class_f1[present_classes])) if len(present_classes) > 0 else 0.0
 
-        metrics_dict = {
-            "loss": float(self.val_loss_metric.result()),
-            "accuracy": float(self.val_acc_metric.result()),
-            "macro_f1": macro_f1,
-            "female_f1": get_group_metric(per_class_f1, female_indices),
-            "female_prec": get_group_metric(per_class_prec, female_indices),
-            "female_rec": get_group_metric(per_class_rec, female_indices),
-            "male_f1": get_group_metric(per_class_f1, male_indices),
-            "male_prec": get_group_metric(per_class_prec, male_indices),
-            "male_rec": get_group_metric(per_class_rec, male_indices),
-            "weighted_f1": float(f1_score(y_true, y_pred, average='weighted', zero_division=0))
-        }
-
-        # Add per-class f1, precision, and recall scores
+        per_class_dict: Dict[str, float] = {}
         for i, class_name in enumerate(self.classes):
-            metrics_dict[f"class_f1/{class_name}"] = float(per_class_f1[i])
-            metrics_dict[f"class_precision/{class_name}"] = float(per_class_prec[i])
-            metrics_dict[f"class_recall/{class_name}"] = float(per_class_rec[i])
+            per_class_dict[f"class_f1/{class_name}"] = float(per_class_f1[i])
+            per_class_dict[f"class_precision/{class_name}"] = float(per_class_prec[i])
+            per_class_dict[f"class_recall/{class_name}"] = float(per_class_rec[i])
 
-        return metrics_dict
+        return EvaluationResult(
+            loss=float(self.val_loss_metric.result()),
+            accuracy=float(self.val_acc_metric.result()),
+            macro_f1=macro_f1,
+            female_f1=get_group_metric(per_class_f1, female_indices),
+            female_prec=get_group_metric(per_class_prec, female_indices),
+            female_rec=get_group_metric(per_class_rec, female_indices),
+            male_f1=get_group_metric(per_class_f1, male_indices),
+            male_prec=get_group_metric(per_class_prec, male_indices),
+            male_rec=get_group_metric(per_class_rec, male_indices),
+            weighted_f1=float(f1_score(y_true, y_pred, average='weighted', zero_division=0)),
+            per_class=per_class_dict,
+        )
 
     def evaluate_files(
         self,
@@ -415,10 +470,20 @@ class ModelEvaluator:
         )
         cm = confusion_matrix(y_true, y_pred)
 
+        pred_counts = [int(np.sum(y_pred == i)) for i in range(len(self.classes))]
+        total_samples = len(y_pred)
+        prediction_distribution = {
+            cls_name: round(float(count / total_samples), 4) if total_samples > 0 else 0.0
+            for count, cls_name in zip(pred_counts, self.classes)
+        }
+        pred_count_dict = {cls_name: count for count, cls_name in zip(pred_counts, self.classes)}
+
         results = {
             "metrics": metrics,
             "report": report,
-            "confusion_matrix": cm.tolist()
+            "confusion_matrix": cm.tolist(),
+            "prediction_distribution": prediction_distribution,
+            "prediction_counts": pred_count_dict,
         }
 
         if return_predictions:

@@ -117,108 +117,70 @@ def run_tf_ssl_pipeline(
             mapping=app_cfg.ssl.mapping,
         )
 
-    # 4. Training Loop
-    total_epochs = app_cfg.train.epochs
-    history = []
+    # 4. Training Execution via Trainer.fit()
+    from wingbeat_ml.training.trainer import Trainer
+    from wingbeat_ml.training.strategies.supervised import SupervisedStrategy
+    from wingbeat_ml.training.strategies.ssl_tf import FixMatchStrategy, FlexMatchStrategy
 
-    for epoch in range(total_epochs):
-        t0 = time.time()
-        steps = 0
-        total_loss, total_s, total_u, total_mask = 0.0, 0.0, 0.0, 0.0
+    loss_fn = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
+    if method in ("supervised_small", "full_supervised"):
+        strategy = SupervisedStrategy(
+            model=model, optimizer=optimizer, loss_fn=loss_fn, config=app_cfg, train_dataset=labeled_train_ds
+        )
+        train_ds = labeled_train_ds
+    elif method == "fixmatch":
+        strategy = FixMatchStrategy(model=model, optimizer=optimizer, config=app_cfg)
+        train_ds = train_zipped_ds
+    elif method == "flexmatch":
+        strategy = FlexMatchStrategy(model=model, optimizer=optimizer, config=app_cfg)
+        train_ds = train_zipped_ds
 
-        if method in ("supervised_small", "full_supervised"):
-            # Standard supervised training step loop
-            is_loss_scale = isinstance(
-                optimizer, tf.keras.mixed_precision.LossScaleOptimizer
-            )
-            for x_l, y_l in labeled_train_ds:
-                with tf.GradientTape() as tape:
-                    logits = model(x_l, training=True)
-                    if len(y_l.shape) > 1 and y_l.shape[-1] == app_cfg.num_classes:
-                        loss_s = tf.reduce_mean(
-                            tf.keras.losses.categorical_crossentropy(y_l, logits, from_logits=True)
-                        )
-                    else:
-                        loss_s = tf.reduce_mean(
-                            tf.keras.losses.sparse_categorical_crossentropy(y_l, logits, from_logits=True)
-                        )
-                    scaled_loss = (
-                        optimizer.get_scaled_loss(loss_s) if is_loss_scale else loss_s
-                    )
-
-                scaled_grads = tape.gradient(scaled_loss, model.trainable_variables)
-                grads = (
-                    optimizer.get_unscaled_gradients(scaled_grads)
-                    if is_loss_scale
-                    else scaled_grads
-                )
-                optimizer.apply_gradients(zip(grads, model.trainable_variables))
-
-                total_loss += float(loss_s.numpy())
-                total_s += float(loss_s.numpy())
-                steps += 1
-        else:
-            # SSL (FixMatch / FlexMatch) training step loop
-            for (x_l, y_l), (x_u_w, x_u_s) in train_zipped_ds:
-                if method == "fixmatch":
-                    step_res = train_tf_fixmatch_step(
-                        model=model,
-                        optimizer=optimizer,
-                        x_l=x_l,
-                        y_l=y_l,
-                        x_u_w=x_u_w,
-                        x_u_s=x_u_s,
-                        tau=app_cfg.ssl.tau,
-                        lambda_u=app_cfg.ssl.lambda_u,
-                    )
-                else:
-                    step_res = train_tf_flexmatch_step(
-                        model=model,
-                        flexmatch_layer=flex_layer,
-                        optimizer=optimizer,
-                        x_l=x_l,
-                        y_l=y_l,
-                        x_u_w=x_u_w,
-                        x_u_s=x_u_s,
-                    )
-
-                total_loss += step_res["total_loss"]
-                total_s += step_res["loss_s"]
-                total_u += step_res["loss_u"]
-                total_mask += step_res["mask_ratio"]
-                steps += 1
-
-        duration = time.time() - t0
-        avg_loss = total_loss / max(steps, 1)
-        avg_s = total_s / max(steps, 1)
-        avg_u = total_u / max(steps, 1)
-        avg_mask = total_mask / max(steps, 1)
-
+    def _evaluate_epoch_ssl():
         val_eval = evaluate_tf_domain_performance(
             model, indoor_val_ds, outdoor_val_ds, num_classes=app_cfg.num_classes
         )
+        return {
+            "indoor_acc": val_eval["indoor_macro_f1"],
+            "outdoor_acc": val_eval["outdoor_macro_f1"],
+            "worst_domain_macro_f1": val_eval["worst_domain_macro_f1"],
+            "mean_domain_macro_f1": val_eval["mean_domain_macro_f1"],
+        }
 
+    trainer = Trainer(model, optimizer, loss_fn, train_ds)
+    training_result = trainer.fit(
+        model=model,
+        train_dataset=train_ds,
+        epochs=app_cfg.train.epochs,
+        strategy=strategy,
+        evaluate_epoch=_evaluate_epoch_ssl,
+        config=app_cfg,
+    )
+
+    total_epochs = app_cfg.train.epochs
+    history = []
+    hist_dict = training_result.history
+    steps_count = len(hist_dict.get("epoch", []))
+    for ep in range(steps_count):
         log_entry = {
-            "epoch": epoch + 1,
-            "duration_sec": round(duration, 3),
-            "train_loss": round(avg_loss, 4),
-            "train_loss_s": round(avg_s, 4),
-            "train_loss_u": round(avg_u, 4),
-            "mask_ratio": round(avg_mask, 4),
-            "indoor_acc": round(val_eval["indoor_macro_f1"], 4),
-            "outdoor_acc": round(val_eval["outdoor_macro_f1"], 4),
-            "worst_domain_macro_f1": round(val_eval["worst_domain_macro_f1"], 4),
-            "mean_domain_macro_f1": round(val_eval["mean_domain_macro_f1"], 4),
+            "epoch": ep + 1,
+            "duration_sec": round(float(hist_dict.get("epoch_duration_seconds", [0.0]*steps_count)[ep]), 3),
+            "train_loss": round(float(hist_dict.get("train_loss", [0.0]*steps_count)[ep]), 4),
+            "train_loss_s": round(float(hist_dict.get("train_loss_s", hist_dict.get("train_loss", [0.0]*steps_count))[ep]), 4),
+            "train_loss_u": round(float(hist_dict.get("train_loss_u", [0.0]*steps_count)[ep]), 4),
+            "mask_ratio": round(float(hist_dict.get("train_mask_ratio", hist_dict.get("mask_ratio", [0.0]*steps_count))[ep]), 4),
+            "indoor_acc": round(float(hist_dict.get("val_indoor_acc", hist_dict.get("indoor_acc", [0.0]*steps_count))[ep]), 4),
+            "outdoor_acc": round(float(hist_dict.get("val_outdoor_acc", hist_dict.get("outdoor_acc", [0.0]*steps_count))[ep]), 4),
+            "worst_domain_macro_f1": round(float(hist_dict.get("val_worst_domain_macro_f1", hist_dict.get("worst_domain_macro_f1", [0.0]*steps_count))[ep]), 4),
+            "mean_domain_macro_f1": round(float(hist_dict.get("val_mean_domain_macro_f1", hist_dict.get("mean_domain_macro_f1", [0.0]*steps_count))[ep]), 4),
         }
         history.append(log_entry)
-
         if verbose:
             print(
-                f"Epoch {epoch+1}/{total_epochs} | "
+                f"Epoch {ep+1}/{total_epochs} | "
                 f"Loss: {log_entry['train_loss']:.4f} | "
-                f"Indoor Macro-F1: {val_eval['indoor_macro_f1']:.4f} | "
-                f"Outdoor Macro-F1: {val_eval['outdoor_macro_f1']:.4f} | "
-                f"Worst Domain F1: {val_eval['worst_domain_macro_f1']:.4f}"
+                f"Indoor Macro-F1: {log_entry['indoor_acc']:.4f} | "
+                f"Outdoor Macro-F1: {log_entry['outdoor_acc']:.4f} | "
+                f"Worst Domain F1: {log_entry['worst_domain_macro_f1']:.4f}"
             )
 
     # 5. Final Evaluation on Indoor and Outdoor Test Sets

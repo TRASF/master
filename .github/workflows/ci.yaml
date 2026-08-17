@@ -43,7 +43,6 @@ jobs:
           python -m pip install --upgrade pip
           sed 's/tensorflow\[and-cuda\]/tensorflow/' requirements.txt > "$RUNNER_TEMP/requirements-ci.txt"
           python -m pip install -r "$RUNNER_TEMP/requirements-ci.txt"
-          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
           python -m pip install --no-deps -e .
           python -m pip install pytest build
 

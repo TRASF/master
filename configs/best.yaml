@@ -24,7 +24,7 @@ train:
   batch_size: 256
 
 wandb:
-  project: MosSongPlus
+  project: Master
   tags:
     - 11class
     - nomos
@@ -239,7 +239,7 @@ wandb.tags:
 wandb.group: autoresearch-gpu2-50-indoor-outdoor-robust-v1
 wandb.notes: "I07_gpuE_b128_lr1e3_o022_seed48: Indoor holdout stability of GPU winner E basin b128/lr1e-3/overlay0.22. Non-overlap 50-run plan: indoor F1 plus outdoor validation/test robustness."
 wandb.enabled: true
-wandb.project: MosSongPlus
+wandb.project: Master
 wandb.job_type: autoresearch_gpu2_50_indoor_outdoor_robust
 wandb.log_weights_freq: 0
 wandb.aggregate_plot_freq: 0

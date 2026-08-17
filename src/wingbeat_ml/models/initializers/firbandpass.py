@@ -1,27 +1,15 @@
 from __future__ import annotations
 
 import math
+from typing import Sequence
 
 import tensorflow as tf
 import tensorflow.keras as keras
 
 
-@keras.utils.register_keras_serializable(
-    package="wingbeat_ml"
-)
-class FIRBandpassInitializer(
-    keras.initializers.Initializer
-):
-    """
-    Initialize the first Conv1D as a bank of
-    band-pass FIR filters.
-'
-    Expected Conv1D kernel shape:
-
-        [kernel_size, input_channels, filters]
-
-    Currently intended for mono raw audio.
-    """
+@keras.utils.register_keras_serializable(package="wingbeat_ml")
+class FIRBandpassInitializer(keras.initializers.Initializer):
+    """Initialize a mono Conv1D kernel as windowed band-pass FIR filters."""
 
     def __init__(
         self,
@@ -29,22 +17,38 @@ class FIRBandpassInitializer(
         min_freq: float = 300.0,
         max_freq: float = 3800.0,
         overlap: float = 0.10,
-    ):
+        enforce_odd_kernel: bool = True,
+    ) -> None:
+        if sample_rate <= 0:
+            raise ValueError("sample_rate must be positive.")
+
+        if not 0.0 <= overlap < 1.0:
+            raise ValueError("overlap must satisfy 0 <= overlap < 1.")
+
+        nyquist = sample_rate / 2.0
+        if not 0.0 < min_freq < max_freq < nyquist:
+            raise ValueError(
+                "Require 0 < min_freq < max_freq < sample_rate / 2."
+            )
+
         self.sample_rate = float(sample_rate)
         self.min_freq = float(min_freq)
         self.max_freq = float(max_freq)
         self.overlap = float(overlap)
+        self.enforce_odd_kernel = bool(enforce_odd_kernel)
 
     def __call__(
         self,
-        shape,
+        shape: Sequence[int],
         dtype=None,
-    ):
-        # Keras may provide "float32" as a string.
-        # TensorFlow signal functions expect tf.DType.
-        dtype = tf.as_dtype(
-            dtype or tf.float32
-        )
+    ) -> tf.Tensor:
+        dtype = tf.as_dtype(dtype or tf.float32)
+
+        if len(shape) != 3:
+            raise ValueError(
+                "Expected Conv1D kernel shape "
+                "[kernel_size, input_channels, filters]."
+            )
 
         kernel_size = int(shape[0])
         input_channels = int(shape[1])
@@ -52,45 +56,20 @@ class FIRBandpassInitializer(
 
         if input_channels != 1:
             raise ValueError(
-                "FIRBandpassInitializer currently "
-                "expects mono input."
+                "FIRBandpassInitializer currently supports mono input only."
             )
 
-        nyquist = self.sample_rate / 2.0
+        if filters < 1:
+            raise ValueError("filters must be at least 1.")
 
-        if not (
-            0.0
-            < self.min_freq
-            < self.max_freq
-            < nyquist
-        ):
+        if self.enforce_odd_kernel and kernel_size % 2 == 0:
             raise ValueError(
-                "Require: "
-                "0 < min_freq < max_freq < Nyquist."
+                "Use an odd kernel_size for a centered Type-I FIR filter."
             )
 
-        # ----------------------------------------------
-        # Time axis centered around zero.
-        # Example K=101:
-        #
-        # -50 ... -1, 0, 1 ... 50
-        # ----------------------------------------------
-
-        n = tf.cast(
-            tf.range(kernel_size),
-            dtype,
-        )
-
-        n -= tf.cast(
-            kernel_size - 1,
-            dtype,
-        ) / 2.0
-
+        n = tf.cast(tf.range(kernel_size), dtype)
+        n -= tf.cast(kernel_size - 1, dtype) / 2.0
         n = n[:, None]
-
-        # ----------------------------------------------
-        # Frequency-band boundaries.
-        # ----------------------------------------------
 
         edges = tf.linspace(
             tf.cast(self.min_freq, dtype),
@@ -98,113 +77,62 @@ class FIRBandpassInitializer(
             filters + 1,
         )
 
-        low = edges[:-1]
-        high = edges[1:]
+        base_low = edges[:-1]
+        base_high = edges[1:]
+        bandwidth = base_high - base_low
 
-        bandwidth = high - low
-
-        # Slight overlap between filters.
-        low -= (
-            bandwidth
-            * self.overlap
-            * 0.5
-        )
-
-        high += (
-            bandwidth
-            * self.overlap
-            * 0.5
-        )
+        expansion = 0.5 * self.overlap * bandwidth
 
         low = tf.maximum(
-            low,
-            tf.cast(
-                self.min_freq,
-                dtype,
-            ),
+            base_low - expansion,
+            tf.cast(self.min_freq, dtype),
         )
-
         high = tf.minimum(
-            high,
-            tf.cast(
-                self.max_freq,
-                dtype,
-            ),
+            base_high + expansion,
+            tf.cast(self.max_freq, dtype),
         )
 
         low = low[None, :]
         high = high[None, :]
 
-        fs = tf.cast(
-            self.sample_rate,
-            dtype,
-        )
+        sample_rate = tf.cast(self.sample_rate, dtype)
+        epsilon = tf.cast(1e-7, dtype)
+        pi = tf.cast(math.pi, dtype)
 
-        # ----------------------------------------------
-        # Normalized sinc.
-        # ----------------------------------------------
+        def normalized_sinc(x: tf.Tensor) -> tf.Tensor:
+            pi_x = pi * x
 
-        def sinc(x):
-            pi_x = math.pi * x
+            safe_denominator = tf.where(
+                tf.abs(pi_x) < epsilon,
+                tf.ones_like(pi_x),
+                pi_x,
+            )
+
+            value = tf.sin(pi_x) / safe_denominator
 
             return tf.where(
-                tf.abs(x) < 1e-7,
-                tf.ones_like(x),
-                tf.sin(pi_x) / pi_x,
+                tf.abs(pi_x) < epsilon,
+                tf.ones_like(value),
+                value,
             )
 
-        # ----------------------------------------------
-        # Low-pass FIR.
-        # ----------------------------------------------
-
-        def lowpass(cutoff):
-            normalized = (
-                2.0 * cutoff / fs
+        def lowpass(cutoff: tf.Tensor) -> tf.Tensor:
+            normalized_cutoff = 2.0 * cutoff / sample_rate
+            return normalized_cutoff * normalized_sinc(
+                normalized_cutoff * n
             )
 
-            return (
-                normalized
-                * sinc(
-                    normalized * n
-                )
-            )
-
-        # ----------------------------------------------
-        # Band-pass:
-        #
-        # LP(high) - LP(low)
-        # ----------------------------------------------
-
-        kernels = (
-            lowpass(high)
-            - lowpass(low)
-        )
-
-        # ----------------------------------------------
-        # Window the FIR kernels.
-        # ----------------------------------------------
+        kernels = lowpass(high) - lowpass(low)
 
         window = tf.signal.hamming_window(
             kernel_size,
             periodic=False,
             dtype=dtype,
         )
-
         kernels *= window[:, None]
 
-        # ----------------------------------------------
-        # Remove residual DC response.
-        # ----------------------------------------------
-
-        kernels -= tf.reduce_mean(
-            kernels,
-            axis=0,
-            keepdims=True,
-        )
-
-        # ----------------------------------------------
-        # Normalize every filter to similar energy.
-        # ----------------------------------------------
+        # Enforce an exact DC null after finite truncation/windowing.
+        kernels -= tf.reduce_mean(kernels, axis=0, keepdims=True)
 
         energy = tf.sqrt(
             tf.reduce_sum(
@@ -214,24 +142,15 @@ class FIRBandpassInitializer(
             )
             + tf.cast(1e-8, dtype)
         )
-
         kernels /= energy
-
-        # Current shape:
-        #
-        # [kernel_size, filters]
-        #
-        # Conv1D needs:
-        #
-        # [kernel_size, input_channels, filters]
-        #
 
         return kernels[:, None, :]
 
-    def get_config(self):
+    def get_config(self) -> dict[str, float | bool]:
         return {
             "sample_rate": self.sample_rate,
             "min_freq": self.min_freq,
             "max_freq": self.max_freq,
             "overlap": self.overlap,
+            "enforce_odd_kernel": self.enforce_odd_kernel,
         }
