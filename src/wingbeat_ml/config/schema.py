@@ -76,8 +76,17 @@ class SplitRatiosConfig(StrictBaseModel):
         return self
 
 
+class StreamingNormConfig(StrictBaseModel):
+    enabled: bool = False
+    block_size: int = 128
+    r: float = 0.995
+    noise_floor: float = 1e-4
+    g_smooth_alpha: float = 0.1
+
+
 class PreprocessConfig(StrictBaseModel):
     dc_removal: bool = True
+    streaming_norm: StreamingNormConfig = Field(default_factory=StreamingNormConfig)
 
 
 class DatasetConfig(StrictBaseModel):

@@ -8,6 +8,7 @@ import tensorflow as tf
 import numpy as np
 
 from wingbeat_ml.config.schema import AugmentConfig
+from wingbeat_ml.models.layers.streaming_norm import StreamingBioacousticNormTF
 
 
 class AudioAugmentor:
@@ -54,6 +55,17 @@ class AudioAugmentor:
         self.mic_eq_cfg = self.aug_cfg.random_mic_eq
         self.device_ir_cfg = self.aug_cfg.device_ir
         self.electronics_cfg = self.aug_cfg.electronics
+
+        self.streaming_norm_cfg = self.preprocess_cfg.streaming_norm
+        if self.streaming_norm_cfg.enabled:
+            self.streaming_norm_layer = StreamingBioacousticNormTF(
+                block_size=self.streaming_norm_cfg.block_size,
+                r=self.streaming_norm_cfg.r,
+                noise_floor=self.streaming_norm_cfg.noise_floor,
+                g_smooth_alpha=self.streaming_norm_cfg.g_smooth_alpha,
+            )
+        else:
+            self.streaming_norm_layer = None
 
         import scipy.signal
 
@@ -1176,15 +1188,18 @@ class AudioAugmentor:
         # Phase 4: Final Standardization (The Capstone)
         # ----------------------------------------------------
         # 1. First, normalize energy so model sees consistent volume
-        if self.preprocess_cfg.dc_removal:
-            audio -= tf.reduce_mean(audio)
+        if self.preprocess_cfg.streaming_norm.enabled:
+            audio = self.streaming_norm_layer(audio)
+        else:
+            if self.preprocess_cfg.dc_removal:
+                audio -= tf.reduce_mean(audio)
 
-        audio = self.rms_normalize(
-            audio,
-            target_rms=self.rms_cfg.target_rms,
-            min_gain=self.rms_cfg.min_gain,
-            max_gain=self.rms_cfg.max_gain
-        )
+            audio = self.rms_normalize(
+                audio,
+                target_rms=self.rms_cfg.target_rms,
+                min_gain=self.rms_cfg.min_gain,
+                max_gain=self.rms_cfg.max_gain
+            )
 
         # 2. Apply random gain AFTER RMS normalization so gain variation persists
         if augment and self.gain_p > 0.0:
@@ -1201,4 +1216,5 @@ class AudioAugmentor:
         return audio, tf.cast(label, tf.int32)
 
 
-__all__ = ["AudioAugmentor"]
+__all__ = ["AudioAugmentor", "StreamingBioacousticNormTF"]
+
