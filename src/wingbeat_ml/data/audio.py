@@ -97,12 +97,14 @@ def load_audio(path: str | Path, target_sample_rate: int = 8000) -> np.ndarray:
     """Load an audio file as a mono float32 waveform at *target_sample_rate*.
 
     This is the primary audio loading entry point.  Mirrors FileLoader.load():
-      1. sf.read() with dtype='float32'
+      1. sf.read() with dtype='float32' (or np.load for .npy)
       2. to_mono()
-      3. librosa resample to target_sample_rate
+      3. librosa resample to target_sample_rate (for WAV)
       4. cast to float32
 
-    For .npy files the array is loaded directly (no resampling step).
+    For .npy files the array is loaded directly and mono-converted.
+    .npy arrays do not contain sample rate header metadata and are assumed
+    to be pre-sampled at *target_sample_rate* (8000 Hz).
 
     Args:
         path: Path to the audio file (.wav or .npy).
@@ -113,7 +115,9 @@ def load_audio(path: str | Path, target_sample_rate: int = 8000) -> np.ndarray:
     """
     path = str(path)
     if path.endswith(".npy"):
-        return np.load(path).astype(np.float32, copy=False)
+        data = np.load(path)
+        data = to_mono(data)
+        return data.astype(np.float32, copy=False)
     data, sr, _ = load_raw(path)
     data = to_mono(data)
     data = resample_audio(data, sr, target_sample_rate)

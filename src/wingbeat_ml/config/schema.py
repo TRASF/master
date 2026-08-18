@@ -250,7 +250,8 @@ class MixupConfig(StrictBaseModel):
 
 
 class RMSNormConfig(StrictBaseModel):
-    p: float = 1.0
+    enabled: bool = False
+    p: float = 0.0
     max_gain: float = 15.0
     min_gain: float = 0.05
     target_rms: float = 0.05
@@ -308,6 +309,7 @@ class PreEmphasisConfig(StrictBaseModel):
 class SegmentOverlapConfig(StrictBaseModel):
     val: float = 0.5
     train: Union[float, List[float]] = Field(default_factory=lambda: [0.0, 0.8])
+    minimum_valid_fraction: float = 0.8
 
     @model_validator(mode="after")
     def validate_overlap_bounds(self) -> SegmentOverlapConfig:

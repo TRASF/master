@@ -170,6 +170,15 @@ def split_files(
         groups=eval_groups,
     )
 
+    # Zero recording leakage assertions
+    if groups_arr is not None and len(groups_arr) > 0:
+        train_recs = set(groups_arr[np.isin(paths_arr, train_paths)])
+        val_recs = set(groups_arr[np.isin(paths_arr, val_paths)])
+        test_recs = set(groups_arr[np.isin(paths_arr, test_paths)])
+        assert train_recs.isdisjoint(val_recs), "Train and validation splits share source recordings!"
+        assert train_recs.isdisjoint(test_recs), "Train and test splits share source recordings!"
+        assert val_recs.isdisjoint(test_recs), "Validation and test splits share source recordings!"
+
     return DatasetSplits(
         train=tuple(str(p) for p in train_paths),
         validation=tuple(str(p) for p in val_paths),

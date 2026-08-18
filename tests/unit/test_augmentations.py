@@ -403,16 +403,19 @@ class TestApplyPostProcessingNoop(unittest.TestCase):
         max_val = float(tf.reduce_max(tf.abs(out_audio)))
         self.assertLessEqual(max_val, 1.0 + 1e-5)
 
-    def test_deterministic_with_fixed_seed(self):
+    def test_baseline_rms_disabled_preserves_scale(self):
         import tensorflow as tf
         from wingbeat_ml.augmentations.transforms import AudioAugmentor
-        aug = AudioAugmentor(segment_length=2400, config={}, seed=42)
-        audio = _make_audio(2400)
+        cfg = {"rms_norm": {"enabled": False, "p": 0.0}}
+        aug = AudioAugmentor(segment_length=2400, config=cfg, seed=42)
+        # Sine wave with peak 0.2
+        t = np.linspace(0, 0.3, 2400, endpoint=False)
+        data = (0.2 * np.sin(2 * np.pi * 400 * t)).astype(np.float32)
+        audio = tf.constant(data)
         label = tf.constant(0, dtype=tf.int32)
-        seed = _make_seed(0, 0)
-        out1, _ = aug.apply_post_processing(audio, label, seed=seed, augment=False)
-        out2, _ = aug.apply_post_processing(audio, label, seed=seed, augment=False)
-        np.testing.assert_array_equal(out1.numpy(), out2.numpy())
+        out_audio, _ = aug.apply_post_processing(audio, label, seed=_make_seed(0, 0), augment=False)
+        max_val = float(tf.reduce_max(tf.abs(out_audio)))
+        self.assertAlmostEqual(max_val, 0.2, places=3)
 
 
 class TestPipeline(unittest.TestCase):

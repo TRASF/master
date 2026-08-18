@@ -15,6 +15,10 @@ class EvaluationResult:
     loss: float
     accuracy: float
     macro_f1: float
+    window_accuracy: float = 0.0
+    window_macro_f1: float = 0.0
+    recording_accuracy: float = 0.0
+    recording_macro_f1: float = 0.0
     female_f1: float = 0.0
     female_prec: float = 0.0
     female_rec: float = 0.0
@@ -24,6 +28,12 @@ class EvaluationResult:
     weighted_f1: float = 0.0
     per_class: Dict[str, float] = field(default_factory=dict)
     confusion_matrix: Any = None
+
+    def __post_init__(self):
+        if self.window_accuracy == 0.0:
+            self.window_accuracy = self.accuracy
+        if self.window_macro_f1 == 0.0:
+            self.window_macro_f1 = self.macro_f1
 
     def __getitem__(self, key: str) -> Any:
         if hasattr(self, key):
@@ -127,6 +137,35 @@ class ModelEvaluator:
             predictions,
             from_logits=getattr(self.loss_fn, "from_logits", False),
         )
+
+    def compute_recording_level_metrics(
+        self,
+        recording_logits_map: Dict[str, List[np.ndarray]],
+        recording_labels_map: Dict[str, int],
+    ) -> Dict[str, float]:
+        """Aggregate window logits per source recording ID and compute recording accuracy & macro F1."""
+        if not recording_logits_map:
+            return {"recording_accuracy": 0.0, "recording_macro_f1": 0.0}
+
+        y_true_rec = []
+        y_pred_rec = []
+
+        for rec_id, logits_list in recording_logits_map.items():
+            if rec_id not in recording_labels_map or not logits_list:
+                continue
+            avg_logits = np.mean(np.array(logits_list), axis=0)
+            pred_class = int(np.argmax(avg_logits))
+            true_class = int(recording_labels_map[rec_id])
+
+            y_true_rec.append(true_class)
+            y_pred_rec.append(pred_class)
+
+        if not y_true_rec:
+            return {"recording_accuracy": 0.0, "recording_macro_f1": 0.0}
+
+        rec_acc = float(np.mean(np.array(y_true_rec) == np.array(y_pred_rec)))
+        rec_f1 = float(f1_score(y_true_rec, y_pred_rec, average="macro", zero_division=0))
+        return {"recording_accuracy": rec_acc, "recording_macro_f1": rec_f1}
 
     def collect_prediction_diagnostics(
         self,

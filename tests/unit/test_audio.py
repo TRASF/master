@@ -153,6 +153,14 @@ class TestLoadAudio(unittest.TestCase):
         np.testing.assert_array_equal(out, self.npy_data)
         self.assertEqual(out.dtype, np.float32)
 
+    def test_2d_npy_becomes_mono(self):
+        npy_2d_path = str(Path(self.tmp.name) / "test_2d.npy")
+        data_2d = np.random.uniform(-0.5, 0.5, (2400, 2)).astype(np.float32)
+        np.save(npy_2d_path, data_2d)
+        out = load_audio(npy_2d_path)
+        self.assertEqual(out.ndim, 1)
+        self.assertEqual(len(out), 2400)
+
     def test_stereo_wav_becomes_mono(self):
         stereo_path = str(Path(self.tmp.name) / "stereo.wav")
         _make_stereo_wav(stereo_path)

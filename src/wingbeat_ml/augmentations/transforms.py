@@ -246,6 +246,19 @@ class AudioAugmentor:
         # Create overlapping frames
         frames = tf.signal.frame(audio, frame_length=self.segment_length, frame_step=step, pad_end=True)
         num_frames = tf.shape(frames)[0]
+
+        # Tail window filtering via minimum_valid_fraction
+        min_valid_frac = float(getattr(self.overlap_cfg, "minimum_valid_fraction", 0.8))
+        min_unpadded_samples = tf.cast(float(self.segment_length) * min_valid_frac, tf.int32)
+        frame_starts = tf.range(num_frames) * step
+        unpadded_samples = tf.maximum(0, tf.minimum(self.segment_length, audio_len - frame_starts))
+        valid_mask = tf.greater_equal(unpadded_samples, min_unpadded_samples)
+
+        if tf.reduce_any(valid_mask):
+            valid_indices = tf.where(valid_mask)[:, 0]
+            frames = tf.gather(frames, valid_indices)
+            num_frames = tf.shape(frames)[0]
+
         labels = tf.repeat(tf.expand_dims(tf.cast(label, tf.int32), 0), num_frames, axis=0)
 
         if sample_id is not None:
@@ -1194,12 +1207,13 @@ class AudioAugmentor:
             if self.preprocess_cfg.dc_removal:
                 audio -= tf.reduce_mean(audio)
 
-            audio = self.rms_normalize(
-                audio,
-                target_rms=self.rms_cfg.target_rms,
-                min_gain=self.rms_cfg.min_gain,
-                max_gain=self.rms_cfg.max_gain
-            )
+            if getattr(self.rms_cfg, "enabled", False) or self.rms_cfg.p > 0.0:
+                audio = self.rms_normalize(
+                    audio,
+                    target_rms=self.rms_cfg.target_rms,
+                    min_gain=self.rms_cfg.min_gain,
+                    max_gain=self.rms_cfg.max_gain
+                )
 
         # 2. Apply random gain AFTER RMS normalization so gain variation persists
         if augment and self.gain_p > 0.0:
