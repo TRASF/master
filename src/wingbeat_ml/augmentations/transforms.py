@@ -8,7 +8,7 @@ import tensorflow as tf
 import numpy as np
 
 from wingbeat_ml.config.schema import AugmentConfig
-from wingbeat_ml.models.layers.streaming_norm import StreamingBioacousticNormTF
+from wingbeat_ml.classification.models.layers.streaming_norm import StreamingBioacousticNormTF
 
 
 class AudioAugmentor:

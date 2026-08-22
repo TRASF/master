@@ -1,7 +1,6 @@
 # Wingbeat ML
 
-`wingbeat_ml` is an installable training and MLOps package for mosquito
-wingbeat classification. MosSongPlus is its first selectable model.
+`wingbeat_ml` contains two mosquito-audio products: multiclass wingbeat classification and binary mosquito sound-event detection (SED). Shared deployment, analysis, and visualization code supports both.
 
 ## Install
 
@@ -15,9 +14,9 @@ python -m wingbeat_ml --version
 ```bash
 wingbeat-ml config resolve \
   --base configs/base.yaml \
-  --model configs/models/mossong_plus.yaml \
-  --experiment configs/experiments/pretrain.yaml \
-  --profile configs/profiles/ci.yaml \
+  --model configs/classification/models/mossong_plus.yaml \
+  --experiment configs/classification/experiments/pretrain.yaml \
+  --profile configs/classification/profiles/ci.yaml \
   --output /tmp/wingbeat-resolved.yaml
 ```
 
@@ -30,11 +29,22 @@ Keep runtime outputs outside the repository:
 ```bash
 export WINGBEAT_RUNTIME_ROOT='/media/miru4090s/New Volume2/wingbeat_ml'
 export WINGBEAT_DATASET_DIR="$PWD/dataset/MSB/Indoor"
-export WINGBEAT_PROFILE="$PWD/configs/profiles/local.yaml"
+export WINGBEAT_PROFILE="$PWD/configs/classification/profiles/local.yaml"
 export WINGBEAT_ENABLE_WANDB=false
 bash ops/wandb/train-pretrain.sh
-python -m wingbeat_ml.pipelines.pretrain --defaults_path configs/defaults.yaml --model_cfg_path configs/models/mossong_plus.yaml
+python -m wingbeat_ml.classification.pipelines.pretrain --defaults_path configs/classification/defaults.yaml --model_cfg_path configs/classification/models/mossong_plus.yaml
 ```
+
+## Mosquito SED
+
+```bash
+./sed.sh train
+./sed.sh evaluate
+./sed.sh label
+./sed.sh detect /path/to/recording.wav
+```
+
+`label` and `detect` load the existing trained checkpoint without rebuilding data or training. `run_sed_pipeline.sh` remains the backward-compatible full-cycle command. SED configuration and operating documentation live under `configs/sed/` and `docs/sed/`.
 
 ## Quality, promotion, and export
 
@@ -59,4 +69,4 @@ logs, caches, credentials, and W&B run data are not committed.
 Production code is packaged exclusively from `src/wingbeat_ml`. Historical
 repository entrypoints remain as thin compatibility wrappers and are not part
 of the wheel. See [`docs/architecture.md`](docs/architecture.md) for component
-ownership, dependency rules, the MLOps execution flow, and extension guidance.
+ownership, dependency rules, the MLOps execution flow, and extension guidance. See [`docs/REPOSITORY_LAYOUT.md`](docs/REPOSITORY_LAYOUT.md) for product boundaries and compatibility paths.

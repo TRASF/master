@@ -1,0 +1,87 @@
+model:
+    # Pretraining emits logits; classification modes may override this.
+    output_activation: null
+    id: mossong_plus
+    mossong_plus:
+        layers:
+            # # 1. Three Convolutions (ReLU)
+            - type: "conv1d"
+              filters: 24
+              kernel_size: 257
+              strides: 1
+              activation: null
+              padding: "valid"
+              dilation_rate: 1
+              batch_norm: false
+              use_bias: false
+
+              # kernel_initializer:
+              #   type: fir_bandpass
+              #   sample_rate: 8000
+              #   min_freq: 400
+              #   max_freq: 3800
+              #   overlap: 0.5
+
+            # - type: "relu"
+
+            - type: "conv1d"
+              filters: 16
+              kernel_size: 129
+              strides: 4
+              activation: null
+              padding: "same"
+              dilation_rate: 1
+              batch_norm: false
+
+            - type: "relu"
+
+            - type: "conv1d"
+              filters: 12
+              kernel_size: 64
+              strides: 8
+              activation: null
+              padding: "same"
+              dilation_rate: 1
+              batch_norm: false
+
+            - type: "relu"
+
+            # # 2. Maxpool (3, 3)
+            # - type: "maxpool1d"
+            #   pool_size: 3
+            #   strides: 3
+            #   padding: "valid"
+
+            # 3. Group block (paired global pooling)
+            # - type: "concat"
+            #   layers:
+            #     - type: "avgpool1d"
+            #       pool_size: 6
+            #       strides: 1
+            #       padding: "valid"
+            #     - type: "maxpool1d"
+            #       pool_size: 6
+            #       strides: 1
+            #       padding: "valid"
+
+            - type: "flatten"
+
+            # 5. Dense (256)
+            - type: "dense"
+              units: 256
+              activation: null
+              batch_norm: false
+
+            - type: "relu"
+
+            # 4. Dropout (0.5)
+            - type: "dropout"
+              rate: 0.5
+
+            # 6. Dense (128)
+            - type: "dense"
+              units: 128
+              activation: null
+              batch_norm: false
+
+            - type: "relu"

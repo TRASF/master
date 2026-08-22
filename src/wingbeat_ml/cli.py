@@ -254,7 +254,7 @@ def main(args=None):
 
     if parsed_args.command == "train":
         try:
-            from wingbeat_ml.pipelines.pretrain import train_supervised
+            from wingbeat_ml.classification.pipelines.pretrain import train_supervised
             train_supervised(
                 defaults_path=parsed_args.defaults,
                 model_cfg_path=parsed_args.model_config or "configs/models/mossong_plus.yaml",
@@ -293,7 +293,7 @@ def main(args=None):
             sys.exit(1)
     elif parsed_args.command == "analyze" and parsed_args.subcommand == "edge":
         try:
-            from wingbeat_ml.models import MosSongPlusModel
+            from wingbeat_ml.classification.models import MosSongPlusModel
             from wingbeat_ml.config.loader import load_yaml
             from wingbeat_ml.analysis.edge.complexity import analyze_edge_complexity
             model_cfg = load_yaml(parsed_args.model_config)

@@ -55,7 +55,7 @@ def get_model_builder(model_id: str):
         normalized = "mossong_plus"
 
     if not MODEL_BUILDERS.available():
-        import wingbeat_ml.models  # noqa: F401
+        import wingbeat_ml.classification.models  # noqa: F401
 
     try:
         return MODEL_BUILDERS.get(normalized)

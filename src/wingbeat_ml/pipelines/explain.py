@@ -22,7 +22,7 @@ from wingbeat_ml.analysis.model.signal_gradcam import (
     SignalGradCamAnalyzer,
     collect_real_samples_by_class,
 )
-from wingbeat_ml.pipelines.helpers.components import build_dataset_bundle
+from wingbeat_ml.classification.pipelines.helpers.components import build_dataset_bundle
 from wingbeat_ml.visualizer.signal_gradcam import plot_signal_gradcam
 from wingbeat_ml.pipelines.signal_gradcam_runtime import explain_sample
 
@@ -78,7 +78,7 @@ def load_exact_model_and_config(
         )
 
         try:
-            from wingbeat_ml.pipelines.helpers.components import build_model_component
+            from wingbeat_ml.classification.pipelines.helpers.components import build_model_component
 
             model = build_model_component(app_cfg, arch_dict)
             model.load_weights(str(path))

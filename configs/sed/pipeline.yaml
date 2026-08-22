@@ -1,0 +1,97 @@
+paths:
+  msb_dir: dataset/MSB
+  philip_dir: dataset/Philip
+  recordings_dir: /media/miru4090s/New Volume2/recordings
+  trang_dir: /home/miru4090s/clones/Trang/datasets/Trang
+  metadata_dir: metadata
+  gold_dir: dataset
+  synthetic_dir: dataset/synthetic
+  teacher_output: artifacts/sed
+  archive_dir: /media/miru4090s/New Volume2/Mosquitoes Dataset/Philip/Lab
+  archive_output: /media/miru4090s/New Volume2/Mosquitoes Dataset/Mosquito SED Outputs/archive_detections
+  review_wav_dir: /media/miru4090s/New Volume2/Mosquitoes Dataset/Mosquito SED Outputs/review_wavs
+
+dataset:
+  teacher_sample_rate: 16000
+  frame_rate_hz: 25.0
+  segment_length_s: 4.0
+
+model:
+  atst_checkpoint: "checkpoints/atstframe_base.ckpt"
+  n_atst_blocks: 1
+  freeze_encoder: true
+  conv_dim: 256
+  hidden_dim: 256
+  gru_layers: 2
+  head_type: "gru"
+  dropout: 0.2
+
+training:
+  batch_size: 256
+  num_workers: 16
+  max_epochs: 100
+  early_stopping_patience: 20
+  early_stopping_min_delta: 0.001
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  pos_weight: 1.0
+  loss_type: "bce"
+  amp_dtype: "float16"
+  grad_clip_norm: 5.0
+  synthetic_ratio_max: 0.3
+  target_rms: 0.05
+  bandwidth_aug_prob: 0.5
+  epochs_override: null
+
+manifest:
+  active_channel_rms_threshold: 0.0001
+
+split:
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+  seed: 42
+
+gold:
+  max_validation_files: 5
+  max_test_files: 5
+  min_recording_duration_s: 10.0
+
+synthetic:
+  num_scenes: 500
+  scene_duration_s: 4.0
+  sample_rate_hz: 16000
+  snr_db_min: 0.0
+  snr_db_max: 12.0
+  event_count_weights: [0.10, 0.55, 0.30, 0.05]
+  fade_ms: 5.0
+  seed: 42
+
+inference:
+  chunk_length_s: 4.0
+  hop_length_s: 1.0
+  frame_rate_hz: 25.0
+  batch_size: 32
+  max_files: null
+  auto_accept_disabled: true
+
+decoder:
+  high_threshold: 0.8
+  low_threshold: 0.4
+  min_duration_s: 0.1
+  max_merge_gap_s: 0.2
+
+review:
+  high_threshold: 0.8
+  low_threshold: 0.4
+  audit_ratio: 0.05
+  seed: 42
+  export_embedded_wavs: true
+
+evaluation:
+  enabled: false
+  gold_dir: dataset/gold_validation
+  predictions_csv: output/gold_validation_predictions.csv
+  iou_threshold: 0.2
+  high_confidence_threshold: 0.9
+  event_score_method: top25_mean_score

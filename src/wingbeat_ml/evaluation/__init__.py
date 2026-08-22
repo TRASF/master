@@ -1,6 +1,2 @@
-"""Canonical evaluation components."""
-
-from wingbeat_ml.evaluation.evaluator import ModelEvaluator
-from wingbeat_ml.evaluation.report import report_results
-
-__all__ = ["ModelEvaluator", "report_results"]
+"""Compatibility wrapper for wingbeat_ml.classification.evaluation."""
+from wingbeat_ml.classification.evaluation import *

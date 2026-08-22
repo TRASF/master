@@ -19,8 +19,8 @@ if _repo_src.exists() and str(_repo_src) not in sys.path:
 
 try:
     import tensorflow as tf
-    from wingbeat_ml.models import MosSongPlusModel
-    from wingbeat_ml.evaluation.diagnostics import analyze_model_sample
+    from wingbeat_ml.classification.models import MosSongPlusModel
+    from wingbeat_ml.classification.evaluation.diagnostics import analyze_model_sample
     from wingbeat_ml.visualizer.spectrogram import compute_spectrogram, analyze_harmonics
     from wingbeat_ml.data.audio import load_audio
 except ImportError as err:

@@ -242,7 +242,7 @@ def export_from_weights(
     run_debugger=None,
 ):
     """Build MosSongPlus, load weights and run export."""
-    from wingbeat_ml.pipelines.helpers import (
+    from wingbeat_ml.classification.pipelines.helpers import (
         build_dataset_bundle,
         build_model_component,
         load_pipeline_configuration,
@@ -347,7 +347,7 @@ def main(args=None):
     parser.add_argument(
         "--sync-deployment",
         action="store_true",
-        help="Automatically copy exported model.h and quantization headers into deployment/tflitemicro/main/",
+        help="Automatically copy exported model.h and quantization headers into firmware/tflitemicro/main/",
     )
     parsed = parser.parse_args(args)
 
@@ -363,7 +363,7 @@ def main(args=None):
     )
 
     if parsed.sync_deployment:
-        dep_dir = Path("deployment/tflitemicro/main")
+        dep_dir = Path("firmware/tflitemicro/main")
         if dep_dir.exists():
             shutil.copy(res["paths"]["int8_header"], dep_dir / "model.h")
             shutil.copy(res["paths"]["input_quantization"], dep_dir / "model_input_quantization.h")

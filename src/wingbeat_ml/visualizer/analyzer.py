@@ -35,7 +35,7 @@ else:
     GRADCAM_IMPORT_ERROR = None
 
 try:
-    from wingbeat_ml.evaluation.diagnostics import analyze_model_sample
+    from wingbeat_ml.classification.evaluation.diagnostics import analyze_model_sample
 except Exception as err:  # pragma: no cover
     analyze_model_sample = None
     DIAGNOSTICS_IMPORT_ERROR = err
@@ -69,7 +69,7 @@ def _load_or_build_model(model_path: str):
             pass
 
     try:
-        from wingbeat_ml.models import MosSongPlusModel
+        from wingbeat_ml.classification.models import MosSongPlusModel
         import yaml
 
         cfg_path = Path("configs/models/mossong_plus.yaml")

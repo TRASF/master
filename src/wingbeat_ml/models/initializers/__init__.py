@@ -1,3 +1,2 @@
-from .firbandpass import FIRBandpassInitializer
-
-__all__ = ["FIRBandpassInitializer"]
+"""Compatibility wrapper for wingbeat_ml.classification.models.initializers."""
+from wingbeat_ml.classification.models.initializers import *

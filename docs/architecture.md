@@ -9,10 +9,12 @@ modules are deliberately excluded from the distribution.
 | Area | Responsibility |
 |---|---|
 | `config/` | Deterministic loading, validation, profiles, and runtime setup |
-| `data/`, `augmentations/` | Audio loading, manifests, splits, datasets, transforms |
-| `models/`, `registry.py` | Selectable model builders and component lookup |
-| `training/`, `pipelines/` | Reusable training primitives and task orchestration |
-| `evaluation/`, `quality/` | Metrics, reports, validation gates |
+| `classification/` | Multiclass models, training, evaluation, and pipelines |
+| `sed/` | Binary mosquito SED data, ATST teacher, inference, evaluation, and annotation |
+| `data/`, `augmentations/` | Shared audio loading, datasets, and transforms |
+| `registry.py` | Classification model/component lookup |
+| `pipelines/`, `models/`, `training/`, `evaluation/` | Compatibility wrappers plus cross-product orchestration |
+| `quality/` | Metrics-based validation gates |
 | `tracking/` | W&B integration, lineage, and promotion metadata |
 | `export/` | TFLite conversion, verification, and deployment bundles |
 
@@ -51,8 +53,7 @@ configuration profiles and environment overrides.
 
 ## Extending the system
 
-To add a model, implement its builder under `wingbeat_ml.models`, register its
-stable identifier in `wingbeat_ml.registry`, add a model YAML file, and test the
+To add a classification model, implement its builder under `wingbeat_ml.classification.models`, register its stable identifier in `wingbeat_ml.registry`, add a model YAML file, and test the
 builder and registry lookup. Add data transforms, metrics, trackers, or
 exporters to their corresponding canonical module and compose them from a
 pipeline; do not add new implementation to a compatibility wrapper.

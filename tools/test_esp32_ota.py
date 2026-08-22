@@ -58,7 +58,7 @@ def run_ota_test_server(export_dir: str | Path = "output/quantized_export", port
     print(f"TFLite Model URL  : http://{local_ip}:{port}/model_full_int8.tflite")
     print(f"Config JSON URL   : http://{local_ip}:{port}/config_ota.json")
     print("------------------------------------------------------------")
-    print(f"Configure in deployment/tflitemicro/main/config.h:")
+    print(f"Configure in firmware/tflitemicro/main/config.h:")
     print(f'#define OTA_MANIFEST_URL "http://{local_ip}:{port}/ota_manifest.json"')
     print("============================================================")
     print(f"Serving files from {export_path}... (Press Ctrl+C to stop)")

@@ -1,5 +1,6 @@
 """Small adapter around the W&B Artifact Registry API."""
 
+import os
 import re
 from pathlib import Path
 
@@ -46,6 +47,7 @@ def initialize_training_run(config, *, wandb_module=None):
             return None
 
     run = wandb_module.init(
+        dir=os.environ.get("WINGBEAT_RUNTIME_ROOT", "runtime"),
         project=settings.project,
         config=app_cfg.model_dump(mode="json"),
         group=settings.group,
@@ -114,6 +116,7 @@ def promote_artifact(
     aliases = list(aliases or ["candidate"])
 
     with wandb_module.init(
+        dir=os.environ.get("WINGBEAT_RUNTIME_ROOT", "runtime"),
         entity=entity,
         project=project,
         job_type="model-promotion",

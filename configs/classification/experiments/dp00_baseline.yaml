@@ -1,0 +1,59 @@
+# DP-00 Scientific Control Baseline Config
+# Pure deterministic 8 kHz bioacoustic waveform preprocessing.
+# Disables RMS normalization, pitch shifting, and all stochastic augmentations.
+
+audio:
+  sample_rate: 8000
+  duration: 0.3
+
+preprocess:
+  dc_removal: true
+  streaming_norm:
+    enabled: false
+
+augment:
+  rms_norm:
+    enabled: false
+    p: 0.0
+
+  pitch_shift:
+    p: 0.0
+
+  time_shift:
+    p: 0.0
+
+  time_masking:
+    p: 0.0
+
+  gaussian_noise:
+    p: 0.0
+
+  noise_overlay:
+    p: 0.0
+
+  random_gain:
+    p: 0.0
+
+  mixup:
+    p: 0.0
+
+  random_mic_eq:
+    p: 0.0
+
+  device_ir:
+    p: 0.0
+
+  electronics:
+    p: 0.0
+
+  high_pass:
+    p: 0.0
+
+  pre_emphasis:
+    p: 0.0
+
+wandb:
+  project: Master
+  group: dp00_scientific_baseline
+  notes: "DP-00 Control Baseline: 8kHz raw audio, DC removal enabled, RMS norm disabled, all augmentations off."
+  enabled: false

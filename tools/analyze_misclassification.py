@@ -18,8 +18,8 @@ if _repo_src.exists() and str(_repo_src) not in sys.path:
 
 try:
     import tensorflow as tf
-    from wingbeat_ml.models import MosSongPlusModel
-    from wingbeat_ml.evaluation.error_analyzer import diagnose_misclassification
+    from wingbeat_ml.classification.models import MosSongPlusModel
+    from wingbeat_ml.classification.evaluation.error_analyzer import diagnose_misclassification
     from wingbeat_ml.visualizer.spectrogram import compute_spectrogram
     from wingbeat_ml.data.audio import load_audio
 except ImportError as err:  # pragma: no cover

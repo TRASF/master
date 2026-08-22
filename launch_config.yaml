@@ -1,6 +1,0 @@
-docker:
-  args:
-    - "--gpus"
-    - "all"
-    - "-v"
-    - "/home/miru4090s/clones/Master Thesises/dataset:/app/dataset"
