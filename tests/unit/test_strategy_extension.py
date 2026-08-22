@@ -6,9 +6,9 @@ from unittest import mock
 import numpy as np
 import tensorflow as tf
 
-from wingbeat_ml.training.strategies.base import TrainingStrategy
-from wingbeat_ml.training.strategies import registry as _registry_module
-from wingbeat_ml.training.strategies.registry import build_strategy, STRATEGIES
+from wingbeat_ml.classification.training.strategies.base import TrainingStrategy
+from wingbeat_ml.classification.training.strategies import registry as _registry_module
+from wingbeat_ml.classification.training.strategies.registry import build_strategy, STRATEGIES
 
 
 class DummyStrategy(TrainingStrategy):

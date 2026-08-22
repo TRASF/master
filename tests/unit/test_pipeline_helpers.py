@@ -18,10 +18,10 @@ ROOT = Path(__file__).resolve().parents[2]
 class TestPipelineHelperBoundary(unittest.TestCase):
     def test_focused_helper_modules_exist(self):
         for name in (
-            "wingbeat_ml.pipelines.helpers.configuration",
-            "wingbeat_ml.pipelines.helpers.runtime",
-            "wingbeat_ml.pipelines.helpers.components",
-            "wingbeat_ml.pipelines.helpers.reporting",
+            "wingbeat_ml.classification.pipelines.helpers.configuration",
+            "wingbeat_ml.classification.pipelines.helpers.runtime",
+            "wingbeat_ml.classification.pipelines.helpers.components",
+            "wingbeat_ml.classification.pipelines.helpers.reporting",
         ):
             self.assertIsNotNone(importlib.util.find_spec(name), name)
 
@@ -38,14 +38,14 @@ class TestPipelineHelperBoundary(unittest.TestCase):
         self.assertFalse(profile["wandb"]["enabled"])
 
         pretrain = (
-            ROOT / "src" / "wingbeat_ml" / "pipelines" / "pretrain.py"
+            ROOT / "src" / "wingbeat_ml" / "classification" / "pipelines" / "pretrain.py"
         ).read_text(encoding="utf-8")
         self.assertNotIn('"epochs": 5', pretrain)
         self.assertNotIn('"batch_size": 256', pretrain)
         self.assertNotIn("/media/", pretrain)
 
     def test_tracked_configuration_has_no_machine_paths(self):
-        paths = list((ROOT / "configs").rglob("*.yaml"))
+        paths = list((ROOT / "configs" / "classification").rglob("*.yaml"))
         paths.extend((ROOT / "ops").rglob("*.sh"))
         for path in paths:
             source = path.read_text(encoding="utf-8")
@@ -54,7 +54,7 @@ class TestPipelineHelperBoundary(unittest.TestCase):
 
     def test_runtime_and_dataset_environment_override_profile(self):
         configuration = importlib.import_module(
-            "wingbeat_ml.pipelines.helpers.configuration"
+            "wingbeat_ml.classification.pipelines.helpers.configuration"
         )
 
         with TemporaryDirectory() as directory:
@@ -102,7 +102,7 @@ class TestPipelineHelperBoundary(unittest.TestCase):
 
     def test_pretrain_run_name_uses_resolved_seed(self):
         runtime = importlib.import_module(
-            "wingbeat_ml.pipelines.helpers.runtime"
+            "wingbeat_ml.classification.pipelines.helpers.runtime"
         )
         config = {
             "augment": {"high_pass": {"p": 0.25}},
@@ -117,7 +117,7 @@ class TestPipelineHelperBoundary(unittest.TestCase):
 
     def test_missing_operational_setting_fails_before_runtime(self):
         configuration = importlib.import_module(
-            "wingbeat_ml.pipelines.helpers.configuration"
+            "wingbeat_ml.classification.pipelines.helpers.configuration"
         )
         config = {
             "dataset": {

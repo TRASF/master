@@ -26,10 +26,10 @@ def require_module(testcase, name):
 class TestCanonicalEvaluation(unittest.TestCase):
     def test_modules_exist(self):
         for name in (
-            "wingbeat_ml.evaluation",
-            "wingbeat_ml.evaluation.evaluator",
-            "wingbeat_ml.evaluation.report",
-            "wingbeat_ml.pipelines.evaluate",
+            "wingbeat_ml.classification.evaluation",
+            "wingbeat_ml.classification.evaluation.evaluator",
+            "wingbeat_ml.classification.evaluation.report",
+            "wingbeat_ml.classification.pipelines.evaluate",
             "wingbeat_ml.pipelines.validate",
             "wingbeat_ml.quality.gates",
             "wingbeat_ml.quality.report",
@@ -39,7 +39,7 @@ class TestCanonicalEvaluation(unittest.TestCase):
     def test_small_dataset_can_be_evaluated(self):
         module = require_module(
             self,
-            "wingbeat_ml.pipelines.evaluate",
+            "wingbeat_ml.classification.pipelines.evaluate",
         )
 
         inputs = tf.keras.layers.Input(shape=(2,))
@@ -71,9 +71,9 @@ class TestCanonicalEvaluation(unittest.TestCase):
 
     def test_training_pipelines_use_canonical_evaluation(self):
         for name in (
-            "wingbeat_ml.pipelines.pretrain",
-            "wingbeat_ml.pipelines.linear_probe",
-            "wingbeat_ml.pipelines.fine_tune",
+            "wingbeat_ml.classification.pipelines.pretrain",
+            "wingbeat_ml.classification.pipelines.linear_probe",
+            "wingbeat_ml.classification.pipelines.fine_tune",
         ):
             module = importlib.import_module(name)
             source = inspect.getsource(module)
@@ -84,7 +84,7 @@ class TestCanonicalEvaluation(unittest.TestCase):
     def test_training_run_evaluation_is_centralized(self):
         module = require_module(
             self,
-            "wingbeat_ml.pipelines.helpers.reporting",
+            "wingbeat_ml.classification.pipelines.helpers.reporting",
         )
         model = mock.Mock()
         evaluator = mock.Mock()
@@ -108,7 +108,7 @@ class TestCanonicalEvaluation(unittest.TestCase):
             open(checkpoint, "a", encoding="utf-8").close()
 
             with mock.patch(
-                "wingbeat_ml.evaluation.report_results"
+                "wingbeat_ml.classification.evaluation.report_results"
             ) as report:
                 module.evaluate_training_run(
                     model=model,
@@ -247,7 +247,7 @@ class TestQualityGates(unittest.TestCase):
 
     def test_evaluation_prediction_distribution_and_yaml_config(self):
         from wingbeat_ml.config import load_config
-        from wingbeat_ml.evaluation.evaluator import ModelEvaluator
+        from wingbeat_ml.classification.evaluation.evaluator import ModelEvaluator
 
         cfg = load_config("configs/defaults.yaml")
         self.assertTrue(hasattr(cfg.evaluation, "confusion_matrix"))
@@ -260,6 +260,7 @@ class TestQualityGates(unittest.TestCase):
             tf.keras.layers.Dense(3, activation="softmax")
         ])
         evaluator = ModelEvaluator(model, ["c0", "c1", "c2"])
+        tf.random.set_seed(1)
         x = tf.random.normal((30, 10))
         y = tf.one_hot(np.random.randint(0, 3, 30), depth=3)
         ds = tf.data.Dataset.from_tensors((x, y))

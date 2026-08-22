@@ -46,11 +46,8 @@ def export_ocenaudio_regions(
         start_s = float(event["start_s"])
         end_s = float(event["end_s"])
         confidence = float(event.get("confidence", 1.0))
-
-        if confidence >= high_threshold:
-            label = f"MOS | conf={confidence:.4f} | AUTO"
-        else:
-            label = f"MOS? | conf={confidence:.4f} | REVIEW"
+        status = str(event.get("status", "REVIEW"))
+        label = f"MOS | conf={confidence:.4f} | {status}"
 
         lines.extend([
             str(index),
@@ -66,7 +63,7 @@ def export_ocenaudio_regions(
         start_s = float(event["start_s"])
         end_s = float(event["end_s"])
         confidence = float(event.get("confidence", 1.0))
-        status = "AUTO" if confidence >= high_threshold else "REVIEW"
+        status = str(event.get("status", "REVIEW"))
         df_data.append({
             "audio_file": audio_path.name,
             "start_s": start_s,

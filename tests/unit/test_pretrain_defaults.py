@@ -11,7 +11,7 @@ test_env.pop("WINGBEAT_DATASET_DIR", None)
 
 import yaml
 
-from wingbeat_ml.pipelines import pretrain
+from wingbeat_ml.classification.pipelines import pretrain
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -100,8 +100,8 @@ class TestDefaultPretrainPilot(TestCase):
             model_cfg_path="custom-model.yaml",
         )
 
-    @patch("wingbeat_ml.pipelines.pretrain.Path.exists", return_value=True)
-    @patch("wingbeat_ml.pipelines.pretrain.AdaBN")
+    @patch("wingbeat_ml.classification.pipelines.pretrain.Path.exists", return_value=True)
+    @patch("wingbeat_ml.classification.pipelines.pretrain.AdaBN")
     @patch.object(pretrain, "evaluate_training_run")
     @patch.object(pretrain, "run_training")
     @patch.object(pretrain, "build_supervised_components")

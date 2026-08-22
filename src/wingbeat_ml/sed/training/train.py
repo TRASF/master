@@ -359,7 +359,11 @@ def train_teacher_v0(
         "segment_length_s": segment_len,
         "n_atst_blocks": int(mcfg.get("n_atst_blocks", 1)),
         "bandwidth_aug_prob": float(tcfg.get("bandwidth_aug_prob", 0.5)),
+        "bandwidth_cutoff_min": 3400.0,
+        "bandwidth_cutoff_max": 4000.0,
         "target_rms": float(tcfg.get("target_rms", 0.05)),
+        "min_gain": 0.1,
+        "max_gain": 10.0,
         "synthetic_ratio_max": float(tcfg.get("synthetic_ratio_max", 0.3)),
     }, sort_keys=True).encode())
     cache_dir = output / "atst_cache" / cache_hash.hexdigest()[:16]

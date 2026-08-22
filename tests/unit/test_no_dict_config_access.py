@@ -31,9 +31,11 @@ class TestNoDictConfigAccess(TestCase):
             "config/schema.py",  # Pydantic v2 schema definition and pre-validation dictionary checks
             "export/input_contract.py",  # Low-level input contract helper
             "deployment/contracts.py",  # Low-level deployment contract helper
-            "models/mossong_plus.py",  # Keras layer get_config / from_config dictionaries
-            "models/registry.py",  # Low-level layer factory parameter extraction
-            "models/layers/rep_conv1d.py",  # Keras layer get_config / from_config dictionaries
+            "classification/models/mossong_plus.py",  # Keras serialization dictionaries
+            "classification/models/registry.py",  # Layer factory parameter extraction
+            "classification/models/layers/rep_conv1d.py",  # Keras serialization dictionaries
+            "sed/application/run_sed_pipeline.py",  # Standalone YAML orchestration
+            "sed/training/train.py",  # Standalone teacher YAML loading
         }
 
         violations = []

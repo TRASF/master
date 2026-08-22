@@ -108,3 +108,113 @@ def sample_hard_negative_candidates(
         out_df.to_csv(out_path, index=False)
 
     return out_df
+
+
+def ingest_reviewed_candidates_to_verifier(
+    reviewed_csv: str | Path,
+    verifier_samples_csv: str | Path = "metadata/verifier_samples.csv",
+) -> int:
+    """Ingest human-reviewed candidates CSV (label = 'MOS' / 'NOT_MOS') into verifier_samples.csv."""
+    rev_path = Path(reviewed_csv)
+    v_path = Path(verifier_samples_csv)
+    if not rev_path.is_file():
+        raise FileNotFoundError(f"Reviewed CSV not found: {rev_path}")
+
+    rev_df = pd.read_csv(rev_path)
+    label_col = "human_label" if "human_label" in rev_df.columns else "label"
+
+    new_rows = []
+    for _, row in rev_df.iterrows():
+        raw_label = str(row.get(label_col, "")).strip().upper()
+        if raw_label in {"MOS", "MOSQUITO", "1", "1.0", "TRUE"}:
+            num_label = 1.0
+        elif raw_label in {"NOT_MOS", "NOT_MOSQUITO", "0", "0.0", "FALSE", "NOISE", "OTHER"}:
+            num_label = 0.0
+        else:
+            continue
+
+        audio_path = str(row.get("file_path", row.get("audio_path", "")))
+        start_s = float(row.get("start_s", 0.0))
+        end_s = float(row.get("end_s", start_s + 2.0))
+        split = str(row.get("split", "train"))
+
+        new_rows.append({
+            "audio_path": audio_path,
+            "start_s": start_s,
+            "end_s": end_s,
+            "label": num_label,
+            "split": split,
+        })
+
+    if not new_rows:
+        return 0
+
+    new_df = pd.DataFrame(new_rows)
+    if v_path.is_file():
+        existing_df = pd.read_csv(v_path)
+        combined_df = pd.concat([existing_df, new_df], ignore_index=True).drop_duplicates(
+            subset=["audio_path", "start_s", "end_s"]
+        )
+    else:
+        combined_df = new_df
+
+    v_path.parent.mkdir(parents=True, exist_ok=True)
+    combined_df.to_csv(v_path, index=False)
+    return len(new_df)
+
+
+def ingest_reviewed_wav_directory(
+    review_wav_dir: str | Path,
+    candidates_csv: str | Path = "/media/miru4090s/New Volume2/Mosquitoes Dataset/Mosquito SED Outputs/archive_detections/all_candidates.csv",
+    verifier_samples_csv: str | Path = "metadata/verifier_samples.csv",
+) -> int:
+    """Read edited .mosquito.wav files from Ocenaudio and match deleted cues as hard negatives."""
+    from wingbeat_ml.sed.application.ingest_reviewed import read_riff_regions
+
+    rev_dir = Path(review_wav_dir)
+    wav_files = list(rev_dir.rglob("*.mosquito.wav"))
+    if not wav_files:
+        print(f"No .mosquito.wav files found in {rev_dir}")
+        return 0
+
+    cand_df = pd.read_csv(candidates_csv) if Path(candidates_csv).is_file() else pd.DataFrame()
+
+    new_rows = []
+    for wav_p in wav_files:
+        try:
+            regions = read_riff_regions(wav_p)
+            kept_starts = {round(r["start_s"], 2) for r in regions}
+        except Exception:
+            continue
+
+        stem = wav_p.name.replace(".mosquito.wav", "")
+        file_cands = cand_df[cand_df["file_name"].astype(str).str.contains(stem)] if not cand_df.empty else pd.DataFrame()
+
+        if not file_cands.empty:
+            for _, row in file_cands.iterrows():
+                start_s = float(row["start_s"])
+                is_kept = any(abs(start_s - k) < 0.3 for k in kept_starts)
+                new_rows.append({
+                    "audio_path": str(row.get("file_path", row.get("audio_path", ""))),
+                    "start_s": start_s,
+                    "end_s": float(row["end_s"]),
+                    "label": 1.0 if is_kept else 0.0,
+                    "split": "train",
+                })
+
+    if not new_rows:
+        return 0
+
+    new_df = pd.DataFrame(new_rows)
+    v_path = Path(verifier_samples_csv)
+    if v_path.is_file():
+        existing_df = pd.read_csv(v_path)
+        combined_df = pd.concat([existing_df, new_df], ignore_index=True).drop_duplicates(
+            subset=["audio_path", "start_s", "end_s"]
+        )
+    else:
+        combined_df = new_df
+
+    v_path.parent.mkdir(parents=True, exist_ok=True)
+    combined_df.to_csv(v_path, index=False)
+    return len(new_df)

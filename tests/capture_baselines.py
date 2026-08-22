@@ -11,15 +11,16 @@ tf.config.set_visible_devices([], 'GPU')
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from wingbeat_ml.config import load_config, validate_config as normalize_config, apply_reproducibility_environment, resolve_experiment_paths
+from wingbeat_ml.config.loader import load_yaml
 from wingbeat_ml.data.dataset import SupervisedDataset
 from wingbeat_ml.models import MosSongPlusModel
 
 def capture_baselines():
     # 1. Load configuration and override directories to point to our fixtures
     defaults_path = "configs/defaults.yaml"
-    model_cfg_path = "configs/model.yaml"
+    model_cfg_path = "configs/models/mossong_plus.yaml"
 
-    defaults_raw = load_config(defaults_path)
+    defaults_raw = load_yaml(defaults_path)
     # Force defaults to use our fixture directories
     defaults_raw["dataset"]["train_dir"] = "tests/fixtures/audio_11class"
     defaults_raw["dataset"]["val_dir"] = None
@@ -34,6 +35,7 @@ def capture_baselines():
 
     # Set seed
     defaults_raw["reproducibility"]["seed"] = 45
+    defaults_raw["train"]["seed"] = 45
     defaults_raw["reproducibility"]["deterministic_data"] = True
     defaults_raw["reproducibility"]["deterministic_ops"] = True
     defaults_raw["reproducibility"]["enabled"] = True
@@ -41,7 +43,7 @@ def capture_baselines():
     defaults_raw["wandb"] = {"enabled": False}
 
     cfg = normalize_config(defaults_raw)
-    model_cfg = load_config(model_cfg_path)
+    model_cfg = load_yaml(model_cfg_path)
 
     # Apply reproducibility environment
     apply_reproducibility_environment(cfg["reproducibility"])

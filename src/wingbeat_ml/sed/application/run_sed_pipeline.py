@@ -237,9 +237,11 @@ def run_pipeline(
 
     if "label" in stages:
         print("=== Label: archive candidate generation ===")
+        verifier_checkpoint = Path(paths["teacher_output"]) / "verifier_best.pt"
         run_autolabeler_archive(
             target_dir=target_dir or paths["archive_dir"],
             model_checkpoint=model_checkpoint,
+            verifier_checkpoint=verifier_checkpoint if verifier_checkpoint.is_file() else None,
             output_dir=paths["archive_output"],
             high_threshold=float(review["high_threshold"]),
             low_threshold=float(review["low_threshold"]),

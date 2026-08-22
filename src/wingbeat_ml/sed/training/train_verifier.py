@@ -97,10 +97,21 @@ def train_verifier(
     print(f"  train positive: {t_pos} | train negative: {t_neg}")
     print(f"  val positive:   {v_pos} | val negative:   {v_neg}")
 
+    from torch.utils.data import WeightedRandomSampler
+
+    # Calculate balanced sample weights (50% positive, 50% negative)
+    train_labels = train_df["label"].values
+    pos_count = max(1, int((train_labels == 1.0).sum()))
+    neg_count = max(1, int((train_labels == 0.0).sum()))
+    weight_pos = 1.0 / pos_count
+    weight_neg = 1.0 / neg_count
+    sample_weights = [weight_pos if l == 1.0 else weight_neg for l in train_labels]
+    sampler = WeightedRandomSampler(weights=sample_weights, num_samples=len(sample_weights), replacement=True)
+
     train_ds = VerifierDataset(train_df)
     val_ds = VerifierDataset(val_df)
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, sampler=sampler)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -110,6 +121,9 @@ def train_verifier(
     criterion = nn.BCEWithLogitsLoss()
 
     best_val_loss = float("inf")
+    patience = 5
+    epochs_without_improvement = 0
+
     for epoch in range(1, epochs + 1):
         model.train()
         train_loss = 0.0
@@ -144,17 +158,52 @@ def train_verifier(
 
         auroc = float(roc_auc_score(all_targets, all_probs)) if len(np.unique(all_targets)) > 1 else 0.5
         auprc = float(average_precision_score(all_targets, all_probs)) if len(np.unique(all_targets)) > 1 else 0.5
-        preds_50 = (all_probs >= 0.5).astype(int)
-        tp = int(((preds_50 == 1) & (all_targets == 1.0)).sum())
-        fp = int(((preds_50 == 1) & (all_targets == 0.0)).sum())
-        fn = int(((preds_50 == 0) & (all_targets == 1.0)).sum())
-        prec_50 = tp / max(1, tp + fp)
-        rec_50 = tp / max(1, tp + fn)
+
+        # Detailed threshold grid evaluation
+        thresholds = [0.50, 0.70, 0.80, 0.90, 0.95, 0.98, 0.99, 0.995]
+        grid_metrics = {}
+        for th in thresholds:
+            preds_th = (all_probs >= th).astype(int)
+            tp_th = int(((preds_th == 1) & (all_targets == 1.0)).sum())
+            fp_th = int(((preds_th == 1) & (all_targets == 0.0)).sum())
+            fn_th = int(((preds_th == 0) & (all_targets == 1.0)).sum())
+            prec_th = tp_th / max(1, tp_th + fp_th)
+            rec_th = tp_th / max(1, tp_th + fn_th)
+            grid_metrics[f"prec_{th}"] = prec_th
+            grid_metrics[f"rec_{th}"] = rec_th
+
+        prec_50 = grid_metrics["prec_0.5"]
+        rec_50 = grid_metrics["rec_0.5"]
 
         print(
             f"Epoch {epoch:02d}: train_loss={train_loss:.4f} | val_loss={val_loss:.4f} "
             f"| AUROC={auroc:.4f} | AUPRC={auprc:.4f} | Prec@0.5={prec_50:.4f} | Rec@0.5={rec_50:.4f}"
         )
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            epochs_without_improvement = 0
+            torch.save(
+                {
+                    "format_version": 2,
+                    "model_state_dict": model.state_dict(),
+                    "val_loss": val_loss,
+                    "val_auroc": auroc,
+                    "val_auprc": auprc,
+                    "val_precision_50": prec_50,
+                    "val_recall_50": rec_50,
+                    "epoch": epoch,
+                },
+                best_ckpt,
+            )
+            import hashlib
+            digest = hashlib.sha256(best_ckpt.read_bytes()).hexdigest()[:16]
+            print(f"  saved: {best_ckpt} (SHA256: {digest})")
+        else:
+            epochs_without_improvement += 1
+            if epochs_without_improvement >= patience:
+                print(f"Early stopping verifier after {patience} epochs without val improvement.")
+                break
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss

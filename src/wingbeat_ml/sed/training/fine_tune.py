@@ -113,7 +113,7 @@ def _fingerprint(paths: list[Path], values: dict) -> str:
 
 def fine_tune_verified(
     dataset_dir: str | Path,
-    base_checkpoint: str | Path = "artifacts/teacher_v0/teacher_v0_best.pt",
+    base_checkpoint: str | Path = "artifacts/sed/proposer_best.pt",
     output_dir: str | Path = "artifacts/teacher_v1",
     epochs: int = 20,
     learning_rate: float = 3e-5,
@@ -121,7 +121,16 @@ def fine_tune_verified(
     patience: int = 5,
     seed: int = 42,
 ) -> Path:
-    """Fine-tune only temporal head and save separate V1 checkpoint."""
+    """Legacy fine-tuning script.
+
+    Note: The V2 Precision-First Cascade architecture uses train.py for Stage 1 Proposer
+    and train_verifier.py for Stage 2 Verifier hard-negative training.
+    """
+    import warnings
+    warnings.warn(
+        "fine_tune_verified is a legacy script. Use train.py for Stage 1 and train_verifier.py for Stage 2.",
+        UserWarning,
+    )
     dataset_root = Path(dataset_dir)
     recordings = pd.read_csv(dataset_root / "recordings.csv", dtype={"recording_id": str})
     recording_ids = sorted(recordings.recording_id.unique())

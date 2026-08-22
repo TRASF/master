@@ -156,7 +156,7 @@ class TestConfigurationContracts(unittest.TestCase):
 
 class TestEvaluationAndLogging(unittest.TestCase):
     def test_disabled_file_level_evaluation_performs_no_work(self):
-        from wingbeat_ml.pipelines.helpers.reporting import evaluate_training_run
+        from wingbeat_ml.classification.pipelines.helpers.reporting import evaluate_training_run
 
         evaluator = mock.Mock()
         evaluator.evaluate_final_test.return_value = {
@@ -171,12 +171,12 @@ class TestEvaluationAndLogging(unittest.TestCase):
         builder = mock.Mock()
 
         report = mock.Mock()
-        evaluation_module = types.ModuleType("wingbeat_ml.evaluation")
+        evaluation_module = types.ModuleType("wingbeat_ml.classification.evaluation")
         evaluation_module.report_results = report
         with tempfile.TemporaryDirectory() as tmpdir:
             with mock.patch.dict(
                 "sys.modules",
-                {"wingbeat_ml.evaluation": evaluation_module},
+                {"wingbeat_ml.classification.evaluation": evaluation_module},
             ):
                 evaluate_training_run(
                     model=mock.Mock(),
@@ -195,7 +195,7 @@ class TestEvaluationAndLogging(unittest.TestCase):
         self.assertIsNone(report.call_args.kwargs["train_file_results"])
 
     def test_console_modes_and_epoch_interval(self):
-        from wingbeat_ml.pipelines.helpers.reporting import make_epoch_printer
+        from wingbeat_ml.classification.pipelines.helpers.reporting import make_epoch_printer
 
         config = minimal_config()
         logs = {
@@ -224,7 +224,7 @@ class TestEvaluationAndLogging(unittest.TestCase):
         self.assertIn("Epoch 2/2", stream.getvalue())
 
     def test_jsonl_epoch_logger_is_append_only(self):
-        from wingbeat_ml.pipelines.helpers.reporting import JsonlMetricLogger
+        from wingbeat_ml.classification.pipelines.helpers.reporting import JsonlMetricLogger
 
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "metrics.jsonl"
@@ -348,7 +348,7 @@ class TestCacheAndGpuAgents(unittest.TestCase):
 class TestTensorFlowPerformance(unittest.TestCase):
     def test_trainer_accounts_global_steps_and_configured_steps_per_call(self):
         import tensorflow as tf
-        from wingbeat_ml.training.trainer import Trainer
+        from wingbeat_ml.classification.training.trainer import Trainer
 
         x = np.ones((10, 2), dtype=np.float32)
         y = tf.one_hot([0, 1] * 5, depth=2)
@@ -373,7 +373,7 @@ class TestTensorFlowPerformance(unittest.TestCase):
 
     def test_output_layer_is_float32_under_mixed_policy(self):
         import tensorflow as tf
-        from wingbeat_ml.models.mossong_plus import MosSongPlusModel
+        from wingbeat_ml.classification.models.mossong_plus import MosSongPlusModel
 
         previous = tf.keras.mixed_precision.global_policy()
         try:

@@ -77,6 +77,9 @@ def main(argv: list[str] | None = None) -> None:
 
     train = commands.add_parser("train", parents=[common])
     train.add_argument("--epochs", type=int)
+    learn = commands.add_parser("learn", parents=[common])
+    learn.add_argument("--target", nargs="?")
+    learn.add_argument("--batch-size", type=int, default=20)
     commands.add_parser("evaluate", parents=[common])
     label = commands.add_parser("label", parents=[common])
     label.add_argument("target", nargs="?")
@@ -98,6 +101,13 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if args.command == "train":
         run_pipeline(args.config, epochs=args.epochs, stages=("train",))
+    elif args.command == "learn":
+        from wingbeat_ml.sed.application.run_active_learning import run_active_learning_loop
+        run_active_learning_loop(
+            config_path=args.config,
+            target_dir=args.target,
+            review_batch_size=args.batch_size,
+        )
     elif args.command == "evaluate":
         run_pipeline(args.config, stages=("evaluate",))
     elif args.command == "label":

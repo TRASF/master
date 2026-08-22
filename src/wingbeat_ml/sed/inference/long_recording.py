@@ -272,19 +272,15 @@ def infer_long_recording(
         elif isinstance(verifier_state, dict):
             verifier.load_state_dict(verifier_state)
 
-        verified_events = []
         for prop in proposals:
             s_sample = int(prop.start_s * sr)
             e_sample = int(prop.end_s * sr)
             candidate_audio = torch.from_numpy(signal[s_sample:e_sample]).float()
             v_score = verifier.verify_candidate(candidate_audio, sample_rate=sr)
-            prop.confidence = v_score
-            # AUTO_ACCEPT is disabled until calibration quality gate passes (LCB >= 0.995)
-            if auto_accept_threshold is not None and v_score >= auto_accept_threshold:
-                verified_events.append(prop)
-            elif v_score >= 0.5:  # Stage 2 REVIEW queue threshold
-                verified_events.append(prop)
-        return verified_events
+            prop.mean_score = prop.confidence  # Preserve stage 1 score
+            prop.confidence = v_score           # Verifier decision score
+
+    return proposals
 
     return proposals
 

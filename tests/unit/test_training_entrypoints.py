@@ -9,9 +9,9 @@ import unittest
 class TestTrainingEntrypoints(unittest.TestCase):
     def test_canonical_modules_exist(self):
         for name in (
-            "wingbeat_ml.pipelines.pretrain",
-            "wingbeat_ml.pipelines.linear_probe",
-            "wingbeat_ml.pipelines.fine_tune",
+            "wingbeat_ml.classification.pipelines.pretrain",
+            "wingbeat_ml.classification.pipelines.linear_probe",
+            "wingbeat_ml.classification.pipelines.fine_tune",
         ):
             self.assertIsNotNone(
                 importlib.util.find_spec(name),
@@ -49,9 +49,9 @@ class TestTrainingEntrypoints(unittest.TestCase):
 
     def test_canonical_modules_do_not_import_legacy_framework(self):
         modules = (
-            importlib.import_module("wingbeat_ml.pipelines.pretrain"),
-            importlib.import_module("wingbeat_ml.pipelines.linear_probe"),
-            importlib.import_module("wingbeat_ml.pipelines.fine_tune"),
+            importlib.import_module("wingbeat_ml.classification.pipelines.pretrain"),
+            importlib.import_module("wingbeat_ml.classification.pipelines.linear_probe"),
+            importlib.import_module("wingbeat_ml.classification.pipelines.fine_tune"),
         )
 
         for module in modules:
@@ -61,9 +61,9 @@ class TestTrainingEntrypoints(unittest.TestCase):
 
     def test_canonical_entrypoints_share_the_epoch_loop(self):
         for name in (
-            "wingbeat_ml.pipelines.pretrain",
-            "wingbeat_ml.pipelines.linear_probe",
-            "wingbeat_ml.pipelines.fine_tune",
+            "wingbeat_ml.classification.pipelines.pretrain",
+            "wingbeat_ml.classification.pipelines.linear_probe",
+            "wingbeat_ml.classification.pipelines.fine_tune",
         ):
             module = importlib.import_module(name)
             source = inspect.getsource(module)
@@ -72,14 +72,14 @@ class TestTrainingEntrypoints(unittest.TestCase):
 
     def test_canonical_entrypoints_use_pipeline_helpers(self):
         for name in (
-            "wingbeat_ml.pipelines.pretrain",
-            "wingbeat_ml.pipelines.linear_probe",
-            "wingbeat_ml.pipelines.fine_tune",
+            "wingbeat_ml.classification.pipelines.pretrain",
+            "wingbeat_ml.classification.pipelines.linear_probe",
+            "wingbeat_ml.classification.pipelines.fine_tune",
         ):
             source = inspect.getsource(importlib.import_module(name))
             self.assertIn("prepare_training_run(", source)
             self.assertIn("build_supervised_components(", source)
-            self.assertIn("wingbeat_ml.pipelines.helpers", source)
+            self.assertIn("wingbeat_ml.classification.pipelines.helpers", source)
             self.assertNotIn("configure_training_runtime(", source)
             self.assertNotIn("initialize_training_run(", source)
             self.assertNotIn("set_memory_growth(", source)
@@ -88,9 +88,9 @@ class TestTrainingEntrypoints(unittest.TestCase):
 
     def test_component_assembly_is_not_repeated_in_entrypoints(self):
         for name in (
-            "wingbeat_ml.pipelines.pretrain",
-            "wingbeat_ml.pipelines.linear_probe",
-            "wingbeat_ml.pipelines.fine_tune",
+            "wingbeat_ml.classification.pipelines.pretrain",
+            "wingbeat_ml.classification.pipelines.linear_probe",
+            "wingbeat_ml.classification.pipelines.fine_tune",
         ):
             source = inspect.getsource(importlib.import_module(name))
             self.assertNotIn("build_datasets(", source)

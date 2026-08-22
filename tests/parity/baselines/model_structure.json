@@ -15,8 +15,31 @@
       "trainable": true,
       "weight_shapes": [
         [
-          100,
+          99,
           1,
+          32
+        ],
+        [
+          32
+        ]
+      ]
+    },
+    {
+      "name": "re_lu",
+      "class": "ReLU",
+      "output_shape": null,
+      "trainable": true,
+      "weight_shapes": []
+    },
+    {
+      "name": "conv1d_1",
+      "class": "Conv1D",
+      "output_shape": null,
+      "trainable": true,
+      "weight_shapes": [
+        [
+          64,
+          32,
           32
         ],
         [
@@ -45,51 +68,8 @@
       ]
     },
     {
-      "name": "activation",
-      "class": "Activation",
-      "output_shape": null,
-      "trainable": true,
-      "weight_shapes": []
-    },
-    {
-      "name": "conv1d_1",
-      "class": "Conv1D",
-      "output_shape": null,
-      "trainable": true,
-      "weight_shapes": [
-        [
-          64,
-          32,
-          32
-        ],
-        [
-          32
-        ]
-      ]
-    },
-    {
-      "name": "batch_normalization_1",
-      "class": "BatchNormalization",
-      "output_shape": null,
-      "trainable": true,
-      "weight_shapes": [
-        [
-          32
-        ],
-        [
-          32
-        ],
-        [
-          32
-        ],
-        [
-          32
-        ]
-      ]
-    },
-    {
-      "name": "activation_1",
-      "class": "Activation",
+      "name": "re_lu_1",
+      "class": "ReLU",
       "output_shape": null,
       "trainable": true,
       "weight_shapes": []
@@ -111,7 +91,7 @@
       ]
     },
     {
-      "name": "batch_normalization_2",
+      "name": "batch_normalization_1",
       "class": "BatchNormalization",
       "output_shape": null,
       "trainable": true,
@@ -131,22 +111,29 @@
       ]
     },
     {
-      "name": "activation_2",
-      "class": "Activation",
+      "name": "re_lu_2",
+      "class": "ReLU",
       "output_shape": null,
       "trainable": true,
       "weight_shapes": []
     },
     {
-      "name": "max_pooling1d",
-      "class": "MaxPooling1D",
+      "name": "global_average_pooling1d",
+      "class": "GlobalAveragePooling1D",
       "output_shape": null,
       "trainable": true,
       "weight_shapes": []
     },
     {
-      "name": "flatten",
-      "class": "Flatten",
+      "name": "global_max_pooling1d",
+      "class": "GlobalMaxPooling1D",
+      "output_shape": null,
+      "trainable": true,
+      "weight_shapes": []
+    },
+    {
+      "name": "concatenate",
+      "class": "Concatenate",
       "output_shape": null,
       "trainable": true,
       "weight_shapes": []
@@ -165,7 +152,7 @@
       "trainable": true,
       "weight_shapes": [
         [
-          448,
+          128,
           256
         ],
         [
@@ -204,5 +191,5 @@
       ]
     }
   ],
-  "total_params": 349451
+  "total_params": 267435
 }
